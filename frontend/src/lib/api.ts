@@ -12,11 +12,18 @@ async function request<T = any>(url: string, options: RequestInit = {}, descript
 
   const response = await fetch(url, options);
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
 
   if (!response.ok) {
-    const message = data?.detail || data?.message || `Request failed with ${response.status}`;
-    throw new Error(Array.isArray(message) ? JSON.stringify(message) : message);
+    const message = (typeof data === 'object' ? (data?.detail || data?.message) : data) || `Request failed with ${response.status}`;
+    throw new Error(Array.isArray(message) ? JSON.stringify(message) : String(message));
   }
 
   return data as T;
