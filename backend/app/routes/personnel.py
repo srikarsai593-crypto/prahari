@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
-import uuid, json
-from datetime import datetime
+import uuid, json, os
+from datetime import datetime, timezone
 from ..database import get_db
 from ..models import MovementPlanCreate
 from ..events import log_event
@@ -9,6 +9,96 @@ from ..geo import haversine_distance, check_geofences, check_route_deviation
 from ..simulation import get_next_position, reset_simulation, get_planned_route
 
 router = APIRouter(prefix='/personnel', tags=['personnel'])
+
+DEFAULT_LOCATION_UPDATE_TIMEOUT_MINUTES = 10
+DESTINATION_REACHED_RADIUS_M = 250
+
+
+def _location_update_timeout_minutes() -> float:
+    """Read the small, deployment-configurable location update timeout."""
+    try:
+        timeout = float(os.getenv('PERSONNEL_LOCATION_UPDATE_TIMEOUT_MINUTES', DEFAULT_LOCATION_UPDATE_TIMEOUT_MINUTES))
+        return timeout if timeout > 0 else DEFAULT_LOCATION_UPDATE_TIMEOUT_MINUTES
+    except (TypeError, ValueError):
+        return DEFAULT_LOCATION_UPDATE_TIMEOUT_MINUTES
+
+
+def _parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_reached_destination(personnel, movement_plan) -> bool:
+    if not movement_plan or movement_plan['status'] in ('arrived', 'completed'):
+        return bool(movement_plan and movement_plan['status'] in ('arrived', 'completed'))
+
+    current_lat = personnel['current_lat']
+    current_lng = personnel['current_lng']
+    destination_lat = movement_plan['destination_lat']
+    destination_lng = movement_plan['destination_lng']
+    if (
+        current_lat is None
+        or current_lng is None
+        or destination_lat is None
+        or destination_lng is None
+    ):
+        return False
+
+    distance = haversine_distance(
+        destination_lat,
+        destination_lng,
+        current_lat,
+        current_lng,
+    )
+    return distance <= DESTINATION_REACHED_RADIUS_M
+
+
+def _tracking_status(personnel, movement_plan, now=None):
+    now = now or datetime.now(timezone.utc)
+    timeout_minutes = _location_update_timeout_minutes()
+    last_update = _parse_timestamp(personnel['last_update_at'])
+    expected_arrival = _parse_timestamp(movement_plan['expected_arrival']) if movement_plan else None
+    overdue = bool(
+        movement_plan
+        and expected_arrival
+        and now > expected_arrival
+        and not _has_reached_destination(personnel, movement_plan)
+    )
+    no_recent_update = last_update is None or (now - last_update).total_seconds() > timeout_minutes * 60
+
+    return {
+        'movement_status': 'overdue' if overdue else (movement_plan['status'] if movement_plan else personnel['status']),
+        'overdue': overdue,
+        'overdue_reason': (
+            f'Expected arrival at {movement_plan["destination_name"]} has passed'
+            if overdue else None
+        ),
+        'location_update_status': 'no_recent_location_update' if no_recent_update else 'current',
+        'location_update_warning': (
+            'No recent location update' if no_recent_update else None
+        ),
+        'location_update_timeout_minutes': timeout_minutes,
+        'last_update_age_minutes': (
+            round(max(0, (now - last_update).total_seconds()) / 60, 1)
+            if last_update else None
+        ),
+    }
+
+
+def _personnel_with_tracking_status(personnel, movement_plan, now=None):
+    result = dict(personnel)
+    result.update(_tracking_status(personnel, movement_plan, now))
+    result['effective_status'] = 'overdue' if result['overdue'] else personnel['status']
+    if movement_plan:
+        result['movement_plan_id'] = movement_plan['id']
+        result['destination_name'] = movement_plan['destination_name']
+        result['expected_arrival'] = movement_plan['expected_arrival']
+    return result
 
 async def broadcast_open_incident_accountability(db):
     open_incidents = db.execute("SELECT * FROM incidents WHERE status = 'open'").fetchall()
@@ -52,13 +142,41 @@ async def broadcast_open_incident_accountability(db):
 def list_personnel():
     db = get_db()
     rows = db.execute('SELECT * FROM personnel ORDER BY name').fetchall()
-    return [dict(r) for r in rows]
+    movement_plans = db.execute(
+        'SELECT * FROM movement_plans ORDER BY departure_time DESC'
+    ).fetchall()
+    latest_plans = {}
+    for plan in movement_plans:
+        latest_plans.setdefault(plan['personnel_id'], plan)
+
+    now = datetime.now(timezone.utc)
+    return [
+        _personnel_with_tracking_status(row, latest_plans.get(row['id']), now)
+        for row in rows
+    ]
 
 @router.get('/movement-plans')
 def list_movement_plans():
     db = get_db()
-    rows = db.execute('SELECT mp.*, p.name as personnel_name FROM movement_plans mp LEFT JOIN personnel p ON mp.personnel_id = p.id ORDER BY mp.departure_time DESC').fetchall()
-    return [dict(r) for r in rows]
+    rows = db.execute(
+        'SELECT mp.*, p.name as personnel_name, p.status as personnel_status, '
+        'p.current_lat, p.current_lng, p.last_update_at '
+        'FROM movement_plans mp LEFT JOIN personnel p ON mp.personnel_id = p.id '
+        'ORDER BY mp.departure_time DESC'
+    ).fetchall()
+    now = datetime.now(timezone.utc)
+    plans = []
+    for row in rows:
+        plan = dict(row)
+        personnel = {
+            'status': row['personnel_status'],
+            'current_lat': row['current_lat'],
+            'current_lng': row['current_lng'],
+            'last_update_at': row['last_update_at'],
+        }
+        plan.update(_tracking_status(personnel, row, now))
+        plans.append(plan)
+    return plans
 
 @router.get('/{personnel_id}')
 def get_personnel(personnel_id: str):
@@ -147,6 +265,7 @@ async def simulate_move(personnel_id: str):
             'name': person['name'],
             'lat': position['lat'],
             'lng': position['lng'],
+            'last_update_at': now,
             'alert': alert
         }
     })
