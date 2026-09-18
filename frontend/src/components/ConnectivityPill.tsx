@@ -12,16 +12,25 @@ export const ConnectivityPill = () => {
       setOffline(offlineQueue.isOffline);
       setPendingCount(offlineQueue.pendingCount);
     });
-
     return unsubscribe;
   }, []);
 
   return (
-    <div className="flex items-center gap-2 bg-polar-900/50 px-3 py-1.5 rounded-full border border-polar-700/50">
-      <div className={`pulse-dot ${offline ? 'bg-danger' : 'bg-safe'}`}></div>
-      <span className="text-sm font-medium text-polar-200">
-        {offline ? `Offline - ${pendingCount} pending` : 'Connected'}
+    <div
+      className={`glass-btn-pill flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs transition-all ${
+        offline
+          ? 'text-amber-800 border-amber-200 bg-amber-50/80'
+          : 'text-emerald-800 border-emerald-200 bg-emerald-50/60'
+      }`}
+    >
+      <span
+        className={`w-2 h-2 rounded-full ${
+          offline ? 'bg-amber-500' : 'bg-emerald-500 status-badge-glow animate-pulse'
+        }`}
+      />
+      <span className="font-medium tracking-wide text-[11px] font-display">
+        {offline ? `Offline — ${pendingCount} pending` : 'Connected'}
       </span>
-    </div>
+    </button>
   );
 };
