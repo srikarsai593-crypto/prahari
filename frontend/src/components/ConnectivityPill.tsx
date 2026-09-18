@@ -31,6 +31,6 @@ export const ConnectivityPill = () => {
       <span className="font-medium tracking-wide text-[11px] font-display">
         {offline ? `Offline — ${pendingCount} pending` : 'Connected'}
       </span>
-    </button>
+    </div>
   );
 };
