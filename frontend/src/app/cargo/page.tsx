@@ -100,8 +100,9 @@ export default function CargoPage() {
   const handleRiskUpdate = async () => {
     if (!selectedId) return addToast('Select a shipment from the list first', 'warning');
     try {
-      await api.updateRisk(selectedId, windVal);
-      addToast(`Applied ${windVal} knot blizzard conditions to cargo routes`, windVal > 65 ? 'alert' : 'warning');
+      const deltaT = Math.round((windVal / 100) * 40);
+      await api.updateRisk(selectedId, deltaT);
+      addToast(`Applied ${windVal} knot blizzard conditions (ΔT +${deltaT}°C) to cargo routes`, windVal > 65 ? 'alert' : 'warning');
       loadShipments();
     } catch (e: any) { addToast(e?.message || 'Failed to update risk', 'alert'); }
   };

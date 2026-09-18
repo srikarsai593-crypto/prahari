@@ -16,13 +16,12 @@ export const ConnectivityPill = () => {
   }, []);
 
   return (
-    <button
-      className={`glass-btn-pill flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs cursor-pointer transition-all ${
+    <div
+      className={`glass-btn-pill flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs transition-all ${
         offline
           ? 'text-amber-800 border-amber-200 bg-amber-50/80'
           : 'text-emerald-800 border-emerald-200 bg-emerald-50/60'
       }`}
-      title="Click to view connectivity status"
     >
       <span
         className={`w-2 h-2 rounded-full ${

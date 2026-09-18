@@ -241,7 +241,7 @@ body {
    Buttons (light theme)
    ───────────────────────────────────────────── */
 button, [role="button"], a.btn, input[type="submit"], select {
-  min-height: 36px;
+  min-height: 48px;
 }
 
 .btn-primary {
@@ -253,7 +253,7 @@ button, [role="button"], a.btn, input[type="submit"], select {
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   letter-spacing: 0.04em;
-  min-height: 40px;
+  min-height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -279,7 +279,7 @@ button, [role="button"], a.btn, input[type="submit"], select {
   border-radius: 12px;
   font-weight: 700;
   font-size: 13px;
-  min-height: 40px;
+  min-height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -300,7 +300,7 @@ button, [role="button"], a.btn, input[type="submit"], select {
   border-radius: 12px;
   font-weight: 600;
   font-size: 13px;
-  min-height: 40px;
+  min-height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -329,7 +329,7 @@ select {
   padding: 10px 14px;
   color: #0F253E;
   font-size: 14px;
-  min-height: 40px;
+  min-height: 48px;
   width: 100%;
   transition: border-color 0.2s, box-shadow 0.2s;
   font-family: 'Inter', sans-serif;

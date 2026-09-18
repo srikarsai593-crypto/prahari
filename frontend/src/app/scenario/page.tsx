@@ -53,8 +53,9 @@ export default function ScenarioPage() {
   const getResearchers = async () => {
     const data = await api.listPersonnel();
     const list = Array.isArray(data) ? data : [];
-    const researchers = list.filter((p: any) => p.role === 'Researcher' || p.role === 'Scientist').slice(0, 2);
-    if (!researchers.length) return list.slice(0, 2); // fallback to any
+    let researchers = list.filter((p: any) => p.role === 'Researcher' || p.role === 'Scientist').slice(0, 2);
+    if (researchers.length < 2) researchers = list.slice(0, 2); // fallback to any
+    if (researchers.length < 2) throw new Error('Need at least 2 personnel records in database');
     return researchers;
   };
 
@@ -138,7 +139,6 @@ export default function ScenarioPage() {
       desc: 'Deploy two operatives with planned routes from Maitri to Camp Alpha.',
       action: async () => {
         const researchers = await getResearchers();
-        if (!researchers.length) throw new Error('No personnel available in database');
         for (const person of researchers) {
           await api.createMovementPlan({
             personnel_id: person.id,
@@ -159,7 +159,6 @@ export default function ScenarioPage() {
       desc: 'Advance both operatives into the restricted zone to trigger alerts.',
       action: async () => {
         const researchers = await getResearchers();
-        if (!researchers.length) throw new Error('No personnel to simulate');
         for (const person of researchers.slice(0, 2)) {
           await api.resetSimulation(person.id);
           for (let i = 0; i < 8; i++) {
