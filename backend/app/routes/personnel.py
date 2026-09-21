@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException
 import uuid, json, os
 from datetime import datetime, timezone
@@ -100,6 +101,7 @@ def _personnel_with_tracking_status(personnel, movement_plan, now=None):
         result['expected_arrival'] = movement_plan['expected_arrival']
     return result
 
+
 async def broadcast_open_incident_accountability(db):
     open_incidents = db.execute("SELECT * FROM incidents WHERE status = 'open'").fetchall()
     personnel_rows = db.execute('SELECT * FROM personnel').fetchall()
@@ -138,6 +140,7 @@ async def broadcast_open_incident_accountability(db):
 
     db.commit()
 
+
 @router.get('')
 def list_personnel():
     db = get_db()
@@ -155,6 +158,8 @@ def list_personnel():
         for row in rows
     ]
 
+# NOTE: Static sub-routes MUST be declared before /{personnel_id} to avoid
+# FastAPI treating the static path segment as a path parameter (404 bug fix).
 @router.get('/movement-plans')
 def list_movement_plans():
     db = get_db()
@@ -178,6 +183,23 @@ def list_movement_plans():
         plans.append(plan)
     return plans
 
+@router.get('/accountability/check')
+def check_accountability(lat: float, lng: float, radius: float = 5000):
+    db = get_db()
+    personnel = db.execute('SELECT * FROM personnel').fetchall()
+    in_zone = []
+    for p in personnel:
+        if p['current_lat'] and p['current_lng']:
+            dist = haversine_distance(lat, lng, p['current_lat'], p['current_lng'])
+            if dist <= radius:
+                in_zone.append({'id': p['id'], 'name': p['name'], 'role': p['role'], 'status': p['status'], 'distance_m': round(dist)})
+
+    expected = len(in_zone)
+    confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'field'))
+    unaccounted = expected - confirmed_safe
+
+    return {'expected': expected, 'confirmed_safe': confirmed_safe, 'unaccounted': unaccounted, 'personnel': in_zone}
+
 @router.get('/{personnel_id}')
 def get_personnel(personnel_id: str):
     db = get_db()
@@ -198,12 +220,12 @@ async def create_movement_plan(data: MovementPlanCreate):
     # Update personnel status
     db.execute('UPDATE personnel SET status = ? WHERE id = ?', ('in_transit', data.personnel_id))
     db.commit()
-    
+
     # Get personnel name
     p = db.execute('SELECT name FROM personnel WHERE id = ?', (data.personnel_id,)).fetchone()
     name = p['name'] if p else data.personnel_id
     await log_event('personnel', f'Movement plan created for {name}: → {data.destination_name}', 'commander', plan_id)
-    
+
     return {'id': plan_id, 'status': 'planned', **data.model_dump()}
 
 @router.post('/{personnel_id}/simulate-move')
@@ -212,7 +234,7 @@ async def simulate_move(personnel_id: str):
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
     if not person:
         raise HTTPException(status_code=404, detail='Personnel not found')
-    
+
     position = get_next_position(personnel_id)
     if position is None:
         # Simulation complete - arrived
@@ -224,17 +246,17 @@ async def simulate_move(personnel_id: str):
         await log_event('personnel', f'{person["name"]} arrived at destination', 'gps_system', personnel_id)
         await broadcast_open_incident_accountability(db)
         return {'status': 'arrived', 'personnel_id': personnel_id}
-    
+
     now = datetime.utcnow().isoformat()
     db.execute('UPDATE personnel SET current_lat = ?, current_lng = ?, last_update_at = ?, status = ? WHERE id = ?',
         (position['lat'], position['lng'], now, 'in_transit', personnel_id))
     db.commit()
-    
+
     # Check geofences
     geofences = db.execute('SELECT * FROM geofences').fetchall()
     gf_list = [dict(g) for g in geofences]
     inside = check_geofences(position['lat'], position['lng'], gf_list)
-    
+
     alert = None
     for gf in inside:
         if gf['type'] == 'restricted':
@@ -246,7 +268,7 @@ async def simulate_move(personnel_id: str):
                 db.commit()
             await log_event('personnel', f'ALERT: {person["name"]} entered restricted zone "{gf["name"]}"', 'gps_system', personnel_id, {'geofence': gf, 'position': position})
             break
-    
+
     # Check route deviation
     planned = get_planned_route()
     deviated = check_route_deviation(position['lat'], position['lng'], planned)
@@ -256,7 +278,7 @@ async def simulate_move(personnel_id: str):
             db.execute('UPDATE movement_plans SET status = ? WHERE id = ?', ('deviated', mp['id']))
             db.commit()
         await log_event('personnel', f'{person["name"]} deviating from planned route', 'gps_system', personnel_id, {'position': position})
-    
+
     # Broadcast GPS update
     await manager.broadcast({
         'type': 'gps_update',
@@ -269,12 +291,12 @@ async def simulate_move(personnel_id: str):
             'alert': alert
         }
     })
-    
+
     if alert:
         await manager.broadcast({'type': 'alert', 'data': alert})
 
     await broadcast_open_incident_accountability(db)
-    
+
     return {'personnel_id': personnel_id, 'position': position, 'alert': alert}
 
 @router.post('/{personnel_id}/reset-simulation')
@@ -291,39 +313,22 @@ async def trigger_sos(personnel_id: str):
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
     if not person:
         raise HTTPException(status_code=404, detail='Personnel not found')
-    
+
     # Create incident at personnel's current location
     incident_id = 'inc-' + str(uuid.uuid4())[:8]
     lat = person['current_lat'] or -70.767
     lng = person['current_lng'] or 11.731
-    
+
     db.execute(
         'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
         (incident_id, 'medical', lat, lng, 3000, 'critical', 'open')
     )
     db.commit()
-    
+
     await log_event('emergency', f'SOS triggered by {person["name"]} at ({lat}, {lng})', 'sos_system', incident_id)
     await manager.broadcast({'type': 'alert', 'data': {'type': 'sos', 'personnel': person['name'], 'lat': lat, 'lng': lng, 'incident_id': incident_id}})
-    
-    return {'incident_id': incident_id, 'personnel': person['name']}
 
-@router.get('/accountability/check')
-def check_accountability(lat: float, lng: float, radius: float = 5000):
-    db = get_db()
-    personnel = db.execute('SELECT * FROM personnel').fetchall()
-    in_zone = []
-    for p in personnel:
-        if p['current_lat'] and p['current_lng']:
-            dist = haversine_distance(lat, lng, p['current_lat'], p['current_lng'])
-            if dist <= radius:
-                in_zone.append({'id': p['id'], 'name': p['name'], 'role': p['role'], 'status': p['status'], 'distance_m': round(dist)})
-    
-    expected = len(in_zone)
-    confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'field'))
-    unaccounted = expected - confirmed_safe
-    
-    return {'expected': expected, 'confirmed_safe': confirmed_safe, 'unaccounted': unaccounted, 'personnel': in_zone}
+    return {'incident_id': incident_id, 'personnel': person['name']}
 
 @router.patch('/{personnel_id}/status')
 async def update_status(personnel_id: str, body: dict):

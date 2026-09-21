@@ -35,6 +35,24 @@ def list_incidents():
     rows = db.execute('SELECT * FROM incidents ORDER BY created_at DESC').fetchall()
     return [dict(r) for r in rows]
 
+# NOTE: Static sub-routes MUST be declared before /{incident_id} to avoid
+# FastAPI treating the static path segment as a path parameter (404 bug fix).
+@router.post('/power-failure')
+async def simulate_power_failure(body: dict = None):
+    station = (body or {}).get('station', 'Maitri')
+    await log_event('emergency', f'Power failure simulated at {station}', 'system', metadata={'type': 'power_failure', 'station': station})
+    await manager.broadcast({'type': 'alert', 'data': {'type': 'power_failure', 'station': station, 'message': f'ALERT: Power failure at {station}'}})
+    return {'status': 'simulated', 'station': station}
+
+@router.get('/nearby-assets/search')
+def search_nearby_assets(lat: float, lng: float):
+    results = []
+    for asset in NEARBY_ASSETS:
+        dist = haversine_distance(lat, lng, asset['lat'], asset['lng'])
+        results.append({**asset, 'distance_m': round(dist)})
+    results.sort(key=lambda x: x['distance_m'])
+    return results
+
 @router.get('/{incident_id}')
 def get_incident(incident_id: str):
     db = get_db()
@@ -56,10 +74,10 @@ async def create_incident(data: IncidentCreate):
     db = get_db()
     inc_id = 'inc-' + str(uuid.uuid4())[:8]
     radius = data.affected_radius_m or 5000
-    
+
     # Compute initial accountability
     expected, safe, unaccounted, personnel_list = compute_accountability(db, data.location_lat, data.location_lng, radius)
-    
+
     db.execute(
         'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status, expected_count, confirmed_safe_count, unaccounted_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (inc_id, data.type, data.location_lat, data.location_lng, radius, data.severity or 'medium', 'open', expected, safe, unaccounted)
@@ -68,7 +86,7 @@ async def create_incident(data: IncidentCreate):
     await log_event('emergency', f'Incident created: {data.type} (severity: {data.severity or "medium"})', 'system', inc_id, {'type': data.type, 'severity': data.severity})
     await manager.broadcast({'type': 'alert', 'data': {'type': 'incident', 'incident_id': inc_id, 'incident_type': data.type, 'severity': data.severity or 'medium', 'lat': data.location_lat, 'lng': data.location_lng}})
     await manager.broadcast({'type': 'accountability_update', 'data': {'incident_id': inc_id, 'expected': expected, 'confirmed_safe': safe, 'unaccounted': unaccounted, 'personnel': personnel_list}})
-    
+
     return {'id': inc_id, 'expected_count': expected, 'confirmed_safe_count': safe, 'unaccounted_count': unaccounted, 'personnel_in_zone': personnel_list, **data.model_dump()}
 
 @router.patch('/{incident_id}')
@@ -83,22 +101,6 @@ async def update_incident(incident_id: str, body: dict):
     action = f'Incident {incident_id} resolved' if status == 'resolved' else f'Incident {incident_id} updated: status → {status}'
     await log_event('emergency', action, 'commander', incident_id)
     return {'id': incident_id, 'status': status}
-
-@router.post('/power-failure')
-async def simulate_power_failure(body: dict = None):
-    station = (body or {}).get('station', 'Maitri')
-    await log_event('emergency', f'Power failure simulated at {station}', 'system', metadata={'type': 'power_failure', 'station': station})
-    await manager.broadcast({'type': 'alert', 'data': {'type': 'power_failure', 'station': station, 'message': f'ALERT: Power failure at {station}'}})
-    return {'status': 'simulated', 'station': station}
-
-@router.get('/nearby-assets/search')
-def search_nearby_assets(lat: float, lng: float):
-    results = []
-    for asset in NEARBY_ASSETS:
-        dist = haversine_distance(lat, lng, asset['lat'], asset['lng'])
-        results.append({**asset, 'distance_m': round(dist)})
-    results.sort(key=lambda x: x['distance_m'])
-    return results
 
 @router.get('/{incident_id}/accountability')
 async def get_accountability(incident_id: str):

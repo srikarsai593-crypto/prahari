@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
@@ -6,10 +7,22 @@ from .ws_manager import manager
 from .routes import expeditions, shipments, inventory, personnel, incidents
 from .routes import events_routes
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    seed_data()
+    print('Prahari backend started - database initialized and seeded.')
+    yield
+    # Shutdown (nothing to clean up for now)
+
+
 app = FastAPI(
     title='Prahari - Antarctic Operations Intelligence',
     version='1.0.0',
-    description='Antarctic Logistics & Safety Intelligence Platform — Team 36 OURS | SIH26062'
+    description='Antarctic Logistics & Safety Intelligence Platform — Team 36 OURS | SIH26062',
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -27,12 +40,6 @@ app.include_router(inventory.router)
 app.include_router(personnel.router)
 app.include_router(incidents.router)
 app.include_router(events_routes.router)
-
-@app.on_event('startup')
-def startup():
-    init_db()
-    seed_data()
-    print('Prahari backend started - database initialized and seeded.')
 
 @app.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):
