@@ -21,6 +21,20 @@ export const useToast = () => {
   return context;
 };
 
+const toastStyles: Record<ToastType, string> = {
+  alert:   'border-rose-200   bg-white text-rose-900',
+  warning: 'border-amber-200  bg-white text-amber-900',
+  success: 'border-emerald-200 bg-white text-emerald-900',
+  info:    'border-arctic-200  bg-white text-arctic-900',
+};
+
+const toastIcon: Record<ToastType, string> = {
+  alert:   '⚠️',
+  warning: '🔔',
+  success: '✅',
+  info:    'ℹ️',
+};
+
 export const ToastProvider = ({ children }: { children: ReactNode }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -35,18 +49,14 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
   return (
     <ToastContext.Provider value={{ addToast }}>
       {children}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+      <div className="fixed top-4 right-4 z-[60] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`toast-enter px-4 py-3 rounded-lg shadow-lg text-white font-medium backdrop-blur-md border ${
-              toast.type === 'alert' ? 'bg-red-500/80 border-red-500' :
-              toast.type === 'warning' ? 'bg-amber-500/80 border-amber-500' :
-              toast.type === 'success' ? 'bg-green-500/80 border-green-500' :
-              'bg-blue-500/80 border-blue-500'
-            }`}
+            className={`toast-enter pointer-events-auto px-4 py-3 rounded-xl border shadow-card text-xs font-semibold flex items-center gap-2.5 ${toastStyles[toast.type]}`}
           >
-            {toast.message}
+            <span className="text-sm shrink-0">{toastIcon[toast.type]}</span>
+            <span className="flex-1 font-display">{toast.message}</span>
           </div>
         ))}
       </div>

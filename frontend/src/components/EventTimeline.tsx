@@ -20,42 +20,57 @@ export const EventTimeline = () => {
     }
   }, [lastMessage]);
 
-  const getModuleColor = (module: string) => {
+  const getModuleStyle = (module: string): { border: string; badge: string } => {
     switch (module) {
-      case 'expedition': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
-      case 'cargo': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-      case 'inventory': return 'bg-green-500/20 text-green-400 border-green-500/30';
-      case 'personnel': return 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30';
-      case 'emergency': return 'bg-red-500/20 text-red-400 border-red-500/30';
-      default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+      case 'expedition': return { border: 'border-l-arctic-400',  badge: 'bg-arctic-50 text-arctic-700 border-arctic-200' };
+      case 'cargo':      return { border: 'border-l-amber-400',   badge: 'bg-amber-50 text-amber-700 border-amber-200' };
+      case 'inventory':  return { border: 'border-l-emerald-400', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+      case 'personnel':  return { border: 'border-l-violet-400',  badge: 'bg-violet-50 text-violet-700 border-violet-200' };
+      case 'emergency':  return { border: 'border-l-rose-400',    badge: 'bg-rose-50 text-rose-700 border-rose-200' };
+      default:           return { border: 'border-l-arctic-200',  badge: 'bg-arctic-50 text-arctic-600 border-arctic-200' };
     }
   };
 
   const timeAgo = (dateStr: string) => {
     const seconds = Math.max(0, Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000));
-    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 60)   return `${seconds}s ago`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     return `${Math.floor(seconds / 3600)}h ago`;
   };
 
   return (
-    <div className="glass-card p-4 h-full flex flex-col">
-      <h3 className="font-bold text-lg mb-4 text-white">Event Timeline</h3>
-      <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-        {events.map(event => (
-          <div key={event.id} className="relative pl-4 border-l-2 border-polar-700/30 toast-enter">
-            <div className="absolute -left-[9px] top-1.5 w-4 h-4 rounded-full bg-polar-900 border-2 border-polar-600"></div>
-            <div className="flex justify-between items-start mb-1">
-              <span className={`text-xs px-2 py-0.5 rounded-full border ${getModuleColor(event.module)}`}>
-                {String(event.module || 'system').toUpperCase()}
-              </span>
-              <span className="text-xs text-polar-400">{event.created_at ? timeAgo(event.created_at) : 'now'}</span>
+    <div className="subview-card rounded-2xl p-5 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-sm text-arctic-900 font-display flex items-center gap-2">
+          ⏱️ Live Event Timeline
+        </h3>
+        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+      </div>
+      <div className="flex-1 overflow-y-auto pr-1 space-y-3 font-mono text-xs">
+        {events.map(event => {
+          const { border, badge } = getModuleStyle(event.module);
+          return (
+            <div key={event.id} className={`p-3 bg-arctic-50/60 border-l-4 ${border} rounded-r-xl border border-arctic-200 toast-enter`}>
+              <div className="flex justify-between items-center text-[10px] text-frost-muted mb-1">
+                <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${badge}`}>
+                  {String(event.module || 'SYSTEM').toUpperCase()}
+                </span>
+                <span>{event.created_at ? timeAgo(event.created_at) : 'now'}</span>
+              </div>
+              <p className="text-arctic-900 font-medium leading-snug">{event.action}</p>
+              {event.actor && <p className="text-[10px] text-frost-muted mt-0.5">by {event.actor}</p>}
             </div>
-            <p className="text-sm text-polar-100">{event.action}</p>
-            {event.actor && <p className="text-xs text-polar-500 mt-1">by {event.actor}</p>}
+          );
+        })}
+        {events.length === 0 && (
+          <div className="p-3 bg-arctic-50/60 border-l-4 border-l-emerald-500 rounded-r-xl border border-arctic-200">
+            <div className="flex justify-between text-[10px] text-frost-muted mb-0.5">
+              <span className="text-emerald-700 font-bold">SYSTEM BOOT</span>
+              <span>08:00:00 UTC</span>
+            </div>
+            <p className="text-arctic-900 font-medium">PRAHARI Polar Kernel initialized. All station telemetry channels linked.</p>
           </div>
-        ))}
-        {events.length === 0 && <p className="text-polar-400 text-sm">No events yet.</p>}
+        )}
       </div>
     </div>
   );
