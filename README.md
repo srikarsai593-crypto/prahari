@@ -52,7 +52,7 @@ graph TD
     
     API -->|Read/Write| DB
     WS -->|Live GPS & Alerts| UI
-    API -->|LLM Fallback Chain (Gemini->Ollama->Regex)| LLM
+    API -->|Smart Fallback AI| LLM
 ```
 
 ---
