@@ -63,7 +63,7 @@ def exact_count(station: str, item: str = None):
             (station, f'%{item.lower()}%')).fetchone()
     else:
         row = db.execute('SELECT SUM(quantity) as quantity, "mixed" as unit, "all items" as name FROM inventory_items WHERE station = ?', (station,)).fetchone()
-    if not row:
+    if not row or row['quantity'] is None:
         raise HTTPException(status_code=404, detail='Item not found')
     return {'item': row['name'], 'quantity': row['quantity'], 'unit': row['unit'], 'method': 'direct_sql_query'}
 

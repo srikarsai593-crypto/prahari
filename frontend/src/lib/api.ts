@@ -7,7 +7,7 @@ import type {
 
 const BASE = '/api';
 
-const COMMANDER_KEY = process.env.NEXT_PUBLIC_COMMANDER_KEY;
+const COMMANDER_KEY = process.env.NEXT_PUBLIC_COMMANDER_KEY || 'prahari-demo-2024';
 
 async function request<T = unknown>(url: string, options: RequestInit = {}, description = 'API request'): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();

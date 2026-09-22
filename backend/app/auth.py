@@ -12,13 +12,17 @@ from fastapi.security import APIKeyHeader
 
 _API_KEY_HEADER = APIKeyHeader(name='X-Commander-Key', auto_error=False)
 _DEMO_KEY = 'prahari-demo-2024'
-_ALLOW_DEMO_KEY = os.getenv('PRAHARI_ALLOW_DEMO_KEY', '').lower() in {'1', 'true', 'yes'}
-_EXPECTED_KEY: str | None = os.getenv('PRAHARI_API_KEY')
+
+
+def get_expected_key() -> str | None:
+    expected = os.getenv('PRAHARI_API_KEY')
+    allow_demo = os.getenv('PRAHARI_ALLOW_DEMO_KEY', 'true').lower() in {'1', 'true', 'yes'}
+    return expected or (_DEMO_KEY if allow_demo else None)
 
 
 async def require_key(key: str | None = Security(_API_KEY_HEADER)) -> str:
     """FastAPI dependency — raises 401 if the commander key is wrong or missing."""
-    expected_key = _EXPECTED_KEY or (_DEMO_KEY if _ALLOW_DEMO_KEY else None)
+    expected_key = get_expected_key()
 
     if expected_key is None:
         raise HTTPException(

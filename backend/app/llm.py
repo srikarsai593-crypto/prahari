@@ -21,7 +21,12 @@ from datetime import datetime, timedelta, timezone
 OLLAMA_URL = 'http://localhost:11434/api/generate'
 OLLAMA_TIMEOUT = 3.0
 
-GEMINI_API_KEY: str | None = os.getenv('GEMINI_API_KEY')
+def get_gemini_api_key() -> str | None:
+    key = os.getenv('GEMINI_API_KEY')
+    if not key or key.startswith('REVOKED') or 'REPLACE' in key:
+        return None
+    return key
+
 GEMINI_URL = (
     'https://generativelanguage.googleapis.com/v1beta/models/'
     'gemini-1.5-flash:generateContent?key={key}'
@@ -44,7 +49,8 @@ KNOWN_LOCATIONS = [
 
 async def call_gemini(system_prompt: str, user_prompt: str) -> str | None:
     """Call Google Gemini 1.5 Flash. Returns raw JSON string or None."""
-    if not GEMINI_API_KEY:
+    api_key = get_gemini_api_key()
+    if not api_key:
         return None
     try:
         prompt = f"{system_prompt}\n\nUser input: {user_prompt}"
@@ -56,7 +62,7 @@ async def call_gemini(system_prompt: str, user_prompt: str) -> str | None:
                 'maxOutputTokens': 512,
             },
         }
-        url = GEMINI_URL.format(key=GEMINI_API_KEY)
+        url = GEMINI_URL.format(key=api_key)
         async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:

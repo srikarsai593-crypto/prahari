@@ -101,7 +101,7 @@ async def scan_shipment(shipment_id: str = None, barcode_id: str = None):
     if barcode_id:
         row = db.execute('SELECT * FROM shipments WHERE barcode_id = ?', (barcode_id,)).fetchone()
     else:
-        row = db.execute('SELECT * FROM shipments WHERE id = ?', (shipment_id,)).fetchone()
+        row = db.execute('SELECT * FROM shipments WHERE id = ? OR barcode_id = ?', (shipment_id, shipment_id)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail='Shipment not found')
     

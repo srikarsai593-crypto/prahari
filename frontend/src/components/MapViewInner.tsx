@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Circle, Marker, Polyline, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { api } from '@/lib/api';
 import type { Geofence, Personnel, Incident } from '@/lib/types';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -47,8 +48,7 @@ export default function MapViewInner({ personnel = [], incidents = [], routes = 
   const [geofences, setGeofences] = useState<Geofence[]>([]);
 
   useEffect(() => {
-    fetch('/api/geofences')
-      .then(r => r.ok ? r.json() : [])
+    api.listGeofences()
       .then((data: Geofence[]) => setGeofences(Array.isArray(data) ? data : []))
       .catch(() => setGeofences([]));
   }, []);
