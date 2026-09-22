@@ -2,7 +2,7 @@ import httpx
 import json
 import re
 from .models import LLMExpeditionParse, LLMVoiceCommandParse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 OLLAMA_URL = 'http://localhost:11434/api/generate'
 OLLAMA_TIMEOUT = 3.0
@@ -57,8 +57,8 @@ def fallback_parse_expedition(raw_text: str) -> LLMExpeditionParse:
     fuel = total_personnel * duration * 20
     # Name
     name = f'Antarctic Expedition to {station}'
-    start_date = datetime.utcnow().strftime('%Y-%m-%d')
-    end_date = (datetime.utcnow() + timedelta(days=duration)).strftime('%Y-%m-%d')
+    start_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    end_date = (datetime.now(timezone.utc) + timedelta(days=duration)).strftime('%Y-%m-%d')
     return LLMExpeditionParse(
         name=name, station=station, start_date=start_date, end_date=end_date,
         personnel_required=total_personnel, fuel_required_l=fuel
@@ -87,7 +87,8 @@ def fallback_parse_voice(raw_text: str) -> LLMVoiceCommandParse:
             break
     return LLMVoiceCommandParse(action=action, quantity=quantity, item=item, location=location)
 
-async def parse_expedition_nl(raw_text: str) -> LLMExpeditionParse:
+async def parse_expedition_nl(raw_text: str) -> tuple:
+    """Returns (LLMExpeditionParse, ai_used: bool)"""
     system = '''You are a JSON-only parser. Given a natural language expedition request, return ONLY a JSON object with these exact fields:
 - name (string): expedition name
 - station (string): one of "Maitri", "Bharati", "Himadri"
@@ -101,10 +102,10 @@ No explanation, no markdown, just the JSON object.'''
         try:
             cleaned = strip_markdown_fences(response)
             data = json.loads(cleaned)
-            return LLMExpeditionParse(**data)
+            return LLMExpeditionParse(**data), True
         except Exception:
             pass
-    return fallback_parse_expedition(raw_text)
+    return fallback_parse_expedition(raw_text), False
 
 async def parse_voice_command(raw_text: str) -> LLMVoiceCommandParse:
     system = '''You are a JSON-only parser. Given a voice transcript about inventory changes, return ONLY a JSON object with these exact fields:

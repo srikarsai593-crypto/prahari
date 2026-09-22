@@ -121,7 +121,8 @@ async def broadcast_open_incident_accountability(db):
                     })
 
         expected = len(in_zone)
-        confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'field', 'returned'))
+        # Only 'at_station' and 'returned' are verifiably safe in an emergency.
+        confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'returned'))
         unaccounted = expected - confirmed_safe
         db.execute(
             'UPDATE incidents SET expected_count = ?, confirmed_safe_count = ?, unaccounted_count = ? WHERE id = ?',
@@ -195,7 +196,7 @@ def check_accountability(lat: float, lng: float, radius: float = 5000):
                 in_zone.append({'id': p['id'], 'name': p['name'], 'role': p['role'], 'status': p['status'], 'distance_m': round(dist)})
 
     expected = len(in_zone)
-    confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'field'))
+    confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'returned'))
     unaccounted = expected - confirmed_safe
 
     return {'expected': expected, 'confirmed_safe': confirmed_safe, 'unaccounted': unaccounted, 'personnel': in_zone}
@@ -235,7 +236,7 @@ async def simulate_move(personnel_id: str):
     if not person:
         raise HTTPException(status_code=404, detail='Personnel not found')
 
-    position = get_next_position(personnel_id)
+    position = get_next_position(personnel_id, db)
     if position is None:
         # Simulation complete - arrived
         db.execute('UPDATE personnel SET status = ? WHERE id = ?', ('field', personnel_id))
@@ -247,7 +248,7 @@ async def simulate_move(personnel_id: str):
         await broadcast_open_incident_accountability(db)
         return {'status': 'arrived', 'personnel_id': personnel_id}
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     db.execute('UPDATE personnel SET current_lat = ?, current_lng = ?, last_update_at = ?, status = ? WHERE id = ?',
         (position['lat'], position['lng'], now, 'in_transit', personnel_id))
     db.commit()
@@ -301,8 +302,8 @@ async def simulate_move(personnel_id: str):
 
 @router.post('/{personnel_id}/reset-simulation')
 def reset_sim(personnel_id: str):
-    reset_simulation(personnel_id)
     db = get_db()
+    reset_simulation(personnel_id, db)
     db.execute('UPDATE personnel SET current_lat = -70.767, current_lng = 11.731, status = ? WHERE id = ?', ('at_station', personnel_id))
     db.commit()
     return {'status': 'reset'}

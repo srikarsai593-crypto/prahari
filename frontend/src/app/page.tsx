@@ -1,4 +1,8 @@
+'use client';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
+import { useWebSocket } from '@/components/WebSocketProvider';
 
 const modules = [
   {
@@ -83,14 +87,50 @@ const modules = [
   },
 ];
 
-const stats = [
-  { label: 'Active Expeditions',   val: '3',           color: 'text-arctic-700' },
-  { label: 'Shipments in Transit', val: '12',          color: 'text-arctic-700' },
-  { label: 'Personnel Deployed',   val: '45',          color: 'text-arctic-700' },
-  { label: 'System Status',        val: '100% ONLINE', color: 'text-emerald-600' },
-];
+
 
 export default function Home() {
+  const { connected } = useWebSocket();
+  const [kpi, setKpi] = useState<Record<string, string | number>>({});
+  const [kpiLoading, setKpiLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchKpis = async () => {
+      try {
+        const [expeditions, shipments, personnel, events] = await Promise.allSettled([
+          api.listExpeditions(),
+          api.listShipments(),
+          api.listPersonnel(),
+          api.listEvents(undefined, 100),
+        ]);
+        const expList   = expeditions.status === 'fulfilled'  ? (Array.isArray(expeditions.value)  ? expeditions.value  : []) : [];
+        const shipList  = shipments.status  === 'fulfilled'   ? (Array.isArray(shipments.value)    ? shipments.value    : []) : [];
+        const persList  = personnel.status  === 'fulfilled'   ? (Array.isArray(personnel.value)    ? personnel.value    : []) : [];
+        const evtList   = events.status     === 'fulfilled'   ? (Array.isArray(events.value)       ? events.value       : []) : [];
+
+        const today = new Date().toISOString().slice(0, 10);
+        setKpi({
+          expeditions: expList.filter((e: any) => e.status !== 'archived').length,
+          shipments:   shipList.filter((s: any) => s.status === 'in_transit').length,
+          personnel:   persList.filter((p: any) => ['in_transit', 'field', 'deviated'].includes(p.status)).length,
+          events:      evtList.filter((e: any) => (e.created_at || '').startsWith(today)).length,
+        });
+      } catch (e) {
+        console.error('KPI fetch failed', e);
+      } finally {
+        setKpiLoading(false);
+      }
+    };
+    fetchKpis();
+  }, []);
+
+  const stats = [
+    { label: 'Active Expeditions',   val: kpiLoading ? '…' : String(kpi.expeditions ?? 0), color: 'text-arctic-700' },
+    { label: 'Shipments in Transit', val: kpiLoading ? '…' : String(kpi.shipments   ?? 0), color: 'text-arctic-700' },
+    { label: 'Personnel Deployed',   val: kpiLoading ? '…' : String(kpi.personnel   ?? 0), color: 'text-arctic-700' },
+    { label: 'Live Events Today',    val: kpiLoading ? '…' : String(kpi.events      ?? 0), color: connected ? 'text-emerald-600' : 'text-amber-600' },
+  ];
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] max-w-5xl mx-auto">
 

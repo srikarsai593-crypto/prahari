@@ -183,7 +183,7 @@ export default function InventoryPage() {
                       <td className="py-3">
                         {typeof item.days_of_cover === 'number' ? (
                           <span className={`font-bold ${getDaysColor(item.days_of_cover)}`}>
-                            {item.days_of_cover.toFixed(1)}d
+                            {item.days_of_cover >= 9999 ? '∞' : `${item.days_of_cover.toFixed(1)}d`}
                           </span>
                         ) : <span className="text-frost-muted">n/a</span>}
                       </td>
@@ -222,7 +222,9 @@ export default function InventoryPage() {
               <div>
                 <span className="text-[10px] text-frost-muted uppercase tracking-wider" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Days of Cover</span>
                 <p className={`font-bold text-2xl mt-0.5 ${getDaysColor(selectedItem.days_of_cover)}`} style={{ fontFamily: 'Outfit, sans-serif' }}>
-                  {typeof selectedItem.days_of_cover === 'number' ? `${selectedItem.days_of_cover.toFixed(1)}d` : 'n/a'}
+                  {typeof selectedItem.days_of_cover === 'number'
+                    ? selectedItem.days_of_cover >= 9999 ? '∞ (no depletion)' : `${selectedItem.days_of_cover.toFixed(1)}d`
+                    : 'n/a'}
                 </p>
               </div>
             </div>

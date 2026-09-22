@@ -93,7 +93,8 @@ def init_db():
         planned_route TEXT,
         departure_time DATETIME,
         expected_arrival DATETIME,
-        status TEXT DEFAULT 'planned'
+        status TEXT DEFAULT 'planned',
+        simulation_step INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS geofences (
         id TEXT PRIMARY KEY,
@@ -116,5 +117,35 @@ def init_db():
         unaccounted_count INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS emergency_assets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        lat REAL NOT NULL,
+        lng REAL NOT NULL,
+        station TEXT DEFAULT 'Maitri',
+        status TEXT DEFAULT 'available',
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
     ''')
+    # Safe migration: add simulation_step column to existing databases that predate this schema change.
+    # SQLite raises OperationalError if the column already exists — we can safely ignore that.
+    try:
+        conn.execute('ALTER TABLE movement_plans ADD COLUMN simulation_step INTEGER DEFAULT 0')
+    except Exception:
+        pass
+    # Seed emergency_assets if table is empty
+    count = conn.execute('SELECT COUNT(*) FROM emergency_assets').fetchone()[0]
+    if count == 0:
+        import uuid as _uuid
+        assets = [
+            (_uuid.uuid4().hex[:8], 'Snowcat Alpha',             'vehicle',   -70.770, 11.740, 'Maitri', 'available'),
+            (_uuid.uuid4().hex[:8], 'Emergency Sled',            'equipment', -70.780, 11.760, 'Maitri', 'available'),
+            (_uuid.uuid4().hex[:8], 'Medical Kit Station',       'medical',   -70.767, 11.735, 'Maitri', 'available'),
+            (_uuid.uuid4().hex[:8], 'Rescue Helicopter',         'aircraft',  -70.765, 11.725, 'Maitri', 'standby'),
+        ]
+        conn.executemany(
+            'INSERT INTO emergency_assets (id, name, type, lat, lng, station, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            assets
+        )
     conn.commit()

@@ -1,7 +1,7 @@
 import uuid
 from .database import get_db
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 def seed_data():
     db = get_db()
@@ -14,8 +14,8 @@ def seed_data():
     exp_id = 'exp-' + str(uuid.uuid4())[:8]
     db.execute('INSERT INTO expeditions (id, name, raw_request, station, start_date, end_date, personnel_required, fuel_required_l, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (exp_id, 'Antarctic Survey Alpha', 'Survey mission to Maitri station', 'Maitri',
-         (datetime.utcnow() + timedelta(days=10)).strftime('%Y-%m-%d'),
-         (datetime.utcnow() + timedelta(days=40)).strftime('%Y-%m-%d'),
+         (datetime.now(timezone.utc) + timedelta(days=10)).strftime('%Y-%m-%d'),
+         (datetime.now(timezone.utc) + timedelta(days=40)).strftime('%Y-%m-%d'),
          8, 8000, 'draft'))
     
     # Inventory items - FUEL is deliberately below expedition requirement (6500 < 8000)
