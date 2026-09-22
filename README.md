@@ -69,7 +69,7 @@ graph TD
 4. **📍 Personnel Routing**: 
    Live WebSocket GPS tracking with SQLite WAL persistence. Generates multi-node movement plans and automatically triggers geofence violations if researchers stray into crevasses.
 5. **🚨 Emergency Accountability**: 
-   One-click SOS. Instantly computes Haversine distances to locate the nearest emergency assets (snowcats, medical sleds) and tallies live accountability metrics. All write endpoints are secured via `X-Commander-Key` API authentication.
+   One-click SOS. Instantly computes Haversine distances to locate the nearest emergency assets (snowcats, medical sleds) and tallies live accountability metrics.
 
 ---
 
@@ -81,14 +81,20 @@ Prahari requires zero cloud dependencies (but gracefully uses them if available)
 Create a `.env` file in the `backend` directory:
 ```env
 GEMINI_API_KEY=your_google_ai_studio_key  # Optional: Fallbacks to Ollama or regex if omitted
-PRAHARI_API_KEY=prahari-demo-2024         # Optional: Defaults to prahari-demo-2024
+PRAHARI_API_KEY=your_commander_key
+PRAHARI_ALLOW_DEMO_KEY=true               # Optional: only for local demo usage
 ```
+Create a `.env.local` file in the `frontend` directory:
+```env
+NEXT_PUBLIC_COMMANDER_KEY=your_commander_key
+```
+`NEXT_PUBLIC_COMMANDER_KEY` is browser-visible and intended only for local/demo environments. Use real user/server-side auth for production deployments.
 
 ### 2. Boot the Station Backend
 ```bash
 cd backend
 pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --env-file .env
 ```
 
 ### 3. Boot the Edge Frontend

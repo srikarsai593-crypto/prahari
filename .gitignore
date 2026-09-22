@@ -7,6 +7,7 @@ __pycache__/
 .next/
 out/
 build/
+*.tsbuildinfo
 
 # Database files (Ignore local testing data so you start clean in production)
 backend/prahari.db

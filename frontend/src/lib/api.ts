@@ -2,13 +2,12 @@ import { offlineQueue } from './offlineQueue';
 import type {
   Personnel, Incident, Accountability, NearbyAsset, Shipment,
   Expedition, InventoryItem, Geofence, MovementPlan, AppEvent,
-  ParsedExpedition, FeasibilityResult,
+  ParsedExpedition, FeasibilityResult, ShipmentStatusTransition,
 } from './types';
 
 const BASE = '/api';
 
-// Default key matches backend default — works out of the box without .env
-const COMMANDER_KEY = process.env.NEXT_PUBLIC_COMMANDER_KEY ?? 'prahari-demo-2024';
+const COMMANDER_KEY = process.env.NEXT_PUBLIC_COMMANDER_KEY;
 
 async function request<T = unknown>(url: string, options: RequestInit = {}, description = 'API request'): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
@@ -45,7 +44,7 @@ const jsonOptions = (method: string, data?: unknown): RequestInit => ({
   method,
   headers: {
     'Content-Type': 'application/json',
-    'X-Commander-Key': COMMANDER_KEY,
+    ...(COMMANDER_KEY ? { 'X-Commander-Key': COMMANDER_KEY } : {}),
   },
   body: data === undefined ? undefined : JSON.stringify(data),
 });
@@ -70,7 +69,7 @@ export const api = {
   createShipment: (data: Partial<Shipment>) =>
     request<Shipment>(`${BASE}/shipments`, jsonOptions('POST', data), 'create shipment'),
   scanBarcode: (barcodeId: string) =>
-    request<Shipment>(`${BASE}/shipments/scan-barcode`, jsonOptions('POST', { barcode_id: barcodeId }), 'scan shipment barcode'),
+    request<ShipmentStatusTransition>(`${BASE}/shipments/scan-barcode`, jsonOptions('POST', { barcode_id: barcodeId }), 'scan shipment barcode'),
   updateRisk: (id: string, deltaT: number) =>
     request(`${BASE}/shipments/${id}/risk`, jsonOptions('POST', { delta_t: deltaT }), 'update shipment risk'),
   getCurrentDeltaT: () => request(`${BASE}/shipments/delta-t/current`),

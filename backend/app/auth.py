@@ -1,14 +1,9 @@
 """
 Simple API-key authentication for Prahari write endpoints.
 
-The key is configured via the PRAHARI_API_KEY environment variable.
-It defaults to "prahari-demo-2024" so the system works out of the box
-without any configuration — judges and evaluators just use the default.
-
-Usage in a route:
-    from ..auth import require_key
-    @router.post('/some-endpoint', dependencies=[Depends(require_key)])
-    async def create_something(...): ...
+Set PRAHARI_API_KEY for all non-demo deployments.
+For explicit local/demo mode, set PRAHARI_ALLOW_DEMO_KEY=true to allow
+the public demo key "prahari-demo-2024".
 """
 
 import os
@@ -16,18 +11,25 @@ from fastapi import Depends, HTTPException, status, Security
 from fastapi.security import APIKeyHeader
 
 _API_KEY_HEADER = APIKeyHeader(name='X-Commander-Key', auto_error=False)
-
-# Fallback to demo key so it works without any .env setup
-_EXPECTED_KEY: str = os.getenv('PRAHARI_API_KEY', 'prahari-demo-2024')
+_DEMO_KEY = 'prahari-demo-2024'
+_ALLOW_DEMO_KEY = os.getenv('PRAHARI_ALLOW_DEMO_KEY', '').lower() in {'1', 'true', 'yes'}
+_EXPECTED_KEY: str | None = os.getenv('PRAHARI_API_KEY')
 
 
 async def require_key(key: str | None = Security(_API_KEY_HEADER)) -> str:
     """FastAPI dependency — raises 401 if the commander key is wrong or missing."""
-    if key != _EXPECTED_KEY:
+    expected_key = _EXPECTED_KEY or (_DEMO_KEY if _ALLOW_DEMO_KEY else None)
+
+    if expected_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Commander API key is not configured on the server.',
+        )
+
+    if key != expected_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Invalid or missing X-Commander-Key header. '
-                   'Use the default demo key: prahari-demo-2024',
+            detail='Invalid or missing X-Commander-Key header.',
             headers={'WWW-Authenticate': 'ApiKey'},
         )
     return key

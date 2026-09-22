@@ -83,25 +83,26 @@ async def process_voice_command(req: VoiceCommandRequest):
     result = await parse_voice_command(req.transcript)
     db = get_db()
     # Find matching item
-    row = db.execute('SELECT * FROM inventory_items WHERE LOWER(name) LIKE ?', (f'%{result.item.lower()}%',)).fetchone()
+    item_name = result['item']
+    row = db.execute('SELECT * FROM inventory_items WHERE LOWER(name) LIKE ?', (f'%{item_name.lower()}%',)).fetchone()
     if not row:
-        return {'parsed': result.model_dump(), 'applied': False, 'error': f'Item "{result.item}" not found in inventory'}
+        return {'parsed': result, 'applied': False, 'error': f'Item "{item_name}" not found in inventory'}
     
     item = dict(row)
     old_qty = item['quantity']
-    if result.action == 'decrement':
-        new_qty = max(0, old_qty - result.quantity)
+    if result['action'] == 'decrement':
+        new_qty = max(0, old_qty - result['quantity'])
     else:
-        new_qty = old_qty + result.quantity
+        new_qty = old_qty + result['quantity']
     
     now = datetime.now(timezone.utc).isoformat()
     db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?', (new_qty, now, item['id']))
     db.commit()
     
-    await log_event('inventory', f'Voice command: {result.action} {result.quantity} {item["name"]} (was {old_qty}, now {new_qty})', 'voice_system', item['id'], {'parsed': result.model_dump()})
+    await log_event('inventory', f'Voice command: {result["action"]} {result["quantity"]} {item["name"]} (was {old_qty}, now {new_qty})', 'voice_system', item['id'], {'parsed': result})
     await manager.broadcast({'type': 'inventory_update', 'data': {'item_id': item['id'], 'new_quantity': new_qty}})
     
-    return {'parsed': result.model_dump(), 'applied': True, 'old_quantity': old_qty, 'new_quantity': new_qty, 'item_name': item['name']}
+    return {'parsed': result, 'applied': True, 'old_quantity': old_qty, 'new_quantity': new_qty, 'item_name': item['name']}
 
 @router.patch('/{item_id}')
 async def update_item(item_id: str, body: dict):

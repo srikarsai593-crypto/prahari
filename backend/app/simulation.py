@@ -16,16 +16,23 @@ DEMO_ROUTE = [
 
 def get_next_position(personnel_id: str, db) -> dict | None:
     """Advance one step along the demo route. State persisted in DB so it survives restarts."""
-    row = db.execute('SELECT simulation_step FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
-    if row is None:
-        return None
-    current = row['simulation_step'] or 0
-    if current >= len(DEMO_ROUTE):
-        return None
-    position = DEMO_ROUTE[current]
-    db.execute('UPDATE personnel SET simulation_step = ? WHERE id = ?', (current + 1, personnel_id))
-    # Caller commits
-    return position
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        row = db.execute('SELECT simulation_step FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
+        if row is None:
+            db.commit()
+            return None
+        current = row['simulation_step'] or 0
+        if current >= len(DEMO_ROUTE):
+            db.commit()
+            return None
+        position = DEMO_ROUTE[current]
+        db.execute('UPDATE personnel SET simulation_step = ? WHERE id = ?', (current + 1, personnel_id))
+        db.commit()
+        return position
+    except Exception:
+        db.rollback()
+        raise
 
 
 def reset_simulation(personnel_id: str, db) -> None:

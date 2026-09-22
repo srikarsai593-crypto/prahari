@@ -81,6 +81,13 @@ export interface Shipment {
   updated_at: string;
 }
 
+export interface ShipmentStatusTransition {
+  id: string;
+  barcode_id: string;
+  old_status: Shipment['status'];
+  new_status: Shipment['status'];
+}
+
 export interface Expedition {
   id: string;
   name: string;
