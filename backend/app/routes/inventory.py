@@ -18,7 +18,8 @@ def compute_depletion(item: dict, delta_t: float) -> dict:
     beta = item.get('beta') or 0.15
     quantity = item.get('quantity') or 0
     
-    depletion_rate = base_burn_rate * (1 + beta * delta_t)
+    depletion_multiplier = max(0.1, 1 + beta * delta_t)
+    depletion_rate = base_burn_rate * depletion_multiplier
     days_of_cover = quantity / depletion_rate if depletion_rate > 0 else float('inf')
     
     return {
@@ -62,7 +63,7 @@ def exact_count(station: str, item: str = None):
             (station, f'%{item.lower()}%')).fetchone()
     else:
         row = db.execute('SELECT SUM(quantity) as quantity, "mixed" as unit, "all items" as name FROM inventory_items WHERE station = ?', (station,)).fetchone()
-    if not row:
+    if not row or row['quantity'] is None:
         raise HTTPException(status_code=404, detail='Item not found')
     return {'item': row['name'], 'quantity': row['quantity'], 'unit': row['unit'], 'method': 'direct_sql_query'}
 

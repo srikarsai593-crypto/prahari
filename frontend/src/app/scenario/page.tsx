@@ -31,6 +31,7 @@ export default function ScenarioPage() {
   }, []);
 
   const runStep = async (step: number, action: () => Promise<void>) => {
+    if (stepStatus[step] === 'running') return;
     setStepStatus(prev => ({ ...prev, [step]: 'running' }));
     try {
       await action();
@@ -188,7 +189,8 @@ export default function ScenarioPage() {
         const person = researchers[0];
         offlineQueue.setOffline(true);
         addToast('System offline — next update will queue', 'warning');
-        await api.updatePersonnelStatus(person.id, 'returned');
+        const nextStatus = person.status === 'at_station' ? 'in_transit' : 'returned';
+        await api.updatePersonnelStatus(person.id, nextStatus);
         await delay(800);
         offlineQueue.setOffline(false);
         const flushed = await offlineQueue.flush();

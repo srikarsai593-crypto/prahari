@@ -60,8 +60,14 @@ export default function ExpeditionPage() {
     if (!nlText.trim()) return;
     setParsing(true);
     try {
-      const res = await api.parseNL(nlText);
-      setForm(prev => ({ ...prev, ...res, raw_request: nlText }));
+      const res: any = await api.parseNL(nlText);
+      setForm(prev => ({
+        ...prev,
+        ...res,
+        start_date: res.start_date ?? '',
+        end_date: res.end_date ?? '',
+        raw_request: nlText,
+      }));
       if (res.ai_used === false) {
         addToast('AI unavailable — rule-based fallback used to parse mission', 'warning');
       } else {

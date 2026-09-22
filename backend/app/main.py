@@ -1,6 +1,14 @@
+from pathlib import Path
+try:
+    from dotenv import load_dotenv
+    _env_file = Path(__file__).resolve().parent.parent / '.env'
+    if _env_file.exists():
+        load_dotenv(dotenv_path=_env_file)
+except ImportError:
+    pass
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .seed import seed_data
@@ -16,17 +24,6 @@ async def lifespan(app: FastAPI):
     print('Prahari backend started - database initialized and seeded.')
     yield
     # Teardown (if needed in future) goes here
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    init_db()
-    seed_data()
-    print('Prahari backend started - database initialized and seeded.')
-    yield
-    # Shutdown (nothing to clean up for now)
-
 
 app = FastAPI(
     title='Prahari - Antarctic Operations Intelligence',
@@ -50,6 +47,7 @@ app.include_router(inventory.router)
 app.include_router(personnel.router)
 app.include_router(incidents.router)
 app.include_router(events_routes.router)
+app.include_router(geofences.router)
 
 @app.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):

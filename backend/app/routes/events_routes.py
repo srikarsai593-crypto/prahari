@@ -6,7 +6,7 @@ import json
 router = APIRouter(prefix='/events', tags=['events'])
 
 @router.get('')
-def list_events(module: str = None, limit: int = 100):
+def list_events(module: str = None, limit: int = 100, offset: int = 0):
     """This IS the shared events table — the single source of truth for ALL modules.
     The Emergency module's 'timeline' view is simply this endpoint.
     Do not build a second logging table."""
@@ -16,8 +16,8 @@ def list_events(module: str = None, limit: int = 100):
     if module:
         query += ' WHERE module = ?'
         params.append(module)
-    query += ' ORDER BY created_at DESC LIMIT ?'
-    params.append(limit)
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    params.extend([limit, offset])
     rows = db.execute(query, params).fetchall()
     result = []
     for r in rows:

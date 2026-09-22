@@ -11,7 +11,14 @@ const WebSocketContext = createContext<WebSocketContextType>({ socket: null, las
 
 export const useWebSocket = () => useContext(WebSocketContext);
 
-const WS_URL = 'ws://localhost:8000/ws';
+const getWsUrl = () => {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.hostname}:8000/ws`;
+  }
+  return 'ws://localhost:8000/ws';
+};
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
@@ -26,7 +33,7 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
   const connect = useCallback(() => {
     if (unmounted.current) return;
 
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(getWsUrl());
 
     ws.onopen = () => {
       if (unmounted.current) { ws.close(); return; }

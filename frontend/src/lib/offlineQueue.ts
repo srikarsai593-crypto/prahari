@@ -5,10 +5,26 @@ export interface QueuedRequest {
   description: string;
 }
 
+const STORAGE_KEY = 'prahari_offline_queue';
+
 class OfflineQueue {
   private queue: QueuedRequest[] = [];
   private _isOffline: boolean = false;
   private listeners: Set<() => void> = new Set();
+
+  constructor() {
+    // Restore queue from localStorage on startup (client-side only)
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          this.queue = JSON.parse(saved);
+        }
+      } catch {
+        this.queue = [];
+      }
+    }
+  }
 
   get isOffline() { return this._isOffline; }
   get pendingCount() { return this.queue.length; }
@@ -24,6 +40,16 @@ class OfflineQueue {
     this.listeners.forEach(fn => fn());
   }
 
+  private persist() {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.queue));
+      } catch (e) {
+        console.error('Failed to persist offline queue', e);
+      }
+    }
+  }
+
   setOffline(offline: boolean) {
     this._isOffline = offline;
     this.notify();
@@ -31,6 +57,7 @@ class OfflineQueue {
 
   enqueue(url: string, options: RequestInit, description: string) {
     this.queue.push({ url, options, timestamp: Date.now(), description });
+    this.persist();
     this.notify();
   }
 
@@ -74,6 +101,10 @@ class OfflineQueue {
           })
         });
       } catch (e) { console.error('Failed to log reconnect event', e); }
+    }
+    
+    if (flushed > 0 || failed.length > 0) {
+      this.persist();
     }
 
     this.notify();

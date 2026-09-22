@@ -321,6 +321,10 @@ async def trigger_sos(personnel_id: str):
     incident_id = 'inc-' + str(uuid.uuid4())[:8]
     lat = person['current_lat'] or -70.767
     lng = person['current_lng'] or 11.731
+    radius = 5000  # 5km SOS affected radius
+
+    # Compute initial accountability
+    expected, safe, unaccounted, _ = compute_accountability(db, lat, lng, radius)
 
     db.execute(
         'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status, expected_count, confirmed_safe_count, unaccounted_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -336,7 +340,23 @@ async def trigger_sos(personnel_id: str):
 @router.patch('/{personnel_id}/status', dependencies=[Depends(require_key)])
 async def update_status(personnel_id: str, body: dict):
     db = get_db()
-    new_status = body.get('status', 'at_station')
+    new_status = body.get('status')
+    
+    valid_statuses = {'at_station', 'in_transit', 'field', 'returned'}
+    if new_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of {valid_statuses}")
+        
+    person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
+    if not person:
+        raise HTTPException(status_code=404, detail='Personnel not found')
+        
+    current_status = person['status']
+    
+    # Optional: could add strict transition rules here if needed
+    # e.g., cannot go from 'at_station' directly to 'returned'
+    if current_status == 'at_station' and new_status == 'returned':
+         raise HTTPException(status_code=400, detail="Cannot transition from 'at_station' directly to 'returned'")
+
     db.execute('UPDATE personnel SET status = ? WHERE id = ?', (new_status, personnel_id))
     db.commit()
     p = db.execute('SELECT name FROM personnel WHERE id = ?', (personnel_id,)).fetchone()

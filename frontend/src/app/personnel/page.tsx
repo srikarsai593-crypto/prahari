@@ -80,8 +80,16 @@ export default function PersonnelPage() {
     if (simulating[id]) return;
     setSimulating(prev => ({ ...prev, [id]: true }));
     intervalRefs.current[id] = setInterval(async () => {
-      try { await api.simulateMove(id); }
-      catch (e) { clearInterval(intervalRefs.current[id]); delete intervalRefs.current[id]; setSimulating(prev => ({ ...prev, [id]: false })); }
+      try {
+        const res = await api.simulateMove(id) as any;
+        if (res && res.status === 'arrived') {
+          handleStopSim(id);
+          addToast('Personnel arrived at destination', 'success');
+          loadAll();
+        }
+      } catch (e) {
+        handleStopSim(id);
+      }
     }, 2000);
   };
 
