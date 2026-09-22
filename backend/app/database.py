@@ -126,7 +126,7 @@ def init_db():
     except Exception:
         pass  # Column already exists — safe to ignore
 
-    # ── Migration 2: Spread personnel coordinates (idempotent UPDATEs) ────────
+    # ── Migration 2: Spread personnel coordinates for legacy/uninitialized rows ──
     # Each person gets a unique position around Maitri Station so they don't
     # stack on top of each other. Running on every startup is safe — same values.
     coordinate_updates = [
@@ -139,13 +139,7 @@ def init_db():
     ]
     for lat, lng, pid in coordinate_updates:
         conn.execute(
-            'UPDATE personnel SET current_lat = ?, current_lng = ? WHERE id = ? AND current_lat = current_lng',
-            (lat, lng, pid)
-        )
-        # Unconditional update for the ID — ensures correct position even if lat!=lng
-        conn.execute(
-            'UPDATE personnel SET current_lat = ?, current_lng = ? WHERE id = ?',
+            'UPDATE personnel SET current_lat = ?, current_lng = ? WHERE id = ? AND (current_lat IS NULL OR current_lng IS NULL OR current_lat = current_lng)',
             (lat, lng, pid)
         )
     conn.commit()
-

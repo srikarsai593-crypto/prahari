@@ -97,20 +97,21 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-async def _try_llm_parse(system_prompt: str, user_prompt: str) -> tuple[str | None, str]:
+async def _try_llm_parse(system_prompt: str, user_prompt: str, model_cls) -> tuple[dict | None, str]:
     """
     Try Gemini, then Ollama. Returns (raw_json_string, source_label).
     source_label is "gemini", "ollama", or "" (empty = no LLM succeeded).
     """
-    # 1. Gemini
-    text = await call_gemini(system_prompt, user_prompt)
-    if text:
-        return text, 'gemini'
-
-    # 2. Ollama
-    text = await call_ollama(system_prompt, user_prompt)
-    if text:
-        return text, 'ollama'
+    for source, caller in (('gemini', call_gemini), ('ollama', call_ollama)):
+        text = await caller(system_prompt, user_prompt)
+        if not text:
+            continue
+        try:
+            data = json.loads(_strip_fences(text))
+            model_cls(**data)
+            return data, source
+        except Exception as e:
+            print(f'[{source.upper()}] JSON parse/validation error: {e}')
 
     return None, ''
 
@@ -181,14 +182,10 @@ async def parse_expedition_nl(raw_text: str) -> dict:
         'No explanation, no markdown, just the JSON object.'
     )
 
-    raw_json, source = await _try_llm_parse(system, raw_text)
-    if raw_json:
-        try:
-            data = json.loads(_strip_fences(raw_json))
-            parsed = LLMExpeditionParse(**data)
-            return {**parsed.model_dump(), 'parse_source': source}
-        except Exception as e:
-            print(f'[{source.upper()}] JSON parse error: {e}')
+    data, source = await _try_llm_parse(system, raw_text, LLMExpeditionParse)
+    if data:
+        parsed = LLMExpeditionParse(**data)
+        return {**parsed.model_dump(), 'parse_source': source}
 
     # Regex fallback
     parsed = fallback_parse_expedition(raw_text)
@@ -210,14 +207,10 @@ async def parse_voice_command(raw_text: str) -> dict:
         'No explanation, no markdown, just the JSON object.'
     )
 
-    raw_json, source = await _try_llm_parse(system, raw_text)
-    if raw_json:
-        try:
-            data = json.loads(_strip_fences(raw_json))
-            parsed = LLMVoiceCommandParse(**data)
-            return {**parsed.model_dump(), 'parse_source': source}
-        except Exception as e:
-            print(f'[{source.upper()}] JSON parse error: {e}')
+    data, source = await _try_llm_parse(system, raw_text, LLMVoiceCommandParse)
+    if data:
+        parsed = LLMVoiceCommandParse(**data)
+        return {**parsed.model_dump(), 'parse_source': source}
 
     parsed = fallback_parse_voice(raw_text)
     return {**parsed.model_dump(), 'parse_source': 'fallback'}

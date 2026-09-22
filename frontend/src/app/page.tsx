@@ -128,14 +128,14 @@ function useLiveStats(): LiveStats {
           ? incidents.value : [];
 
         const activeExp = expList.filter((e: any) => e.status === 'active' || e.status === 'planned').length;
-        const transitShip = shipList.filter((s: any) => !['delivered', 'cancelled'].includes(s.status)).length;
+        const transitShip = shipList.filter((s: any) => ['dispatched', 'in_transit', 'delayed'].includes(s.status)).length;
         const deployedPers = persList.filter((p: any) => p.status !== 'off_duty').length;
         const openInc = incList.filter((i: any) => i.status === 'open').length;
 
         setStats({
-          activeExpeditions: String(activeExp || expList.length),
-          shipmentsInTransit: String(transitShip || shipList.length),
-          personnelDeployed: String(deployedPers || persList.length),
+          activeExpeditions: String(activeExp),
+          shipmentsInTransit: String(transitShip),
+          personnelDeployed: String(deployedPers),
           openIncidents: openInc > 0 ? `${openInc} ACTIVE` : 'NONE',
           loading: false,
         });
