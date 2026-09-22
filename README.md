@@ -23,7 +23,7 @@ Antarctic research stations (Maitri, Bharati, Himadri) operate in the harshest e
 
 ### 🔥 Next-Level Engineering Decisions
 - **True Offline-First Mutex**: When comms go dark, Prahari queues all mutations locally. When the uplink is restored, it flushes the queue deterministically. Operations never stop.
-- **Deterministic SQL > AI Hallucinations**: We use local LLMs (Llama 3.2 via Ollama) to parse natural language requests, but rely on **hard SQL aggregates** for life-or-death inventory counts. No RAG approximations. No vector hallucinations.
+- **Deterministic SQL > AI Hallucinations**: We use a **Smart Fallback AI** (Gemini 1.5 Flash → Ollama Llama 3.2 → Regex) to parse natural language requests, but rely on **hard SQL aggregates** for life-or-death inventory counts. No RAG approximations. No vector hallucinations.
 - **Level-H QR Resilience**: Cargo QR codes are generated with Level-H (30%) error correction, guaranteeing scanability even if the physical label is heavily frosted, torn, or partially obscured.
 - **SQLite WAL Concurrency**: Configured SQLite with `PRAGMA journal_mode=WAL` and `busy_timeout=5000` to handle hundreds of concurrent WebSocket telemetry streams without database locking.
 
@@ -43,7 +43,7 @@ graph TD
         API[FastAPI Backend]
         WS[WebSocket Manager]
         DB[(SQLite WAL Mode)]
-        LLM[Ollama Local Model]
+        LLM[Gemini / Ollama AI]
     end
 
     UI <-->|HTTP / REST| API
