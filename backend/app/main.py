@@ -1,20 +1,35 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .seed import seed_data
 from .ws_manager import manager
 from .routes import expeditions, shipments, inventory, personnel, incidents
-from .routes import events_routes
+from .routes import events_routes, geofences
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: runs startup logic before yield, teardown after."""
+    init_db()
+    seed_data()
+    print('Prahari backend started - database initialized and seeded.')
+    yield
+    # Teardown (if needed in future) goes here
 
 app = FastAPI(
     title='Prahari - Antarctic Operations Intelligence',
     version='1.0.0',
-    description='Antarctic Logistics & Safety Intelligence Platform — Team 36 OURS | SIH26062'
+    description='Antarctic Logistics & Safety Intelligence Platform — Team 36 OURS | SIH26062',
+    lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['http://localhost:3000', 'http://127.0.0.1:3000', '*'],
+    allow_origins=[
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:3001',
+    ],
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
@@ -27,12 +42,7 @@ app.include_router(inventory.router)
 app.include_router(personnel.router)
 app.include_router(incidents.router)
 app.include_router(events_routes.router)
-
-@app.on_event('startup')
-def startup():
-    init_db()
-    seed_data()
-    print('Prahari backend started - database initialized and seeded.')
+app.include_router(geofences.router)
 
 @app.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):
@@ -50,3 +60,4 @@ def root():
 @app.get('/health')
 def health():
     return {'status': 'healthy'}
+

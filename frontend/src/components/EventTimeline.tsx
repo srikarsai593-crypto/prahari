@@ -3,10 +3,18 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useWebSocket } from './WebSocketProvider';
+import type { AppEvent } from '@/lib/types';
 
 export const EventTimeline = () => {
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<AppEvent[]>([]);
   const { lastMessage } = useWebSocket();
+
+  // Tick every 60s to force re-render of relative timestamps
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     api.listEvents(undefined, 20).then(data => {
@@ -16,7 +24,7 @@ export const EventTimeline = () => {
 
   useEffect(() => {
     if (lastMessage?.type === 'event' && lastMessage.data) {
-      setEvents(prev => [lastMessage.data, ...prev].slice(0, 20));
+      setEvents(prev => [lastMessage.data as AppEvent, ...prev].slice(0, 20));
     }
   }, [lastMessage]);
 
@@ -31,11 +39,13 @@ export const EventTimeline = () => {
     }
   };
 
+  // Called every render — recalculates based on current Date.now() due to tick state
   const timeAgo = (dateStr: string) => {
     const seconds = Math.max(0, Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000));
     if (seconds < 60)   return `${seconds}s ago`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    return `${Math.floor(seconds / 3600)}h ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
   };
 
   return (
@@ -66,7 +76,7 @@ export const EventTimeline = () => {
           <div className="p-3 bg-arctic-50/60 border-l-4 border-l-emerald-500 rounded-r-xl border border-arctic-200">
             <div className="flex justify-between text-[10px] text-frost-muted mb-0.5">
               <span className="text-emerald-700 font-bold">SYSTEM BOOT</span>
-              <span>08:00:00 UTC</span>
+              <span>now</span>
             </div>
             <p className="text-arctic-900 font-medium">PRAHARI Polar Kernel initialized. All station telemetry channels linked.</p>
           </div>

@@ -118,3 +118,34 @@ def init_db():
     );
     ''')
     conn.commit()
+
+    # ── Migration 1: Add simulation_step column (idempotent) ──────────────────
+    try:
+        conn.execute('ALTER TABLE personnel ADD COLUMN simulation_step INTEGER DEFAULT 0')
+        conn.commit()
+    except Exception:
+        pass  # Column already exists — safe to ignore
+
+    # ── Migration 2: Spread personnel coordinates (idempotent UPDATEs) ────────
+    # Each person gets a unique position around Maitri Station so they don't
+    # stack on top of each other. Running on every startup is safe — same values.
+    coordinate_updates = [
+        (-70.767, 11.731, 'per-priya'),    # Base — Maitri ops centre
+        (-70.769, 11.735, 'per-arjun'),    # ~300 m SE
+        (-70.771, 11.728, 'per-vikram'),   # ~450 m S
+        (-70.765, 11.738, 'per-meera'),    # ~400 m NE
+        (-70.773, 11.734, 'per-raj'),      # ~660 m S
+        (-70.763, 11.729, 'per-ananya'),   # ~450 m N
+    ]
+    for lat, lng, pid in coordinate_updates:
+        conn.execute(
+            'UPDATE personnel SET current_lat = ?, current_lng = ? WHERE id = ? AND current_lat = current_lng',
+            (lat, lng, pid)
+        )
+        # Unconditional update for the ID — ensures correct position even if lat!=lng
+        conn.execute(
+            'UPDATE personnel SET current_lat = ?, current_lng = ? WHERE id = ?',
+            (lat, lng, pid)
+        )
+    conn.commit()
+

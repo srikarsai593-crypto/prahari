@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from ..database import get_db
 from ..models import VoiceCommandRequest
 from ..events import log_event
@@ -94,7 +94,7 @@ async def process_voice_command(req: VoiceCommandRequest):
     else:
         new_qty = old_qty + result.quantity
     
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?', (new_qty, now, item['id']))
     db.commit()
     
@@ -111,7 +111,7 @@ async def update_item(item_id: str, body: dict):
         raise HTTPException(status_code=404, detail='Item not found')
     
     quantity = body.get('quantity', row['quantity'])
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?', (quantity, now, item_id))
     db.commit()
     await log_event('inventory', f'Inventory updated: {row["name"]} quantity → {quantity}', 'commander', item_id)

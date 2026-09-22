@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import uuid, json
 from ..database import get_db
 from ..models import ExpeditionCreate, ExpeditionResponse, FeasibilityRequest, FeasibilityResponse, FeasibilityLineItem
 from ..events import log_event
 from ..llm import parse_expedition_nl
+from ..auth import require_key
 
 router = APIRouter(prefix='/expeditions', tags=['expeditions'])
 
@@ -21,7 +22,7 @@ def get_expedition(expedition_id: str):
         raise HTTPException(status_code=404, detail='Expedition not found')
     return dict(row)
 
-@router.post('')
+@router.post('', dependencies=[Depends(require_key)])
 async def create_expedition(data: ExpeditionCreate):
     db = get_db()
     exp_id = 'exp-' + str(uuid.uuid4())[:8]
@@ -33,13 +34,14 @@ async def create_expedition(data: ExpeditionCreate):
     await log_event('expedition', f'Expedition "{data.name}" created at {data.station}', 'commander', exp_id)
     return {'id': exp_id, **data.model_dump()}
 
-@router.post('/parse-nl')
+@router.post('/parse-nl', dependencies=[Depends(require_key)])
 async def parse_natural_language(body: dict):
     raw_text = body.get('text', '')
     if not raw_text:
         raise HTTPException(status_code=400, detail='No text provided')
+    # Returns dict with parse_source field indicating which AI path was used
     result = await parse_expedition_nl(raw_text)
-    return result.model_dump()
+    return result
 
 @router.post('/feasibility')
 async def check_feasibility(req: FeasibilityRequest):

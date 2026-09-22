@@ -1,5 +1,5 @@
 import uuid, json
-from datetime import datetime
+from datetime import datetime, timezone
 from .database import get_db
 from .ws_manager import manager
 
@@ -22,7 +22,7 @@ async def log_event(module: str, action: str, actor: str = 'system', related_id:
             'actor': actor,
             'related_id': related_id,
             'metadata': metadata,
-            'created_at': datetime.utcnow().isoformat()
+            'created_at': datetime.now(timezone.utc).isoformat()
         }
     })
     return event_id
