@@ -40,8 +40,10 @@ async def parse_natural_language(body: dict):
     raw_text = body.get('text', '')
     if not raw_text:
         raise HTTPException(status_code=400, detail='No text provided')
-    result, ai_used = await parse_expedition_nl(raw_text)
-    return {**result.model_dump(), 'ai_used': ai_used}
+    result = await parse_expedition_nl(raw_text)
+    # parse_source tells us which path was used; derive ai_used for the frontend
+    ai_used = result.get('parse_source') in ('gemini', 'ollama')
+    return {**result, 'ai_used': ai_used}
 
 @router.post('/feasibility')
 async def check_feasibility(req: FeasibilityRequest):

@@ -321,6 +321,10 @@ async def trigger_sos(personnel_id: str):
     incident_id = 'inc-' + str(uuid.uuid4())[:8]
     lat = person['current_lat'] or -70.767
     lng = person['current_lng'] or 11.731
+    radius = 5000  # 5km SOS affected radius
+
+    # Compute initial accountability
+    expected, safe, unaccounted, _ = compute_accountability(db, lat, lng, radius)
 
     db.execute(
         'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status, expected_count, confirmed_safe_count, unaccounted_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
