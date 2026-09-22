@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import uuid, json, os
 from datetime import datetime, timezone
 from ..database import get_db
@@ -7,6 +7,8 @@ from ..events import log_event
 from ..ws_manager import manager
 from ..geo import haversine_distance, check_geofences, check_route_deviation
 from ..simulation import get_next_position, reset_simulation, get_planned_route
+from .incidents import compute_accountability
+from ..auth import require_key
 
 router = APIRouter(prefix='/personnel', tags=['personnel'])
 
@@ -186,7 +188,7 @@ def get_personnel(personnel_id: str):
         raise HTTPException(status_code=404, detail='Personnel not found')
     return dict(row)
 
-@router.post('/movement-plans')
+@router.post('/movement-plans', dependencies=[Depends(require_key)])
 async def create_movement_plan(data: MovementPlanCreate):
     db = get_db()
     plan_id = 'mp-' + str(uuid.uuid4())[:8]
@@ -206,16 +208,16 @@ async def create_movement_plan(data: MovementPlanCreate):
     
     return {'id': plan_id, 'status': 'planned', **data.model_dump()}
 
-@router.post('/{personnel_id}/simulate-move')
+@router.post('/{personnel_id}/simulate-move', dependencies=[Depends(require_key)])
 async def simulate_move(personnel_id: str):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
     if not person:
         raise HTTPException(status_code=404, detail='Personnel not found')
-    
-    position = get_next_position(personnel_id)
+
+    position = get_next_position(personnel_id, db)
     if position is None:
-        # Simulation complete - arrived
+        # Simulation complete — arrived at destination
         db.execute('UPDATE personnel SET status = ? WHERE id = ?', ('field', personnel_id))
         mp = db.execute('SELECT id FROM movement_plans WHERE personnel_id = ? ORDER BY departure_time DESC LIMIT 1', (personnel_id,)).fetchone()
         if mp:
@@ -224,10 +226,12 @@ async def simulate_move(personnel_id: str):
         await log_event('personnel', f'{person["name"]} arrived at destination', 'gps_system', personnel_id)
         await broadcast_open_incident_accountability(db)
         return {'status': 'arrived', 'personnel_id': personnel_id}
-    
-    now = datetime.utcnow().isoformat()
-    db.execute('UPDATE personnel SET current_lat = ?, current_lng = ?, last_update_at = ?, status = ? WHERE id = ?',
-        (position['lat'], position['lng'], now, 'in_transit', personnel_id))
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        'UPDATE personnel SET current_lat = ?, current_lng = ?, last_update_at = ?, status = ? WHERE id = ?',
+        (position['lat'], position['lng'], now, 'in_transit', personnel_id)
+    )
     db.commit()
     
     # Check geofences
@@ -277,36 +281,54 @@ async def simulate_move(personnel_id: str):
     
     return {'personnel_id': personnel_id, 'position': position, 'alert': alert}
 
-@router.post('/{personnel_id}/reset-simulation')
+@router.post('/{personnel_id}/reset-simulation', dependencies=[Depends(require_key)])
 def reset_sim(personnel_id: str):
-    reset_simulation(personnel_id)
     db = get_db()
-    db.execute('UPDATE personnel SET current_lat = -70.767, current_lng = 11.731, status = ? WHERE id = ?', ('at_station', personnel_id))
+    reset_simulation(personnel_id, db)
+    # Restore to original seeded position for this person
+    origin_coords = {
+        'per-priya':  (-70.767, 11.731),
+        'per-arjun':  (-70.769, 11.735),
+        'per-vikram': (-70.771, 11.728),
+        'per-meera':  (-70.765, 11.738),
+        'per-raj':    (-70.773, 11.734),
+        'per-ananya': (-70.763, 11.729),
+    }
+    lat, lng = origin_coords.get(personnel_id, (-70.767, 11.731))
+    db.execute(
+        'UPDATE personnel SET current_lat = ?, current_lng = ?, status = ?, simulation_step = 0 WHERE id = ?',
+        (lat, lng, 'at_station', personnel_id)
+    )
     db.commit()
-    return {'status': 'reset'}
+    return {'status': 'reset', 'personnel_id': personnel_id}
 
-@router.post('/{personnel_id}/sos')
+@router.post('/{personnel_id}/sos', dependencies=[Depends(require_key)])
 async def trigger_sos(personnel_id: str):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
     if not person:
         raise HTTPException(status_code=404, detail='Personnel not found')
-    
+
     # Create incident at personnel's current location
     incident_id = 'inc-' + str(uuid.uuid4())[:8]
     lat = person['current_lat'] or -70.767
     lng = person['current_lng'] or 11.731
-    
+    radius = 3000
+
+    # Compute accountability at the time of SOS
+    expected, safe, unaccounted, personnel_list = compute_accountability(db, lat, lng, radius)
+
     db.execute(
-        'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (incident_id, 'medical', lat, lng, 3000, 'critical', 'open')
+        'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status, expected_count, confirmed_safe_count, unaccounted_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (incident_id, 'medical', lat, lng, radius, 'critical', 'open', expected, safe, unaccounted)
     )
     db.commit()
-    
+
     await log_event('emergency', f'SOS triggered by {person["name"]} at ({lat}, {lng})', 'sos_system', incident_id)
     await manager.broadcast({'type': 'alert', 'data': {'type': 'sos', 'personnel': person['name'], 'lat': lat, 'lng': lng, 'incident_id': incident_id}})
-    
-    return {'incident_id': incident_id, 'personnel': person['name']}
+    await manager.broadcast({'type': 'accountability_update', 'data': {'incident_id': incident_id, 'expected': expected, 'confirmed_safe': safe, 'unaccounted': unaccounted, 'personnel': personnel_list}})
+
+    return {'incident_id': incident_id, 'personnel': person['name'], 'expected_count': expected, 'confirmed_safe': safe, 'unaccounted': unaccounted}
 
 @router.get('/accountability/check')
 def check_accountability(lat: float, lng: float, radius: float = 5000):
@@ -325,7 +347,7 @@ def check_accountability(lat: float, lng: float, radius: float = 5000):
     
     return {'expected': expected, 'confirmed_safe': confirmed_safe, 'unaccounted': unaccounted, 'personnel': in_zone}
 
-@router.patch('/{personnel_id}/status')
+@router.patch('/{personnel_id}/status', dependencies=[Depends(require_key)])
 async def update_status(personnel_id: str, body: dict):
     db = get_db()
     new_status = body.get('status', 'at_station')

@@ -52,7 +52,7 @@ graph TD
     
     API -->|Read/Write| DB
     WS -->|Live GPS & Alerts| UI
-    API -->|Natural Language Parse| LLM
+    API -->|LLM Fallback Chain (Gemini->Ollama->Regex)| LLM
 ```
 
 ---
@@ -60,38 +60,45 @@ graph TD
 ## 🌌 The 5 Core Modules
 
 1. **🗺️ Expedition Planning**: 
-   Commander inputs natural language -> Local AI parses logistics -> Feasibility Engine calculates Readiness Score based on live personnel, fuel, and station capacity.
+   Commander inputs natural language -> Smart Fallback AI (Gemini 1.5 Flash → Ollama → Regex) parses logistics -> Feasibility Engine calculates Readiness Score based on live personnel, fuel, and station capacity.
 2. **📦 Cargo Tracking**: 
    QR-driven supply chain tracking. Simulates Blizzard `ΔT` to dynamically update shipment risk scores and ETAs.
 3. **🔋 Dynamic Inventory**: 
    Tracks fuel, rations, and medical supplies using algorithmic depletion curves: 
    `days_of_cover = quantity / (base_burn_rate * (1 + beta * delta_T))`
 4. **📍 Personnel Routing**: 
-   Live WebSocket GPS tracking. Generates multi-node movement plans and automatically triggers geofence violations if researchers stray into crevasses.
+   Live WebSocket GPS tracking with SQLite WAL persistence. Generates multi-node movement plans and automatically triggers geofence violations if researchers stray into crevasses.
 5. **🚨 Emergency Accountability**: 
-   One-click SOS. Instantly computes Haversine distances to locate the nearest emergency assets (snowcats, medical sleds) and tallies live accountability metrics (Expected vs. Confirmed Safe).
+   One-click SOS. Instantly computes Haversine distances to locate the nearest emergency assets (snowcats, medical sleds) and tallies live accountability metrics. All write endpoints are secured via `X-Commander-Key` API authentication.
 
 ---
 
 ## ⚡ Quick Start (Local Demo)
 
-Prahari requires zero cloud dependencies. You can run it in a bunker.
+Prahari requires zero cloud dependencies (but gracefully uses them if available).
 
-### 1. Boot the Station Backend
+### 1. Configure the Environment
+Create a `.env` file in the `backend` directory:
+```env
+GEMINI_API_KEY=your_google_ai_studio_key  # Optional: Fallbacks to Ollama or regex if omitted
+PRAHARI_API_KEY=prahari-demo-2024         # Optional: Defaults to prahari-demo-2024
+```
+
+### 2. Boot the Station Backend
 ```bash
 cd backend
 pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 2. Boot the Edge Frontend
+### 3. Boot the Edge Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 3. Experience the Live Scenario
+### 4. Experience the Live Scenario
 Open `http://localhost:3000/scenario` in your browser. 
 We built a **fully scripted, interactive scenario runner** specifically for the judges. It walks through a complete end-to-end Antarctic operation—from AI expedition planning to a live GPS geofence violation—proving the integration of all 5 modules in real-time.
 

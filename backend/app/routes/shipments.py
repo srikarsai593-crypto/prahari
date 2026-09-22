@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
 import uuid, json, io, base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import qrcode
 from ..database import get_db
 from ..models import ShipmentCreate, RiskUpdateRequest
@@ -17,7 +17,7 @@ STATUS_ORDER = ['dispatched', 'in_transit', 'arrived', 'unloaded']
 CAPACITY_KG = 10000  # Hard-coded vessel capacity
 
 def generate_barcode_id(db):
-    year = datetime.utcnow().year
+    year = datetime.now(timezone.utc).year
     count = db.execute('SELECT COUNT(*) FROM shipments').fetchone()[0]
     return f'SHP-{year}-{count + 1:04d}'
 
@@ -74,7 +74,7 @@ async def create_shipment(data: ShipmentCreate):
     db = get_db()
     ship_id = 'shp-' + str(uuid.uuid4())[:8]
     barcode_id = generate_barcode_id(db)
-    eta = (datetime.utcnow() + timedelta(days=14)).isoformat()
+    eta = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
     
     # Capacity check
     capacity_warning = None
@@ -83,7 +83,7 @@ async def create_shipment(data: ShipmentCreate):
     
     db.execute(
         'INSERT INTO shipments (id, barcode_id, expedition_id, item_name, category, weight_kg, priority, destination_station, status, dispatch_date, eta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (ship_id, barcode_id, data.expedition_id, data.item_name, data.category, data.weight_kg, data.priority, data.destination_station, 'dispatched', datetime.utcnow().isoformat(), eta)
+        (ship_id, barcode_id, data.expedition_id, data.item_name, data.category, data.weight_kg, data.priority, data.destination_station, 'dispatched', datetime.now(timezone.utc).isoformat(), eta)
     )
     db.commit()
     await log_event('cargo', f'Shipment {barcode_id} created: {data.item_name} ({data.category})', 'commander', ship_id)
@@ -119,7 +119,7 @@ async def scan_shipment(shipment_id: str = None, barcode_id: str = None):
         raise HTTPException(status_code=400, detail='Shipment already fully processed')
     
     new_status = STATUS_ORDER[current_idx + 1]
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     db.execute('UPDATE shipments SET status = ?, last_scanned_at = ?, updated_at = ? WHERE id = ?',
         (new_status, now, now, shipment['id']))
     db.commit()
@@ -174,11 +174,11 @@ async def update_risk(shipment_id: str, req: RiskUpdateRequest):
             try:
                 eta_dt = datetime.fromisoformat(eta)
             except:
-                eta_dt = datetime.utcnow() + timedelta(days=14)
+                eta_dt = datetime.now(timezone.utc) + timedelta(days=14)
             eta_dt += timedelta(hours=risk_score * 0.5)
             eta = eta_dt.isoformat()
     
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     db.execute('UPDATE shipments SET risk_score = ?, status = ?, delay_reason = ?, eta = ?, updated_at = ? WHERE id = ?',
         (risk_score, new_status, delay_reason, eta, now, shipment_id))
     db.commit()

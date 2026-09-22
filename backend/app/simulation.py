@@ -1,5 +1,3 @@
-import json
-
 # Pre-scripted demo route: Maitri -> Camp Alpha with deliberate deviation into Crevasse Zone
 DEMO_ROUTE = [
     {'lat': -70.767, 'lng': 11.731},    # Start: Maitri Station
@@ -15,23 +13,29 @@ DEMO_ROUTE = [
     {'lat': -70.850, 'lng': 11.950},    # Step 10: Camp Alpha
 ]
 
-# Track simulation state per personnel (in-memory)
-simulation_state: dict[str, int] = {}
 
-def get_next_position(personnel_id: str) -> dict | None:
-    """Advance one step along the demo route. Returns new position or None if complete."""
-    current = simulation_state.get(personnel_id, 0)
+def get_next_position(personnel_id: str, db) -> dict | None:
+    """Advance one step along the demo route. State persisted in DB so it survives restarts."""
+    row = db.execute('SELECT simulation_step FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
+    if row is None:
+        return None
+    current = row['simulation_step'] or 0
     if current >= len(DEMO_ROUTE):
         return None
     position = DEMO_ROUTE[current]
-    simulation_state[personnel_id] = current + 1
+    db.execute('UPDATE personnel SET simulation_step = ? WHERE id = ?', (current + 1, personnel_id))
+    # Caller commits
     return position
 
-def reset_simulation(personnel_id: str):
-    simulation_state[personnel_id] = 0
+
+def reset_simulation(personnel_id: str, db) -> None:
+    """Reset GPS simulation step to 0 in DB."""
+    db.execute('UPDATE personnel SET simulation_step = 0 WHERE id = ?', (personnel_id,))
+    # Caller commits
+
 
 def get_planned_route():
-    """Return the normal planned route (excluding deviation waypoints)."""
+    """Return the normal planned route (excluding deliberate deviation waypoints)."""
     return [
         {'lat': -70.767, 'lng': 11.731},
         {'lat': -70.775, 'lng': 11.750},

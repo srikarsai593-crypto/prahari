@@ -1,4 +1,8 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { api } from '@/lib/api';
 
 const modules = [
   {
@@ -83,14 +87,98 @@ const modules = [
   },
 ];
 
-const stats = [
-  { label: 'Active Expeditions',   val: '3',           color: 'text-arctic-700' },
-  { label: 'Shipments in Transit', val: '12',          color: 'text-arctic-700' },
-  { label: 'Personnel Deployed',   val: '45',          color: 'text-arctic-700' },
-  { label: 'System Status',        val: '100% ONLINE', color: 'text-emerald-600' },
-];
+type LiveStats = {
+  activeExpeditions: string;
+  shipmentsInTransit: string;
+  personnelDeployed: string;
+  openIncidents: string;
+  loading: boolean;
+};
+
+function useLiveStats(): LiveStats {
+  const [stats, setStats] = useState<LiveStats>({
+    activeExpeditions: '—',
+    shipmentsInTransit: '—',
+    personnelDeployed: '—',
+    openIncidents: '—',
+    loading: true,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchStats = async () => {
+      try {
+        const [expeditions, shipments, personnel, incidents] = await Promise.allSettled([
+          fetch('/api/expeditions').then(r => r.json()),
+          fetch('/api/shipments').then(r => r.json()),
+          fetch('/api/personnel').then(r => r.json()),
+          fetch('/api/incidents').then(r => r.json()),
+        ]);
+
+        if (cancelled) return;
+
+        const expList = expeditions.status === 'fulfilled' && Array.isArray(expeditions.value)
+          ? expeditions.value : [];
+        const shipList = shipments.status === 'fulfilled' && Array.isArray(shipments.value)
+          ? shipments.value : [];
+        const persList = personnel.status === 'fulfilled' && Array.isArray(personnel.value)
+          ? personnel.value : [];
+        const incList = incidents.status === 'fulfilled' && Array.isArray(incidents.value)
+          ? incidents.value : [];
+
+        const activeExp = expList.filter((e: any) => e.status === 'active' || e.status === 'planned').length;
+        const transitShip = shipList.filter((s: any) => !['delivered', 'cancelled'].includes(s.status)).length;
+        const deployedPers = persList.filter((p: any) => p.status !== 'off_duty').length;
+        const openInc = incList.filter((i: any) => i.status === 'open').length;
+
+        setStats({
+          activeExpeditions: String(activeExp || expList.length),
+          shipmentsInTransit: String(transitShip || shipList.length),
+          personnelDeployed: String(deployedPers || persList.length),
+          openIncidents: openInc > 0 ? `${openInc} ACTIVE` : 'NONE',
+          loading: false,
+        });
+      } catch {
+        if (!cancelled) {
+          setStats(prev => ({ ...prev, loading: false }));
+        }
+      }
+    };
+
+    fetchStats();
+    return () => { cancelled = true; };
+  }, []);
+
+  return stats;
+}
 
 export default function Home() {
+  const stats = useLiveStats();
+
+  const kpiStats = [
+    {
+      label: 'Active Expeditions',
+      val: stats.loading ? '…' : stats.activeExpeditions,
+      color: 'text-arctic-700',
+    },
+    {
+      label: 'Shipments in Transit',
+      val: stats.loading ? '…' : stats.shipmentsInTransit,
+      color: 'text-arctic-700',
+    },
+    {
+      label: 'Personnel Deployed',
+      val: stats.loading ? '…' : stats.personnelDeployed,
+      color: 'text-arctic-700',
+    },
+    {
+      label: 'Open Incidents',
+      val: stats.loading ? '…' : stats.openIncidents,
+      color: stats.openIncidents !== 'NONE' && !stats.loading ? 'text-rose-600' : 'text-emerald-600',
+    },
+  ];
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] max-w-5xl mx-auto">
 
@@ -165,9 +253,12 @@ export default function Home() {
       {/* ── KPI Stats ── */}
       <div className="mt-12 w-full subview-card rounded-2xl px-6 py-5">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          {stats.map((s) => (
+          {kpiStats.map((s) => (
             <div key={s.label} className="text-center">
-              <div className={`text-2xl md:text-3xl font-bold mb-1 tracking-tight ${s.color}`} style={{ fontFamily: 'Outfit, sans-serif' }}>
+              <div
+                className={`text-2xl md:text-3xl font-bold mb-1 tracking-tight transition-all duration-500 ${s.color} ${stats.loading ? 'opacity-40' : ''}`}
+                style={{ fontFamily: 'Outfit, sans-serif' }}
+              >
                 {s.val}
               </div>
               <div className="text-[10px] text-frost-muted uppercase tracking-widest" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>

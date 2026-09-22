@@ -47,13 +47,34 @@ export default function ExpeditionPage() {
     }
   };
 
+  const formatDateToISO = (dateStr?: string | null) => {
+    if (!dateStr) return dateStr;
+    if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+    return dateStr;
+  };
+
   const handleParse = async () => {
     if (!nlText.trim()) return;
     setParsing(true);
     try {
       const res = await api.parseNL(nlText);
-      setForm(prev => ({ ...prev, ...res, raw_request: nlText }));
-      addToast('AI parsed waypoints, fuel quotas, and crew specifications', 'success');
+      const sourceLabel = res.parse_source === 'gemini' ? '🤖 Gemini AI'
+        : res.parse_source === 'ollama' ? '🦙 Local LLM'
+        : '📐 Rule-based parser';
+      setForm(prev => ({
+        ...prev,
+        name: res.name ?? prev.name,
+        station: res.station ?? prev.station,
+        start_date: formatDateToISO(res.start_date) ?? prev.start_date,
+        end_date: formatDateToISO(res.end_date) ?? prev.end_date,
+        personnel_required: typeof res.personnel_required === 'number' ? res.personnel_required : prev.personnel_required,
+        fuel_required_l: typeof res.fuel_required_l === 'number' ? res.fuel_required_l : prev.fuel_required_l,
+        raw_request: nlText,
+      }));
+      addToast(`${sourceLabel} — crew, fuel, and dates extracted`, 'success');
     } catch (e: any) {
       addToast(e?.message || 'Failed to parse text', 'alert');
     } finally { setParsing(false); }
@@ -158,11 +179,11 @@ export default function ExpeditionPage() {
             </div>
             <div>
               <label>Personnel Count</label>
-              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="4" min="0" value={form.personnel_required || ''} onChange={e => setForm({ ...form, personnel_required: parseInt(e.target.value) || 0 })} />
+              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="4" min="0" value={form.personnel_required.toString()} onChange={e => setForm({ ...form, personnel_required: parseInt(e.target.value) || 0 })} />
             </div>
             <div>
               <label>Fuel Required (L)</label>
-              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="300" min="0" value={form.fuel_required_l || ''} onChange={e => setForm({ ...form, fuel_required_l: parseFloat(e.target.value) || 0 })} />
+              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="300" min="0" value={form.fuel_required_l.toString()} onChange={e => setForm({ ...form, fuel_required_l: parseFloat(e.target.value) || 0 })} />
             </div>
           </div>
           <div className="flex justify-end">
