@@ -9,7 +9,9 @@ def seed_data():
     count = db.execute('SELECT COUNT(*) FROM personnel').fetchone()[0]
     if count > 0:
         return
-    
+
+    now = datetime.now(timezone.utc)
+
     # Expedition
     exp_id = 'exp-' + str(uuid.uuid4())[:8]
     db.execute('INSERT INTO expeditions (id, name, raw_request, station, start_date, end_date, personnel_required, fuel_required_l, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -17,7 +19,7 @@ def seed_data():
          (datetime.now(timezone.utc) + timedelta(days=10)).strftime('%Y-%m-%d'),
          (datetime.now(timezone.utc) + timedelta(days=40)).strftime('%Y-%m-%d'),
          8, 8000, 'draft'))
-    
+
     # Inventory items - FUEL is deliberately below expedition requirement (6500 < 8000)
     items = [
         ('inv-fuel', 'Diesel Fuel', 'consumable', 'Maitri', 6500, 'L', 350, 0.15),
@@ -27,27 +29,28 @@ def seed_data():
     ]
     for item in items:
         db.execute('INSERT INTO inventory_items (id, name, category, station, quantity, unit, base_burn_rate, beta) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', item)
-    
-    # Personnel - 6 people at Maitri (expedition wants 8 -> feasibility gap)
+
+    # Personnel — spread across Maitri area so they appear as distinct map markers.
+    # 6 people (expedition wants 8 → feasibility gap is intentional).
     personnel_data = [
-        ('per-priya', 'Dr. Priya Sharma', 'Researcher', exp_id, 'at_station', -70.767, 11.731),
-        ('per-arjun', 'Dr. Arjun Patel', 'Researcher', exp_id, 'at_station', -70.767, 11.731),
-        ('per-vikram', 'Cmdr. Vikram Singh', 'Commander', None, 'at_station', -70.767, 11.731),
-        ('per-meera', 'Lt. Meera Iyer', 'Engineer', None, 'at_station', -70.767, 11.731),
-        ('per-raj', 'Sgt. Raj Kumar', 'Logistics', None, 'at_station', -70.767, 11.731),
-        ('per-ananya', 'Dr. Ananya Reddy', 'Medical Officer', None, 'at_station', -70.767, 11.731),
+        ('per-priya',  'Dr. Priya Sharma',    'Researcher',      exp_id, 'at_station', -70.767, 11.731),  # Maitri ops centre
+        ('per-arjun',  'Dr. Arjun Patel',     'Researcher',      exp_id, 'at_station', -70.769, 11.735),  # ~300 m SE
+        ('per-vikram', 'Cmdr. Vikram Singh',  'Commander',       None,   'at_station', -70.771, 11.728),  # ~450 m S
+        ('per-meera',  'Lt. Meera Iyer',      'Engineer',        None,   'at_station', -70.765, 11.738),  # ~400 m NE
+        ('per-raj',    'Sgt. Raj Kumar',      'Logistics',       None,   'at_station', -70.773, 11.734),  # ~660 m S
+        ('per-ananya', 'Dr. Ananya Reddy',    'Medical Officer', None,   'at_station', -70.763, 11.729),  # ~450 m N
     ]
     for p in personnel_data:
         db.execute('INSERT INTO personnel (id, name, role, expedition_id, status, current_lat, current_lng) VALUES (?, ?, ?, ?, ?, ?, ?)', p)
-    
+
     # Geofences
     geofences = [
-        ('gf-maitri', 'Maitri Station', 'station', -70.767, 11.731, 2000),
-        ('gf-campa', 'Camp Alpha', 'field_camp', -70.85, 11.95, 1500),
-        ('gf-crevasse', 'Crevasse Zone', 'restricted', -70.82, 11.88, 800),
+        ('gf-maitri',   'Maitri Station', 'station',    -70.767, 11.731, 2000),
+        ('gf-campa',    'Camp Alpha',     'field_camp', -70.85,  11.95,  1500),
+        ('gf-crevasse', 'Crevasse Zone',  'restricted', -70.82,  11.88,   800),
     ]
     for gf in geofences:
         db.execute('INSERT INTO geofences (id, name, type, center_lat, center_lng, radius_m) VALUES (?, ?, ?, ?, ?, ?)', gf)
-    
+
     db.commit()
     print('Database seeded successfully!')

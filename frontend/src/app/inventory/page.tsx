@@ -28,7 +28,7 @@ export default function InventoryPage() {
   const loadInventory = async () => {
     setLoading(true);
     try {
-      const params = filter !== 'All' ? { station: filter } : {};
+      const params: Record<string, string> = filter !== 'All' ? { station: filter } : {};
       const data = await api.listInventory(params);
       const items = Array.isArray(data) ? data : [];
       setInventory(items);
@@ -47,7 +47,7 @@ export default function InventoryPage() {
     if (!transcript.trim()) return addToast('Enter a voice command first', 'warning');
     setProcessing(true);
     try {
-      const res = await api.voiceCommand(transcript);
+      const res = await api.voiceCommand(transcript) as { applied: boolean; item_name?: string; new_quantity?: number; error?: string };
       if (res.applied) {
         addToast(`${res.item_name} updated to ${res.new_quantity}`, 'success');
       } else {

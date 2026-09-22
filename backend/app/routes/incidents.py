@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import uuid
 from datetime import datetime
 from ..database import get_db
@@ -6,6 +6,7 @@ from ..models import IncidentCreate
 from ..events import log_event
 from ..ws_manager import manager
 from ..geo import haversine_distance
+from ..auth import require_key
 
 router = APIRouter(prefix='/incidents', tags=['incidents'])
 

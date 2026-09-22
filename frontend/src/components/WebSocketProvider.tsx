@@ -60,6 +60,7 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
       // onclose fires after onerror; reconnect handled there
       ws.close();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

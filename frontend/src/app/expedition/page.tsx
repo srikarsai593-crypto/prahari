@@ -47,6 +47,15 @@ export default function ExpeditionPage() {
     }
   };
 
+  const formatDateToISO = (dateStr?: string | null) => {
+    if (!dateStr) return dateStr;
+    if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+    return dateStr;
+  };
+
   const handleParse = async () => {
     if (!nlText.trim()) return;
     setParsing(true);
@@ -169,11 +178,11 @@ export default function ExpeditionPage() {
             </div>
             <div>
               <label>Personnel Count</label>
-              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="4" min="0" value={form.personnel_required || ''} onChange={e => setForm({ ...form, personnel_required: parseInt(e.target.value) || 0 })} />
+              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="4" min="0" value={form.personnel_required.toString()} onChange={e => setForm({ ...form, personnel_required: parseInt(e.target.value) || 0 })} />
             </div>
             <div>
               <label>Fuel Required (L)</label>
-              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="300" min="0" value={form.fuel_required_l || ''} onChange={e => setForm({ ...form, fuel_required_l: parseFloat(e.target.value) || 0 })} />
+              <input type="number" className="w-full bg-white border border-arctic-200 rounded-xl px-3 py-2 text-xs text-arctic-900 focus:border-arctic-500 focus:outline-none" placeholder="300" min="0" value={form.fuel_required_l.toString()} onChange={e => setForm({ ...form, fuel_required_l: parseFloat(e.target.value) || 0 })} />
             </div>
           </div>
           <div className="flex justify-end">

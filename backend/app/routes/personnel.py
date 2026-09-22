@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import uuid, json, os
 from datetime import datetime, timezone
 from ..database import get_db
@@ -8,6 +8,8 @@ from ..events import log_event
 from ..ws_manager import manager
 from ..geo import haversine_distance, check_geofences, check_route_deviation
 from ..simulation import get_next_position, reset_simulation, get_planned_route
+from .incidents import compute_accountability
+from ..auth import require_key
 
 router = APIRouter(prefix='/personnel', tags=['personnel'])
 
@@ -209,7 +211,7 @@ def get_personnel(personnel_id: str):
         raise HTTPException(status_code=404, detail='Personnel not found')
     return dict(row)
 
-@router.post('/movement-plans')
+@router.post('/movement-plans', dependencies=[Depends(require_key)])
 async def create_movement_plan(data: MovementPlanCreate):
     db = get_db()
     plan_id = 'mp-' + str(uuid.uuid4())[:8]
@@ -229,7 +231,7 @@ async def create_movement_plan(data: MovementPlanCreate):
 
     return {'id': plan_id, 'status': 'planned', **data.model_dump()}
 
-@router.post('/{personnel_id}/simulate-move')
+@router.post('/{personnel_id}/simulate-move', dependencies=[Depends(require_key)])
 async def simulate_move(personnel_id: str):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
@@ -238,7 +240,7 @@ async def simulate_move(personnel_id: str):
 
     position = get_next_position(personnel_id, db)
     if position is None:
-        # Simulation complete - arrived
+        # Simulation complete — arrived at destination
         db.execute('UPDATE personnel SET status = ? WHERE id = ?', ('field', personnel_id))
         mp = db.execute('SELECT id FROM movement_plans WHERE personnel_id = ? ORDER BY departure_time DESC LIMIT 1', (personnel_id,)).fetchone()
         if mp:
@@ -300,15 +302,15 @@ async def simulate_move(personnel_id: str):
 
     return {'personnel_id': personnel_id, 'position': position, 'alert': alert}
 
-@router.post('/{personnel_id}/reset-simulation')
+@router.post('/{personnel_id}/reset-simulation', dependencies=[Depends(require_key)])
 def reset_sim(personnel_id: str):
     db = get_db()
     reset_simulation(personnel_id, db)
     db.execute('UPDATE personnel SET current_lat = -70.767, current_lng = 11.731, status = ? WHERE id = ?', ('at_station', personnel_id))
     db.commit()
-    return {'status': 'reset'}
+    return {'status': 'reset', 'personnel_id': personnel_id}
 
-@router.post('/{personnel_id}/sos')
+@router.post('/{personnel_id}/sos', dependencies=[Depends(require_key)])
 async def trigger_sos(personnel_id: str):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
@@ -321,8 +323,8 @@ async def trigger_sos(personnel_id: str):
     lng = person['current_lng'] or 11.731
 
     db.execute(
-        'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (incident_id, 'medical', lat, lng, 3000, 'critical', 'open')
+        'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, severity, status, expected_count, confirmed_safe_count, unaccounted_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (incident_id, 'medical', lat, lng, radius, 'critical', 'open', expected, safe, unaccounted)
     )
     db.commit()
 
@@ -331,7 +333,7 @@ async def trigger_sos(personnel_id: str):
 
     return {'incident_id': incident_id, 'personnel': person['name']}
 
-@router.patch('/{personnel_id}/status')
+@router.patch('/{personnel_id}/status', dependencies=[Depends(require_key)])
 async def update_status(personnel_id: str, body: dict):
     db = get_db()
     new_status = body.get('status', 'at_station')

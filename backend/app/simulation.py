@@ -1,5 +1,3 @@
-import json
-
 # Pre-scripted demo route: Maitri -> Camp Alpha with deliberate deviation into Crevasse Zone
 DEMO_ROUTE = [
     {'lat': -70.767, 'lng': 11.731},    # Start: Maitri Station
@@ -51,7 +49,7 @@ def reset_simulation(personnel_id: str, db):
 
 
 def get_planned_route():
-    """Return the normal planned route (excluding deviation waypoints)."""
+    """Return the normal planned route (excluding deliberate deviation waypoints)."""
     return [
         {'lat': -70.767, 'lng': 11.731},
         {'lat': -70.775, 'lng': 11.750},

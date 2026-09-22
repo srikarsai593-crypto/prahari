@@ -205,9 +205,12 @@ export default function Home() {
       {/* ── KPI Stats ── */}
       <div className="mt-12 w-full subview-card rounded-2xl px-6 py-5">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          {stats.map((s) => (
+          {kpiStats.map((s) => (
             <div key={s.label} className="text-center">
-              <div className={`text-2xl md:text-3xl font-bold mb-1 tracking-tight ${s.color}`} style={{ fontFamily: 'Outfit, sans-serif' }}>
+              <div
+                className={`text-2xl md:text-3xl font-bold mb-1 tracking-tight transition-all duration-500 ${s.color} ${stats.loading ? 'opacity-40' : ''}`}
+                style={{ fontFamily: 'Outfit, sans-serif' }}
+              >
                 {s.val}
               </div>
               <div className="text-[10px] text-frost-muted uppercase tracking-widest" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>

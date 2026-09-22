@@ -43,7 +43,7 @@ export default function CargoPage() {
   const handleCreate = async () => {
     if (!form.item_name.trim()) return addToast('Item name is required', 'warning');
     try {
-      await api.createShipment(form);
+      await api.createShipment(form as import('@/lib/types').Shipment);
       addToast(`Shipment "${form.item_name}" registered into active manifest`, 'success');
       setForm({ item_name: '', category: 'fuel', weight_kg: 0, destination_station: 'Maitri', priority: 'normal' });
       loadShipments();

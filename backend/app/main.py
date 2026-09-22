@@ -1,11 +1,21 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .seed import seed_data
 from .ws_manager import manager
 from .routes import expeditions, shipments, inventory, personnel, incidents
-from .routes import events_routes
+from .routes import events_routes, geofences
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: runs startup logic before yield, teardown after."""
+    init_db()
+    seed_data()
+    print('Prahari backend started - database initialized and seeded.')
+    yield
+    # Teardown (if needed in future) goes here
 
 
 @asynccontextmanager
@@ -57,3 +67,4 @@ def root():
 @app.get('/health')
 def health():
     return {'status': 'healthy'}
+

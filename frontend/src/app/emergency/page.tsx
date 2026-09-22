@@ -6,14 +6,15 @@ import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { MapView } from '@/components/MapView';
 import { EventTimeline } from '@/components/EventTimeline';
+import type { Incident, Accountability, NearbyAsset } from '@/lib/types';
 
 export default function EmergencyPage() {
   const { lastMessage } = useWebSocket();
   const { addToast } = useToast();
-  const [incidents, setIncidents] = useState<any[]>([]);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
-  const [accountability, setAccountability] = useState<any>(null);
-  const [nearbyAssets, setNearbyAssets] = useState<any[]>([]);
+  const [accountability, setAccountability] = useState<Accountability | null>(null);
+  const [nearbyAssets, setNearbyAssets] = useState<NearbyAsset[]>([]);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     type: 'medical',
@@ -27,7 +28,11 @@ export default function EmergencyPage() {
     try {
       const data = await api.searchNearbyAssets(lat, lng);
       setNearbyAssets(Array.isArray(data) ? data.slice(0, 3) : []);
-    } catch { setNearbyAssets([]); }
+    } catch (e: any) {
+      console.warn('Failed to load nearby assets:', e?.message);
+      addToast('⚠️ Could not fetch nearby assets — check backend connection', 'warning');
+      setNearbyAssets([]);
+    }
   };
 
   const loadIncidents = async () => {
@@ -46,6 +51,7 @@ export default function EmergencyPage() {
       }
     } catch (e: any) {
       console.error('Failed to load incidents:', e);
+      addToast('Failed to load incidents — is the backend running?', 'alert');
     } finally {
       setLoading(false);
     }
@@ -64,13 +70,24 @@ export default function EmergencyPage() {
   const handleCreate = async () => {
     setCreating(true);
     try {
-      await api.createIncident(form);
+      const result = await api.createIncident(form as Partial<Incident>);
       addToast('🚨 Emergency declared — accountability check initiated', 'alert');
+      // Optimistically update accountability from response without waiting for WS
+      if (result?.expected_count !== undefined) {
+        setAccountability({
+          expected: result.expected_count ?? 0,
+          confirmed_safe: result.confirmed_safe_count,
+          unaccounted: result.unaccounted_count ?? 0,
+        });
+      }
       loadIncidents();
       loadNearbyAssets(form.location_lat, form.location_lng);
-    } catch (e: any) { addToast(e?.message || 'Failed to create incident', 'alert'); }
+    } catch (e: any) {
+      addToast(e?.message || 'Failed to create incident', 'alert');
+    }
     finally { setCreating(false); }
   };
+
 
   const handlePowerFailure = async () => {
     try {
