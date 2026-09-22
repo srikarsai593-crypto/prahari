@@ -26,9 +26,10 @@ def get_expedition(expedition_id: str):
 async def create_expedition(data: ExpeditionCreate):
     db = get_db()
     exp_id = 'exp-' + str(uuid.uuid4())[:8]
+    breakdown_str = json.dumps(data.readiness_breakdown) if data.readiness_breakdown else None
     db.execute(
-        'INSERT INTO expeditions (id, name, raw_request, station, start_date, end_date, personnel_required, fuel_required_l, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (exp_id, data.name, data.raw_request, data.station, data.start_date, data.end_date, data.personnel_required, data.fuel_required_l, 'draft')
+        'INSERT INTO expeditions (id, name, raw_request, station, start_date, end_date, personnel_required, fuel_required_l, status, readiness_score, readiness_breakdown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (exp_id, data.name, data.raw_request, data.station, data.start_date, data.end_date, data.personnel_required, data.fuel_required_l, 'draft', data.readiness_score, breakdown_str)
     )
     db.commit()
     await log_event('expedition', f'Expedition "{data.name}" created at {data.station}', 'commander', exp_id)
@@ -39,9 +40,8 @@ async def parse_natural_language(body: dict):
     raw_text = body.get('text', '')
     if not raw_text:
         raise HTTPException(status_code=400, detail='No text provided')
-    # Returns dict with parse_source field indicating which AI path was used
-    result = await parse_expedition_nl(raw_text)
-    return result
+    result, ai_used = await parse_expedition_nl(raw_text)
+    return {**result.model_dump(), 'ai_used': ai_used}
 
 @router.post('/feasibility')
 async def check_feasibility(req: FeasibilityRequest):

@@ -16,10 +16,12 @@ current_delta_t = 0.0
 STATUS_ORDER = ['dispatched', 'in_transit', 'arrived', 'unloaded']
 CAPACITY_KG = 10000  # Hard-coded vessel capacity
 
-def generate_barcode_id(db):
+def generate_barcode_id():
+    """Generate a collision-resistant barcode using UUID.
+    Previously used COUNT(*) which caused race conditions on concurrent creates."""
     year = datetime.now(timezone.utc).year
-    count = db.execute('SELECT COUNT(*) FROM shipments').fetchone()[0]
-    return f'SHP-{year}-{count + 1:04d}'
+    suffix = str(uuid.uuid4()).replace('-', '').upper()[:6]
+    return f'SHP-{year}-{suffix}'
 
 def generate_qr_base64(payload: str) -> str:
     # Level H error correction — ~30% obstruction tolerance (frost/damage resistant)
@@ -73,7 +75,7 @@ def get_shipment(shipment_id: str):
 async def create_shipment(data: ShipmentCreate):
     db = get_db()
     ship_id = 'shp-' + str(uuid.uuid4())[:8]
-    barcode_id = generate_barcode_id(db)
+    barcode_id = generate_barcode_id()
     eta = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
     
     # Capacity check

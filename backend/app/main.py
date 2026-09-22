@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,17 @@ async def lifespan(app: FastAPI):
     yield
     # Teardown (if needed in future) goes here
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    seed_data()
+    print('Prahari backend started - database initialized and seeded.')
+    yield
+    # Shutdown (nothing to clean up for now)
+
+
 app = FastAPI(
     title='Prahari - Antarctic Operations Intelligence',
     version='1.0.0',
@@ -25,11 +37,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'http://localhost:3001',
-    ],
+    allow_origins=['http://localhost:3000', 'http://127.0.0.1:3000'],
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
@@ -42,7 +50,6 @@ app.include_router(inventory.router)
 app.include_router(personnel.router)
 app.include_router(incidents.router)
 app.include_router(events_routes.router)
-app.include_router(geofences.router)
 
 @app.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):

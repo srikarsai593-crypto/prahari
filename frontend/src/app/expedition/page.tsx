@@ -61,20 +61,12 @@ export default function ExpeditionPage() {
     setParsing(true);
     try {
       const res = await api.parseNL(nlText);
-      const sourceLabel = res.parse_source === 'gemini' ? '🤖 Gemini AI'
-        : res.parse_source === 'ollama' ? '🦙 Local LLM'
-        : '📐 Rule-based parser';
-      setForm(prev => ({
-        ...prev,
-        name: res.name ?? prev.name,
-        station: res.station ?? prev.station,
-        start_date: formatDateToISO(res.start_date) ?? prev.start_date,
-        end_date: formatDateToISO(res.end_date) ?? prev.end_date,
-        personnel_required: typeof res.personnel_required === 'number' ? res.personnel_required : prev.personnel_required,
-        fuel_required_l: typeof res.fuel_required_l === 'number' ? res.fuel_required_l : prev.fuel_required_l,
-        raw_request: nlText,
-      }));
-      addToast(`${sourceLabel} — crew, fuel, and dates extracted`, 'success');
+      setForm(prev => ({ ...prev, ...res, raw_request: nlText }));
+      if (res.ai_used === false) {
+        addToast('AI unavailable — rule-based fallback used to parse mission', 'warning');
+      } else {
+        addToast('AI parsed waypoints, fuel quotas, and crew specifications', 'success');
+      }
     } catch (e: any) {
       addToast(e?.message || 'Failed to parse text', 'alert');
     } finally { setParsing(false); }
@@ -96,7 +88,14 @@ export default function ExpeditionPage() {
   const handleSave = async () => {
     if (!form.name.trim()) return addToast('Mission codename is required', 'warning');
     try {
-      await api.createExpedition(form);
+      // Include readiness result so the DB record is not saved with readiness_score=NULL
+      const payload: any = { ...form };
+      if (feasibility) {
+        const allOk = feasibility.items?.every((i: any) => i.ok) ?? false;
+        payload.readiness_score = feasibility.overall_score ?? (allOk ? 100 : 60);
+        payload.readiness_breakdown = feasibility;
+      }
+      await api.createExpedition(payload);
       addToast(`Expedition ${form.name} dispatched to polar command!`, 'success');
       setForm({ name: '', station: 'Maitri', start_date: '', end_date: '', personnel_required: 0, fuel_required_l: 0, raw_request: '' });
       setFeasibility(null);
@@ -229,7 +228,7 @@ export default function ExpeditionPage() {
             </div>
           )}
           <div className="pt-4 border-t border-arctic-100 text-[11px] text-frost-muted mt-4">
-            Satellite link synchronized with NavIC / Polar constellation.
+          Offline-capable — all data stored locally. No cloud dependency.
           </div>
         </div>
       </div>

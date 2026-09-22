@@ -9,6 +9,8 @@ class ExpeditionCreate(BaseModel):
     personnel_required: int
     fuel_required_l: float
     raw_request: Optional[str] = None
+    readiness_score: Optional[int] = None
+    readiness_breakdown: Optional[Dict] = None
     model_config = ConfigDict(from_attributes=True)
 
 class ExpeditionResponse(BaseModel):

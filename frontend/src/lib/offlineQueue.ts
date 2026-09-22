@@ -36,16 +36,32 @@ class OfflineQueue {
 
   async flush(): Promise<number> {
     let flushed = 0;
+    const failed: QueuedRequest[] = [];
     const pending = [...this.queue];
-    this.queue = [];
+    this.queue = []; // Clear optimistically — failed items will be re-queued at front
+
     for (const req of pending) {
       try {
-        await fetch(req.url, req.options);
-        flushed++;
+        const response = await fetch(req.url, req.options);
+        if (response.ok) {
+          flushed++;
+        } else {
+          // Server returned an error — re-queue to retry later
+          console.warn(`Flush rejected (${response.status}): ${req.description} — re-queuing`);
+          failed.push(req);
+        }
       } catch (e) {
-        console.error('Failed to flush:', req.description, e);
+        // Network failure — re-queue at front so order is preserved on next attempt
+        console.error('Flush network error, re-queuing:', req.description, e);
+        failed.push(req);
       }
     }
+
+    // Re-insert failed items at the front of the queue in original order
+    if (failed.length > 0) {
+      this.queue = [...failed, ...this.queue];
+    }
+
     if (flushed > 0) {
       try {
         await fetch('/api/events', {
@@ -53,12 +69,13 @@ class OfflineQueue {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             module: 'system',
-            action: `Reconnected — ${flushed} queued changes synced`,
+            action: `Reconnected — ${flushed} queued change${flushed !== 1 ? 's' : ''} synced${failed.length > 0 ? `, ${failed.length} re-queued` : ''}`,
             actor: 'offline_queue'
           })
         });
       } catch (e) { console.error('Failed to log reconnect event', e); }
     }
+
     this.notify();
     return flushed;
   }

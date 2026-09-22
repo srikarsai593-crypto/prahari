@@ -127,8 +127,21 @@ def fallback_parse_expedition(raw_text: str) -> LLMExpeditionParse:
             break
     duration_match = re.search(r'(\d+)[- ]?days?', text_lower)
     duration = int(duration_match.group(1)) if duration_match else 30
-    all_personnel = re.findall(
-        r'(\d+)\s*(?:researchers?|engineers?|scientists?|personnel|people|members?)', text_lower
+    # Personnel
+    personnel_match = re.search(r'(\d+)\s*(?:researchers?|engineers?|scientists?|personnel|people|members?|team)', text_lower)
+    personnel = int(personnel_match.group(1)) if personnel_match else (numbers[0] if numbers else 8)
+    # Total personnel (sum all mentioned groups)
+    all_personnel = re.findall(r'(\d+)\s*(?:researchers?|engineers?|scientists?|personnel|people|members?)', text_lower)
+    total_personnel = sum(int(p) for p in all_personnel) if all_personnel else personnel
+    # Fuel estimate: 20L per person per day
+    fuel = total_personnel * duration * 20
+    # Name
+    name = f'Antarctic Expedition to {station}'
+    start_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    end_date = (datetime.now(timezone.utc) + timedelta(days=duration)).strftime('%Y-%m-%d')
+    return LLMExpeditionParse(
+        name=name, station=station, start_date=start_date, end_date=end_date,
+        personnel_required=total_personnel, fuel_required_l=fuel
     )
     total_personnel = sum(int(p) for p in all_personnel) if all_personnel else 8
     fuel = total_personnel * duration * 20
@@ -162,6 +175,25 @@ def fallback_parse_voice(raw_text: str) -> LLMVoiceCommandParse:
             break
     return LLMVoiceCommandParse(action=action, quantity=quantity, item=item, location=location)
 
+async def parse_expedition_nl(raw_text: str) -> tuple:
+    """Returns (LLMExpeditionParse, ai_used: bool)"""
+    system = '''You are a JSON-only parser. Given a natural language expedition request, return ONLY a JSON object with these exact fields:
+- name (string): expedition name
+- station (string): one of "Maitri", "Bharati", "Himadri"
+- start_date (string): ISO date YYYY-MM-DD
+- end_date (string): ISO date YYYY-MM-DD  
+- personnel_required (integer): total number of people
+- fuel_required_l (number): liters of fuel needed, estimate 20L/person/day if not stated
+No explanation, no markdown, just the JSON object.'''
+    response = await call_ollama(system, raw_text)
+    if response:
+        try:
+            cleaned = strip_markdown_fences(response)
+            data = json.loads(cleaned)
+            return LLMExpeditionParse(**data), True
+        except Exception:
+            pass
+    return fallback_parse_expedition(raw_text), False
 
 # ── Public parse functions ────────────────────────────────────────────────────
 

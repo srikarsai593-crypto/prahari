@@ -1,8 +1,8 @@
 'use client';
-
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useWebSocket } from '@/components/WebSocketProvider';
 
 const modules = [
   {
@@ -87,96 +87,48 @@ const modules = [
   },
 ];
 
-type LiveStats = {
-  activeExpeditions: string;
-  shipmentsInTransit: string;
-  personnelDeployed: string;
-  openIncidents: string;
-  loading: boolean;
-};
 
-function useLiveStats(): LiveStats {
-  const [stats, setStats] = useState<LiveStats>({
-    activeExpeditions: '—',
-    shipmentsInTransit: '—',
-    personnelDeployed: '—',
-    openIncidents: '—',
-    loading: true,
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchStats = async () => {
-      try {
-        const [expeditions, shipments, personnel, incidents] = await Promise.allSettled([
-          fetch('/api/expeditions').then(r => r.json()),
-          fetch('/api/shipments').then(r => r.json()),
-          fetch('/api/personnel').then(r => r.json()),
-          fetch('/api/incidents').then(r => r.json()),
-        ]);
-
-        if (cancelled) return;
-
-        const expList = expeditions.status === 'fulfilled' && Array.isArray(expeditions.value)
-          ? expeditions.value : [];
-        const shipList = shipments.status === 'fulfilled' && Array.isArray(shipments.value)
-          ? shipments.value : [];
-        const persList = personnel.status === 'fulfilled' && Array.isArray(personnel.value)
-          ? personnel.value : [];
-        const incList = incidents.status === 'fulfilled' && Array.isArray(incidents.value)
-          ? incidents.value : [];
-
-        const activeExp = expList.filter((e: any) => e.status === 'active' || e.status === 'planned').length;
-        const transitShip = shipList.filter((s: any) => ['dispatched', 'in_transit', 'delayed'].includes(s.status)).length;
-        const deployedPers = persList.filter((p: any) => p.status !== 'off_duty').length;
-        const openInc = incList.filter((i: any) => i.status === 'open').length;
-
-        setStats({
-          activeExpeditions: String(activeExp),
-          shipmentsInTransit: String(transitShip),
-          personnelDeployed: String(deployedPers),
-          openIncidents: openInc > 0 ? `${openInc} ACTIVE` : 'NONE',
-          loading: false,
-        });
-      } catch {
-        if (!cancelled) {
-          setStats(prev => ({ ...prev, loading: false }));
-        }
-      }
-    };
-
-    fetchStats();
-    return () => { cancelled = true; };
-  }, []);
-
-  return stats;
-}
 
 export default function Home() {
-  const stats = useLiveStats();
+  const { connected } = useWebSocket();
+  const [kpi, setKpi] = useState<Record<string, string | number>>({});
+  const [kpiLoading, setKpiLoading] = useState(true);
 
-  const kpiStats = [
-    {
-      label: 'Active Expeditions',
-      val: stats.loading ? '…' : stats.activeExpeditions,
-      color: 'text-arctic-700',
-    },
-    {
-      label: 'Shipments in Transit',
-      val: stats.loading ? '…' : stats.shipmentsInTransit,
-      color: 'text-arctic-700',
-    },
-    {
-      label: 'Personnel Deployed',
-      val: stats.loading ? '…' : stats.personnelDeployed,
-      color: 'text-arctic-700',
-    },
-    {
-      label: 'Open Incidents',
-      val: stats.loading ? '…' : stats.openIncidents,
-      color: stats.openIncidents !== 'NONE' && !stats.loading ? 'text-rose-600' : 'text-emerald-600',
-    },
+  useEffect(() => {
+    const fetchKpis = async () => {
+      try {
+        const [expeditions, shipments, personnel, events] = await Promise.allSettled([
+          api.listExpeditions(),
+          api.listShipments(),
+          api.listPersonnel(),
+          api.listEvents(undefined, 100),
+        ]);
+        const expList   = expeditions.status === 'fulfilled'  ? (Array.isArray(expeditions.value)  ? expeditions.value  : []) : [];
+        const shipList  = shipments.status  === 'fulfilled'   ? (Array.isArray(shipments.value)    ? shipments.value    : []) : [];
+        const persList  = personnel.status  === 'fulfilled'   ? (Array.isArray(personnel.value)    ? personnel.value    : []) : [];
+        const evtList   = events.status     === 'fulfilled'   ? (Array.isArray(events.value)       ? events.value       : []) : [];
+
+        const today = new Date().toISOString().slice(0, 10);
+        setKpi({
+          expeditions: expList.filter((e: any) => e.status !== 'archived').length,
+          shipments:   shipList.filter((s: any) => s.status === 'in_transit').length,
+          personnel:   persList.filter((p: any) => ['in_transit', 'field', 'deviated'].includes(p.status)).length,
+          events:      evtList.filter((e: any) => (e.created_at || '').startsWith(today)).length,
+        });
+      } catch (e) {
+        console.error('KPI fetch failed', e);
+      } finally {
+        setKpiLoading(false);
+      }
+    };
+    fetchKpis();
+  }, []);
+
+  const stats = [
+    { label: 'Active Expeditions',   val: kpiLoading ? '…' : String(kpi.expeditions ?? 0), color: 'text-arctic-700' },
+    { label: 'Shipments in Transit', val: kpiLoading ? '…' : String(kpi.shipments   ?? 0), color: 'text-arctic-700' },
+    { label: 'Personnel Deployed',   val: kpiLoading ? '…' : String(kpi.personnel   ?? 0), color: 'text-arctic-700' },
+    { label: 'Live Events Today',    val: kpiLoading ? '…' : String(kpi.events      ?? 0), color: connected ? 'text-emerald-600' : 'text-amber-600' },
   ];
 
   return (

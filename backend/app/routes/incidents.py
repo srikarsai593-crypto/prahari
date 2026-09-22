@@ -10,13 +10,15 @@ from ..auth import require_key
 
 router = APIRouter(prefix='/incidents', tags=['incidents'])
 
-# Hardcoded nearby assets
-NEARBY_ASSETS = [
-    {'name': 'Snowcat Alpha', 'type': 'vehicle', 'lat': -70.770, 'lng': 11.740},
-    {'name': 'Emergency Sled', 'type': 'equipment', 'lat': -70.780, 'lng': 11.760},
-    {'name': 'Medical Kit Station', 'type': 'medical', 'lat': -70.767, 'lng': 11.735},
-    {'name': 'Rescue Helicopter (Grounded)', 'type': 'aircraft', 'lat': -70.765, 'lng': 11.725},
-]
+def get_nearby_assets(db, lat: float, lng: float, limit: int = 10) -> list:
+    """Read assets from DB and compute Haversine distances. No hardcoded coordinates."""
+    rows = db.execute('SELECT * FROM emergency_assets').fetchall()
+    results = []
+    for r in rows:
+        dist = haversine_distance(lat, lng, r['lat'], r['lng'])
+        results.append({**dict(r), 'distance_m': round(dist)})
+    results.sort(key=lambda x: x['distance_m'])
+    return results[:limit]
 
 def compute_accountability(db, lat, lng, radius):
     personnel = db.execute('SELECT * FROM personnel').fetchall()
@@ -27,7 +29,9 @@ def compute_accountability(db, lat, lng, radius):
             if dist <= radius:
                 in_zone.append({'id': p['id'], 'name': p['name'], 'role': p['role'], 'status': p['status'], 'distance_m': round(dist)})
     expected = len(in_zone)
-    confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'field', 'returned'))
+    # Only 'at_station' and 'returned' are verifiably safe in an emergency.
+    # 'field', 'in_transit', and 'deviated' personnel are UNACCOUNTED until confirmed.
+    confirmed_safe = sum(1 for p in in_zone if p['status'] in ('at_station', 'returned'))
     return expected, confirmed_safe, expected - confirmed_safe, in_zone
 
 @router.get('')
@@ -36,7 +40,60 @@ def list_incidents():
     rows = db.execute('SELECT * FROM incidents ORDER BY created_at DESC').fetchall()
     return [dict(r) for r in rows]
 
-@router.post('', dependencies=[Depends(require_key)])
+# NOTE: Static sub-routes MUST be declared before /{incident_id} to avoid
+# FastAPI treating the static path segment as a path parameter (404 bug fix).
+@router.post('/power-failure')
+async def simulate_power_failure(body: dict = None):
+    station = (body or {}).get('station', 'Maitri')
+    await log_event('emergency', f'Power failure simulated at {station}', 'system', metadata={'type': 'power_failure', 'station': station})
+    await manager.broadcast({'type': 'alert', 'data': {'type': 'power_failure', 'station': station, 'message': f'ALERT: Power failure at {station}'}})
+    return {'status': 'simulated', 'station': station}
+
+@router.get('/nearby-assets/search')
+def search_nearby_assets(lat: float, lng: float):
+    db = get_db()
+    return get_nearby_assets(db, lat, lng)
+
+@router.get('/assets')
+def list_assets():
+    """List all emergency assets — positions can be updated via PATCH."""
+    db = get_db()
+    return [dict(r) for r in db.execute('SELECT * FROM emergency_assets ORDER BY name').fetchall()]
+
+@router.patch('/assets/{asset_id}')
+async def update_asset(asset_id: str, body: dict):
+    """Update an asset's position or status. Called when a snowcat or helicopter relocates."""
+    db = get_db()
+    row = db.execute('SELECT * FROM emergency_assets WHERE id = ?', (asset_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Asset not found')
+    lat  = body.get('lat',    row['lat'])
+    lng  = body.get('lng',    row['lng'])
+    status = body.get('status', row['status'])
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute('UPDATE emergency_assets SET lat = ?, lng = ?, status = ?, updated_at = ? WHERE id = ?', (lat, lng, status, now, asset_id))
+    db.commit()
+    await log_event('emergency', f'Asset "{row["name"]}" position/status updated', 'commander', asset_id)
+    return {**dict(row), 'lat': lat, 'lng': lng, 'status': status}
+
+@router.get('/{incident_id}')
+def get_incident(incident_id: str):
+    db = get_db()
+    row = db.execute('SELECT * FROM incidents WHERE id = ?', (incident_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Incident not found')
+    d = dict(row)
+    # Recompute live accountability
+    expected, safe, unaccounted, personnel = compute_accountability(db, d['location_lat'], d['location_lng'], d['affected_radius_m'])
+    d['expected_count'] = expected
+    d['confirmed_safe_count'] = safe
+    d['unaccounted_count'] = unaccounted
+    d['personnel_in_zone'] = personnel
+    d['nearby_assets'] = get_nearby_assets(db, d['location_lat'], d['location_lng'])
+    return d
+
+@router.post('')
 async def create_incident(data: IncidentCreate):
     db = get_db()
     inc_id = 'inc-' + str(uuid.uuid4())[:8]
@@ -56,44 +113,7 @@ async def create_incident(data: IncidentCreate):
 
     return {'id': inc_id, 'expected_count': expected, 'confirmed_safe_count': safe, 'unaccounted_count': unaccounted, 'personnel_in_zone': personnel_list, **data.model_dump()}
 
-# NOTE: Literal sub-paths MUST be declared before parameterised routes (/{incident_id})
-# to prevent FastAPI from swallowing them as path-parameter matches.
-
-@router.post('/power-failure', dependencies=[Depends(require_key)])
-async def simulate_power_failure(body: dict = None):
-    station = (body or {}).get('station', 'Maitri')
-    await log_event('emergency', f'Power failure simulated at {station}', 'system', metadata={'type': 'power_failure', 'station': station})
-    await manager.broadcast({'type': 'alert', 'data': {'type': 'power_failure', 'station': station, 'message': f'ALERT: Power failure at {station}'}})
-    return {'status': 'simulated', 'station': station}
-
-@router.get('/nearby-assets/search')
-def search_nearby_assets(lat: float, lng: float):
-    results = []
-    for asset in NEARBY_ASSETS:
-        dist = haversine_distance(lat, lng, asset['lat'], asset['lng'])
-        results.append({**asset, 'distance_m': round(dist)})
-    results.sort(key=lambda x: x['distance_m'])
-    return results
-
-# Parameterised routes below — must come AFTER all literal sub-paths above.
-
-@router.get('/{incident_id}')
-def get_incident(incident_id: str):
-    db = get_db()
-    row = db.execute('SELECT * FROM incidents WHERE id = ?', (incident_id,)).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail='Incident not found')
-    d = dict(row)
-    # Recompute live accountability
-    expected, safe, unaccounted, personnel = compute_accountability(db, d['location_lat'], d['location_lng'], d['affected_radius_m'])
-    d['expected_count'] = expected
-    d['confirmed_safe_count'] = safe
-    d['unaccounted_count'] = unaccounted
-    d['personnel_in_zone'] = personnel
-    d['nearby_assets'] = NEARBY_ASSETS
-    return d
-
-@router.patch('/{incident_id}', dependencies=[Depends(require_key)])
+@router.patch('/{incident_id}')
 async def update_incident(incident_id: str, body: dict):
     db = get_db()
     row = db.execute('SELECT * FROM incidents WHERE id = ?', (incident_id,)).fetchone()

@@ -15,30 +15,37 @@ DEMO_ROUTE = [
 
 
 def get_next_position(personnel_id: str, db) -> dict | None:
-    """Advance one step along the demo route. State persisted in DB so it survives restarts."""
-    db.execute('BEGIN IMMEDIATE')
-    try:
-        row = db.execute('SELECT simulation_step FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
-        if row is None:
-            db.commit()
-            return None
-        current = row['simulation_step'] or 0
-        if current >= len(DEMO_ROUTE):
-            db.commit()
-            return None
-        position = DEMO_ROUTE[current]
-        db.execute('UPDATE personnel SET simulation_step = ? WHERE id = ?', (current + 1, personnel_id))
-        db.commit()
-        return position
-    except Exception:
-        db.rollback()
-        raise
+    """Advance one step along the demo route using DB-persisted step index.
+    Returns new position or None if simulation is complete.
+    State is stored in movement_plans.simulation_step — backend restarts are safe."""
+    mp = db.execute(
+        'SELECT id, simulation_step FROM movement_plans WHERE personnel_id = ? ORDER BY departure_time DESC LIMIT 1',
+        (personnel_id,)
+    ).fetchone()
+
+    if not mp:
+        return None
+
+    current_step = mp['simulation_step'] or 0
+    if current_step >= len(DEMO_ROUTE):
+        return None
+
+    position = DEMO_ROUTE[current_step]
+    db.execute(
+        'UPDATE movement_plans SET simulation_step = ? WHERE id = ?',
+        (current_step + 1, mp['id'])
+    )
+    db.commit()
+    return position
 
 
-def reset_simulation(personnel_id: str, db) -> None:
-    """Reset GPS simulation step to 0 in DB."""
-    db.execute('UPDATE personnel SET simulation_step = 0 WHERE id = ?', (personnel_id,))
-    # Caller commits
+def reset_simulation(personnel_id: str, db):
+    """Reset simulation step to 0 in the DB for this person's latest plan."""
+    db.execute(
+        'UPDATE movement_plans SET simulation_step = 0 WHERE personnel_id = ?',
+        (personnel_id,)
+    )
+    db.commit()
 
 
 def get_planned_route():
@@ -53,3 +60,4 @@ def get_planned_route():
         {'lat': -70.840, 'lng': 11.930},
         {'lat': -70.850, 'lng': 11.950},
     ]
+

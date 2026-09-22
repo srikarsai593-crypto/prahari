@@ -109,6 +109,14 @@ Open `http://localhost:3000/scenario` in your browser.
 We built a **fully scripted, interactive scenario runner** specifically for the judges. It walks through a complete end-to-end Antarctic operation—from AI expedition planning to a live GPS geofence violation—proving the integration of all 5 modules in real-time.
 
 ---
+
+## 🛠️ Troubleshooting & Recent Fixes
+
+- **Route 404 Errors**: If you encounter 404 errors on specific API endpoints (like `/movement-plans` or `/power-failure`), ensure you are using the latest code where static routes are declared *before* parameterized routes (`/{id}`) in FastAPI.
+- **Uvicorn/FastAPI Compatibility**: Use `uvicorn[standard]==0.32.1` or higher, as older versions (like `0.30.0`) have dependency conflicts with `fastapi>=0.115` on Windows.
+- **QR Code Scanning (`pyzbar`) on Windows**: If you get an `ImportError` or `FileNotFoundError` related to `zbar` when scanning shipments on Windows, you must install the `vcredist` (Visual C++ Redistributable) or the native `zbar` DLLs.
+
+---
 <div align="center">
   <i>"In Antarctica, logistics isn't a spreadsheet. It's survival."</i><br>
   <b>— Team 36 OURS</b>
