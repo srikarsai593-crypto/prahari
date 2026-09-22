@@ -31,6 +31,7 @@ export default function ScenarioPage() {
   }, []);
 
   const runStep = async (step: number, action: () => Promise<void>) => {
+    if (stepStatus[step] === 'running') return;
     setStepStatus(prev => ({ ...prev, [step]: 'running' }));
     try {
       await action();

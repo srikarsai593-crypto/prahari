@@ -6,6 +6,7 @@ import { ToastProvider } from "@/components/Toast";
 import { ConnectivityPill } from "@/components/ConnectivityPill";
 import BlizzardCanvasLoader from "@/components/BlizzardCanvasLoader";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { MobileNav } from "@/components/MobileNav";
 import 'leaflet/dist/leaflet.css';
 
 export const metadata: Metadata = {
@@ -97,9 +98,10 @@ export default function RootLayout({
                   {/* Right side: connectivity + station */}
                   <div className="flex items-center gap-3">
                     <ConnectivityPill />
-                    <div className="glass-btn-pill px-3.5 py-1.5 rounded-xl text-xs font-bold text-arctic-900 tracking-wider">
+                    <div className="hidden md:flex glass-btn-pill px-3.5 py-1.5 rounded-xl text-xs font-bold text-arctic-900 tracking-wider">
                       36 OURS
                     </div>
+                    <MobileNav />
                   </div>
                 </nav>
               </header>

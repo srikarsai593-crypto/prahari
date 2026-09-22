@@ -25,7 +25,13 @@ export default function CargoPage() {
 
   useEffect(() => {
     loadShipments();
-    return () => { if (scannerRef.current) scannerRef.current.stop().catch(() => {}); };
+    return () => { 
+      if (scannerRef.current) {
+        scannerRef.current.stop().catch(() => {}).finally(() => {
+          scannerRef.current?.clear();
+        });
+      }
+    };
   }, []);
 
   const loadShipments = async () => {
