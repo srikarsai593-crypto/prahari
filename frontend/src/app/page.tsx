@@ -205,10 +205,10 @@ export default function Home() {
       {/* ── KPI Stats ── */}
       <div className="mt-12 w-full subview-card rounded-2xl px-6 py-5">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          {kpiStats.map((s) => (
+          {stats.map((s) => (
             <div key={s.label} className="text-center">
               <div
-                className={`text-2xl md:text-3xl font-bold mb-1 tracking-tight transition-all duration-500 ${s.color} ${stats.loading ? 'opacity-40' : ''}`}
+                className={`text-2xl md:text-3xl font-bold mb-1 tracking-tight transition-all duration-500 ${s.color} ${kpiLoading ? 'opacity-40' : ''}`}
                 style={{ fontFamily: 'Outfit, sans-serif' }}
               >
                 {s.val}
