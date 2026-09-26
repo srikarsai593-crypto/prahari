@@ -37,12 +37,26 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
-            <h3 className="font-bold text-arctic-900 text-base mb-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
-              Something went wrong
+            <h3 className="font-bold text-arctic-900 text-base mb-2">
+              This section could not be displayed
             </h3>
-            <p className="text-xs text-frost-muted mb-4 font-mono leading-relaxed">
-              {this.state.error?.message || 'An unexpected error occurred.'}
+            <p className="text-13 text-frost-muted mb-4 leading-relaxed">
+              Nothing has been lost — the station&apos;s records are unaffected. Try again, or
+              move to another section and come back.
             </p>
+            {/* The raw message is for whoever is fixing it, not for the operator
+                trying to get on with their shift. */}
+            {this.state.error?.message && (
+              <details className="text-left mb-4">
+                <summary className="text-2xs text-frost-muted cursor-pointer hover:text-arctic-800">
+                  Technical detail
+                </summary>
+                <p className="text-2xs text-frost-muted font-mono leading-relaxed mt-2
+                              break-words">
+                  {this.state.error.message}
+                </p>
+              </details>
+            )}
             <button
               className="btn-primary text-xs"
               onClick={() => this.setState({ hasError: false, error: null })}
