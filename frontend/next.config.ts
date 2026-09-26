@@ -11,10 +11,10 @@ const nextConfig: NextConfig = {
         source: '/api/:path*',
         destination: `${backendUrl}/:path*`,
       },
-      // Proxy WebSocket connections (for local dev)
+      // Proxy WebSocket connections
       {
         source: '/ws',
-        destination: `${backendUrl.replace(/^http/, 'ws')}/ws`,
+        destination: `${backendUrl}/ws`,
       },
     ];
   },
