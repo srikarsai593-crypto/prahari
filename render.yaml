@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: prahari-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PRAHARI_ALLOW_DEMO_KEY
+        value: "true"
+      - key: PRAHARI_COMMANDER_KEY
+        value: prahari-demo-2024
+      - key: PRAHARI_LOG_LEVEL
+        value: INFO
