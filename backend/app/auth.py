@@ -27,13 +27,19 @@ async def require_key(key: str | None = Security(_API_KEY_HEADER)) -> str:
     if expected_key is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Commander API key is not configured on the server.',
+            detail='This station backend has no commander key configured, so it is '
+                   'refusing every write. Set PRAHARI_API_KEY in backend/.env (or '
+                   'PRAHARI_ALLOW_DEMO_KEY=true for a local demo) and restart it.',
         )
 
     if key != expected_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Invalid or missing X-Commander-Key header.',
+            detail='Station write rejected: the commander key this console sent does not '
+                   'match the one the backend expects. The console sends it automatically, so '
+                   'this normally means the station key was rotated - set '
+                   'NEXT_PUBLIC_COMMANDER_KEY in the frontend to the backend PRAHARI_API_KEY '
+                   'and reload. Reads are unaffected.',
             headers={'WWW-Authenticate': 'ApiKey'},
         )
     return key

@@ -10,12 +10,16 @@ All parse functions return a dict with an extra `parse_source` field so the
 frontend can display which path was taken ("gemini", "ollama", "fallback").
 """
 
+import asyncio
 import httpx
 import json
 import re
 import os
-from .models import LLMExpeditionParse, LLMVoiceCommandParse
+from .models import LLMExpeditionParse, LLMStockCommandParse
 from datetime import datetime, timedelta, timezone
+import logging
+
+logger = logging.getLogger('prahari.llm')
 
 # ── Config ────────────────────────────────────────────────────────────────────
 OLLAMA_URL = 'http://localhost:11434/api/generate'
@@ -27,16 +31,29 @@ def get_gemini_api_key() -> str | None:
         return None
     return key
 
+# Model is configurable and defaults to the floating "latest" alias.
+# A pinned point-version (e.g. gemini-1.5-flash) gets retired by Google and then
+# returns 404 forever, which silently degrades every parse to the regex fallback.
+# flash-lite is the right tier for strict schema extraction: it answers in
+# ~1.5s, where the full flash tier spends seconds on internal reasoning and
+# returns 503/timeouts under load.
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-flash-lite-latest')
 GEMINI_URL = (
     'https://generativelanguage.googleapis.com/v1beta/models/'
-    'gemini-1.5-flash:generateContent?key={key}'
+    '{model}:generateContent?key={key}'
 )
-GEMINI_TIMEOUT = 8.0
+GEMINI_TIMEOUT = float(os.getenv('GEMINI_TIMEOUT', '20'))
+GEMINI_MAX_ATTEMPTS = 3
+GEMINI_BACKOFF_S = 0.6
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 
 STATIONS = {'maitri': 'Maitri', 'bharati': 'Bharati', 'himadri': 'Himadri'}
+# Longest / most specific names first: the fallback takes the first hit, so
+# 'diesel fuel' must be tried before the bare 'fuel'.
 KNOWN_ITEMS = [
     'diesel fuel', 'fuel', 'diesel', 'medical supplies', 'medical',
     'thermal blankets', 'blankets', 'emergency rations', 'rations', 'food',
+    'generator spares', 'spares',
     'oxygen', 'water', 'batteries', 'clothing', 'tools',
 ]
 KNOWN_LOCATIONS = [
@@ -62,14 +79,37 @@ async def call_gemini(system_prompt: str, user_prompt: str) -> str | None:
                 'maxOutputTokens': 512,
             },
         }
-        url = GEMINI_URL.format(key=api_key)
+        url = GEMINI_URL.format(model=GEMINI_MODEL, key=api_key)
         async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
+            for attempt in range(GEMINI_MAX_ATTEMPTS):
+                resp = await client.post(url, json=payload)
+
+                # 429/503 are transient capacity errors, not configuration
+                # errors. Without a retry a busy minute silently downgrades the
+                # whole demo to the regex fallback.
+                if resp.status_code in TRANSIENT_STATUS and attempt < GEMINI_MAX_ATTEMPTS - 1:
+                    backoff = GEMINI_BACKOFF_S * (2 ** attempt)
+                    logger.warning('Gemini HTTP %s (attempt %d/%d) - retrying in %.1fs',
+                                   resp.status_code, attempt + 1, GEMINI_MAX_ATTEMPTS, backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+
+                if resp.status_code != 200:
+                    # Surface the reason instead of failing silently to fallback.
+                    logger.error('Gemini HTTP %s for model %s: %s',
+                                 resp.status_code, GEMINI_MODEL, resp.text[:300])
+                    return None
+
                 data = resp.json()
-                return data['candidates'][0]['content']['parts'][0]['text']
+                parts = data['candidates'][0]['content'].get('parts') or []
+                # Newer models may emit non-text parts (thought signatures) first.
+                for part in parts:
+                    if isinstance(part.get('text'), str) and part['text'].strip():
+                        return part['text']
+                logger.error('Gemini response contained no text part')
+                return None
     except Exception as e:
-        print(f'[Gemini] Error: {e}')
+        logger.error('Gemini call failed: %s', e)
     return None
 
 
@@ -117,7 +157,7 @@ async def _try_llm_parse(system_prompt: str, user_prompt: str, model_cls) -> tup
             model_cls(**data)
             return data, source
         except Exception as e:
-            print(f'[{source.upper()}] JSON parse/validation error: {e}')
+            logger.warning('%s returned unusable JSON (%s) - trying next provider', source, e)
 
     return None, ''
 
@@ -151,7 +191,7 @@ def fallback_parse_expedition(raw_text: str) -> LLMExpeditionParse:
     )
 
 
-def fallback_parse_voice(raw_text: str) -> LLMVoiceCommandParse:
+def fallback_parse_stock_command(raw_text: str) -> LLMStockCommandParse:
     text_lower = raw_text.lower()
     action = 'decrement'
     if any(w in text_lower for w in ['added', 'add', 'received', 'restocked', 'increment', 'increase', 'loaded']):
@@ -168,7 +208,7 @@ def fallback_parse_voice(raw_text: str) -> LLMVoiceCommandParse:
         if loc in text_lower:
             location = loc.title()
             break
-    return LLMVoiceCommandParse(action=action, quantity=quantity, item=item, location=location)
+    return LLMStockCommandParse(action=action, quantity=quantity, item=item, location=location)
 
 
 async def parse_expedition_nl(raw_text: str) -> dict:
@@ -176,15 +216,21 @@ async def parse_expedition_nl(raw_text: str) -> dict:
     Parse a natural language expedition request.
     Returns LLMExpeditionParse fields + `parse_source` ("gemini"|"ollama"|"fallback").
     """
+    # Ground relative dates ("two-week traverse", "next month") against today.
+    # Without this the model anchors them to its training cutoff and returns
+    # dates years in the past.
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     system = (
+        f"Today's date is {today}. Resolve every relative date against it.\n"
         'You are a JSON-only parser. Given a natural language expedition request, '
         'return ONLY a JSON object with these exact fields:\n'
         '- name (string): expedition name\n'
         '- station (string): one of "Maitri", "Bharati", "Himadri"\n'
         '- start_date (string): ISO date YYYY-MM-DD\n'
         '- end_date (string): ISO date YYYY-MM-DD\n'
-        '- personnel_required (integer): total number of people\n'
-        '- fuel_required_l (number): litres of fuel, estimate 20L/person/day if not stated\n'
+        '- personnel_required (integer): total number of people across all roles\n'
+        '- fuel_required_l (number): litres of fuel; use the stated figure if one '
+        'is given, otherwise estimate 20L per person per day\n'
         'No explanation, no markdown, just the JSON object.'
     )
 
@@ -198,13 +244,13 @@ async def parse_expedition_nl(raw_text: str) -> dict:
     return {**parsed.model_dump(), 'parse_source': 'fallback'}
 
 
-async def parse_voice_command(raw_text: str) -> dict:
+async def parse_stock_command(raw_text: str) -> dict:
     """
-    Parse a voice inventory command.
-    Returns LLMVoiceCommandParse fields + `parse_source`.
+    Parse a typed inventory stock command.
+    Returns LLMStockCommandParse fields + `parse_source`.
     """
     system = (
-        'You are a JSON-only parser. Given a voice transcript about inventory changes, '
+        'You are a JSON-only parser. Given a text command about inventory changes, '
         'return ONLY a JSON object with these exact fields:\n'
         '- action (string): "increment" or "decrement"\n'
         '- quantity (number): how many units\n'
@@ -213,10 +259,10 @@ async def parse_voice_command(raw_text: str) -> dict:
         'No explanation, no markdown, just the JSON object.'
     )
 
-    data, source = await _try_llm_parse(system, raw_text, LLMVoiceCommandParse)
+    data, source = await _try_llm_parse(system, raw_text, LLMStockCommandParse)
     if data:
-        parsed = LLMVoiceCommandParse(**data)
+        parsed = LLMStockCommandParse(**data)
         return {**parsed.model_dump(), 'parse_source': source}
 
-    parsed = fallback_parse_voice(raw_text)
+    parsed = fallback_parse_stock_command(raw_text)
     return {**parsed.model_dump(), 'parse_source': 'fallback'}

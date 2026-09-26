@@ -1,26 +1,41 @@
 'use client';
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { api } from '@/lib/api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
+import { api, isQueued } from '@/lib/api';
+import { PageHeader } from '@/components/PageHeader';
 import { offlineQueue } from '@/lib/offlineQueue';
 import { useToast } from '@/components/Toast';
+import { useStation } from '@/components/StationProvider';
 import { EventTimeline } from '@/components/EventTimeline';
+import { getStation } from '@/lib/stations';
+import type { Geofence, StationCounts } from '@/lib/types';
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const plannedRoute = [
-  { lat: -70.767, lng: 11.731 }, { lat: -70.775, lng: 11.75 },
-  { lat: -70.783, lng: 11.77  }, { lat: -70.79,  lng: 11.8  },
-  { lat: -70.8,   lng: 11.83  }, { lat: -70.81,  lng: 11.86 },
-  { lat: -70.84,  lng: 11.93  }, { lat: -70.85,  lng: 11.95 },
-];
+/** Fraction of the way from the station toward the destination. */
+function interpolate(
+  from: { lat: number; lng: number }, to: { lat: number; lng: number }, segments = 5,
+) {
+  return Array.from({ length: segments + 1 }, (_, i) => ({
+    lat: +(from.lat + ((to.lat - from.lat) * i) / segments).toFixed(6),
+    lng: +(from.lng + ((to.lng - from.lng) * i) / segments).toFixed(6),
+  }));
+}
 
 export default function ScenarioPage() {
   const { addToast } = useToast();
+  // The walkthrough runs against the console's active station. It used to be
+  // hard-wired to Maitri while the page header badge showed whatever station
+  // was selected, so every step reported on a base the operator was not
+  // looking at.
+  const { station, stationId, ready } = useStation();
   const [offline, setOffline] = useState(offlineQueue.isOffline);
   const [pendingCount, setPendingCount] = useState(offlineQueue.pendingCount);
   const [activeStep, setActiveStep] = useState(1);
-  const [stepStatus, setStepStatus] = useState<Record<number, 'pending' | 'running' | 'done' | 'error'>>({});
+  const [stepStatus, setStepStatus] =
+    useState<Record<number, 'pending' | 'running' | 'done' | 'error'>>({});
+  const [counts, setCounts] = useState<StationCounts | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     const unsub = offlineQueue.subscribe(() => {
@@ -30,44 +45,109 @@ export default function ScenarioPage() {
     return unsub;
   }, []);
 
+  // Switching station invalidates the run: the steps now target somewhere else.
+  useEffect(() => { setStepStatus({}); setActiveStep(1); }, [stationId]);
+
+  const loadCounts = useCallback(() => {
+    api.stationCounts().then(setCounts).catch(() => setCounts(null));
+  }, []);
+  useEffect(() => { if (ready) loadCounts(); }, [loadCounts, ready]);
+
+  /**
+   * Reruns of this walkthrough used to pile up expeditions, consignments and
+   * open incidents with no way to clear them — after a few passes the dashboard
+   * reported records nobody had created that session. This puts the station
+   * back to its seeded baseline.
+   */
+  const handleReset = async (scope: 'operational' | 'all') => {
+    if (!window.confirm(
+      'Reset the station to its seeded baseline?\n\n'
+      + 'This permanently deletes every expedition, consignment, incident and movement plan '
+      + 'across all three stations, and restores seeded crew positions and stock levels'
+      + (scope === 'all' ? ', including the whole event log' : '')
+      + '. It cannot be undone.')) return;
+    setResetting(true);
+    try {
+      const res = await api.resetStation(scope);
+      addToast(`Station reset — cleared ${res.cleared.expeditions} expedition(s), `
+        + `${res.cleared.shipments} consignment(s) and ${res.cleared.incidents} incident(s)`,
+        'success');
+      setStepStatus({});
+      setActiveStep(1);
+      loadCounts();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Reset failed', 'alert');
+    } finally { setResetting(false); }
+  };
+
   const runStep = async (step: number, action: () => Promise<void>) => {
     if (stepStatus[step] === 'running') return;
     setStepStatus(prev => ({ ...prev, [step]: 'running' }));
     try {
       await action();
-      setStepStatus(prev => ({ ...prev, [step]: 'done' }));
-      setActiveStep(s => Math.max(s, step + 1));
-    } catch (e: any) {
+      setStepStatus((prev) => ({ ...prev, [step]: 'done' }));
+      setActiveStep((s) => Math.max(s, step + 1));
+      // Each step writes records, so the "what a reset would clear" line has
+      // to follow along rather than showing the count from page load.
+      loadCounts();
+    } catch (e) {
       console.error(`Step ${step} failed:`, e);
-      setStepStatus(prev => ({ ...prev, [step]: 'error' }));
-      addToast(`Step ${step} failed: ${e?.message || 'Unknown error'}`, 'alert');
+      setStepStatus((prev) => ({ ...prev, [step]: 'error' }));
+      addToast(`Step ${step} failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        'alert');
     }
   };
 
   const getFirstShipment = async () => {
-    const data = await api.listShipments();
+    const data = await api.listShipments({ station: stationId });
     const list = Array.isArray(data) ? data : [];
-    if (!list.length) throw new Error('No shipments found. Run Step 3 first.');
+    if (!list.length) {
+      throw new Error(`No consignments routed to ${stationId}. Run Step 3 first.`);
+    }
     return list[0];
   };
 
   const getResearchers = async () => {
-    const data = await api.listPersonnel();
+    const data = await api.listPersonnel(stationId);
     const list = Array.isArray(data) ? data : [];
-    let researchers = list.filter((p: any) => p.role === 'Researcher' || p.role === 'Scientist').slice(0, 2);
-    if (researchers.length < 2) researchers = list.slice(0, 2); // fallback to any
-    if (researchers.length < 2) throw new Error('Need at least 2 personnel records in database');
+    let researchers = list.filter((p) => p.role === 'Researcher' || p.role === 'Scientist')
+      .slice(0, 2);
+    if (researchers.length < 2) researchers = list.slice(0, 2);  // fall back to anyone on station
+    if (researchers.length < 2) {
+      throw new Error(`Need at least 2 people on the ${stationId} roster`);
+    }
     return researchers;
+  };
+
+  /**
+   * The destination and the route are derived from the active station's own
+   * geofences, so the traverse is real wherever the walkthrough is run.
+   *
+   * At Maitri this resolves to Camp Alpha and the leg clips the seeded Crevasse
+   * Zone — that is the point of the demo: the commander authorises a route
+   * across a known crevasse field, Prahari flags it *before* departure, and
+   * raises a live alert again on entry. The alert comes from the geofence
+   * engine walking the route, not from a script.
+   */
+  const getDestination = async () => {
+    const all = await api.listGeofences();
+    const local = (Array.isArray(all) ? all : []).filter((g: Geofence) =>
+      Math.abs(g.center_lat - station.lat) < 2 && Math.abs(g.center_lng - station.lng) < 6);
+    const camp = local.find((g) => g.type === 'field_camp')
+      ?? local.find((g) => g.type !== 'restricted' && g.type !== 'station');
+    if (!camp) throw new Error(`No field camp registered near ${station.label} to traverse to.`);
+    return camp;
   };
 
   const toggleConnectivity = async () => {
     if (offlineQueue.isOffline) {
-      offlineQueue.setOffline(false);
-      const flushed = await offlineQueue.flush();
-      addToast(`Back online — ${flushed} queued change${flushed !== 1 ? 's' : ''} synced`, 'success');
+      // setOffline(false) drains the queue and resolves with what it replayed.
+      const { flushed, dropped } = await offlineQueue.setOffline(false);
+      addToast(`Back online — ${flushed} queued change${flushed !== 1 ? 's' : ''} synced`
+        + (dropped ? `, ${dropped} rejected` : ''), dropped ? 'warning' : 'success');
     } else {
-      offlineQueue.setOffline(true);
-      addToast('System offline — mutating requests will queue locally', 'warning');
+      void offlineQueue.setOffline(true);
+      addToast('Link down — changes will be saved here and sent when it returns', 'warning');
     }
   };
 
@@ -75,38 +155,65 @@ export default function ScenarioPage() {
     {
       num: 1,
       title: 'Create Expedition',
-      desc: 'Parse a commander request through local AI or fallback rules and persist to database.',
+      desc: 'Write the request in plain words and let Prahari fill in the traverse.',
       action: async () => {
-        const raw = 'Create a 30-day high-priority expedition to Maitri with 12 researchers and 2 engineers.';
+        const raw = `Create a 30-day high-priority expedition to ${stationId} with `
+          + '12 researchers and 2 engineers.';
         const parsed = await api.parseNL(raw);
-        await api.createExpedition({ ...parsed, raw_request: raw });
-        addToast('Expedition created via natural language AI', 'success');
+        await api.createExpedition({
+          name: parsed.name,
+          station: stationId,
+          start_date: parsed.start_date ?? undefined,
+          end_date: parsed.end_date ?? undefined,
+          personnel_required: parsed.personnel_required,
+          fuel_required_l: parsed.fuel_required_l,
+          raw_request: raw,
+        });
+        addToast(`Expedition drafted at ${station.label} from plain language`, 'success');
       },
     },
     {
       num: 2,
       title: 'Check Feasibility',
-      desc: 'Show the guaranteed seeded fuel shortfall for over-provisioned expeditions.',
+      desc: 'Check whether the station could support a 14-person traverse right now.',
       action: async () => {
-        const res = await api.checkFeasibility({ station: 'Maitri', personnel_required: 14, fuel_required_l: 8400 });
-        const ok = res.items?.every((i: any) => i.ok) ?? false;
-        addToast(`Feasibility: ${ok ? 'All resources available' : 'Resource shortfall detected'}`, ok ? 'success' : 'warning');
+        const res = await api.checkFeasibility({
+          station: stationId, personnel_required: 14, fuel_required_l: 8400,
+        });
+        const short = res.items.filter((i) => !i.ok).map((i) => i.label);
+        addToast(short.length === 0
+          ? `${station.label} can resource this — readiness ${res.readiness_score}%`
+          : `${short.join(', ')} short at ${station.label} — readiness ${res.readiness_score}%`,
+          short.length === 0 ? 'success' : 'warning');
       },
     },
     {
       num: 3,
       title: 'Dispatch Resupply',
-      desc: 'Create critical fuel and medical supply shipments with QR payloads.',
+      desc: 'Send in fuel and medical supplies, each labelled with a scannable code.',
       action: async () => {
-        await api.createShipment({ item_name: 'Diesel Fuel', category: 'fuel', weight_kg: 5000, destination_station: 'Maitri', priority: 'critical' });
-        await api.createShipment({ item_name: 'Medical Supplies', category: 'medical', weight_kg: 200, destination_station: 'Maitri', priority: 'critical' });
-        addToast('Fuel and medical resupply shipments dispatched', 'success');
+        // Booked against this station's own stock rows so the final scan
+        // actually tops inventory up, in each row's own units.
+        const stock = await api.listInventory({ station: stationId });
+        const fuelRow = stock.find((i) => i.name.toLowerCase().includes('fuel'));
+        const medRow = stock.find((i) => i.name.toLowerCase().includes('medical'));
+        await api.createShipment({
+          item_name: fuelRow?.name ?? 'Diesel Fuel', category: 'fuel', weight_kg: 5000,
+          quantity: 4000, unit: fuelRow?.unit ?? undefined,
+          inventory_item_id: fuelRow?.id, destination_station: stationId, priority: 'critical',
+        });
+        await api.createShipment({
+          item_name: medRow?.name ?? 'Medical Supplies', category: 'medical', weight_kg: 200,
+          quantity: 60, unit: medRow?.unit ?? undefined,
+          inventory_item_id: medRow?.id, destination_station: stationId, priority: 'critical',
+        });
+        addToast(`Fuel and medical resupply dispatched to ${station.label}`, 'success');
       },
     },
     {
       num: 4,
       title: 'Scan Shipment',
-      desc: 'Advance the latest shipment one status step by scanning its barcode.',
+      desc: 'Scan the newest crate to move it one step closer to the store.',
       action: async () => {
         const shipment = await getFirstShipment();
         await api.scanBarcode(shipment.barcode_id);
@@ -116,85 +223,114 @@ export default function ScenarioPage() {
     {
       num: 5,
       title: 'Simulate Blizzard',
-      desc: 'Apply ΔT +30°C and push active shipments into elevated risk status.',
+      desc: 'Record a severe cold snap. Everything still on its way here is re-assessed, '
+        + 'not just one crate.',
       action: async () => {
-        const shipment = await getFirstShipment();
-        await api.updateRisk(shipment.id, 30);
-        addToast('Blizzard simulated — inventory will recalculate depletion rates', 'warning');
+        const res = await api.applyStationWeather(stationId, 30);
+        addToast(`ΔT +${res.delta_t}°C at ${station.label} — ${res.affected} consignment(s) `
+          + `re-scored, ${res.delayed} delayed. Inventory depletion re-runs against the same `
+          + 'figure.', 'warning');
       },
     },
     {
       num: 6,
       title: 'View Inventory Impact',
-      desc: 'Fetch live days-of-cover values after the blizzard temperature update.',
+      desc: 'See how many days of supplies are left once the cold is taken into account.',
       action: async () => {
-        const items = await api.listInventory({ station: 'Maitri' });
+        const items = await api.listInventory({ station: stationId });
         const list = Array.isArray(items) ? items : [];
-        const fuel = list.find((item: any) => item.category === 'fuel' || item.name?.toLowerCase().includes('fuel'));
+        const fuel = list.find((item) => item.name?.toLowerCase().includes('fuel'));
         addToast(fuel ? `Fuel cover: ${fuel.days_of_cover?.toFixed(1)} days remaining` : `${list.length} inventory items recalculated`, 'info');
       },
     },
     {
       num: 7,
       title: 'Deploy Personnel',
-      desc: 'Deploy two operatives with planned routes from Maitri to Camp Alpha.',
+      desc: 'Send two people out to the nearest field camp. At Maitri the route crosses a '
+        + 'known crevasse field, so the check before departure should object.',
       action: async () => {
         const researchers = await getResearchers();
+        const camp = await getDestination();
+        const origin = { lat: station.lat, lng: station.lng };
+        const destination = { lat: camp.center_lat, lng: camp.center_lng };
+        const results = [];
         for (const person of researchers) {
-          await api.createMovementPlan({
+          results.push(await api.createMovementPlan({
             personnel_id: person.id,
-            origin_lat: -70.767, origin_lng: 11.731,
-            destination_lat: -70.85, destination_lng: 11.95,
-            destination_name: 'Camp Alpha',
-            planned_route: plannedRoute,
+            origin_lat: origin.lat, origin_lng: origin.lng,
+            destination_lat: destination.lat, destination_lng: destination.lng,
+            destination_name: camp.name,
+            planned_route: interpolate(origin, destination),
             departure_time: new Date().toISOString(),
             expected_arrival: new Date(Date.now() + 6 * 3600 * 1000).toISOString(),
-          });
+          }));
         }
-        addToast(`${researchers.slice(0, 2).map((p: any) => p.name).join(' & ')} deployed to Camp Alpha`, 'success');
+        const warned = results.flatMap((r) => r?.route_warnings ?? []);
+        const names = researchers.slice(0, 2).map((p) => p.name).join(' & ');
+        addToast(warned.length
+          ? `${names} authorised — pre-flight flagged ${[...new Set(warned)].join(', ')}`
+          : `${names} deployed to ${camp.name}`, warned.length ? 'warning' : 'success');
       },
     },
     {
       num: 8,
       title: 'GPS & Geofence',
-      desc: 'Advance both operatives into the restricted zone to trigger alerts.',
+      desc: 'Follow both of them along the route until they enter the restricted area and '
+        + 'the alarm goes off.',
       action: async () => {
         const researchers = await getResearchers();
+        let violations = 0;
         for (const person of researchers.slice(0, 2)) {
           await api.resetSimulation(person.id);
-          for (let i = 0; i < 8; i++) {
-            await api.simulateMove(person.id);
-            await delay(400);
+          // Walk the whole track; stop early once the person has arrived.
+          for (let i = 0; i < 12; i++) {
+            const res = await api.simulateMove(person.id);
+            if (res?.alert?.type === 'geofence_violation') violations++;
+            if (res?.status === 'arrived') break;
+            await delay(350);
           }
         }
-        addToast('GPS feeds reached restricted-zone boundary — alerts triggered', 'alert');
+        addToast(violations > 0
+          ? `${violations} geofence violation${violations !== 1 ? 's' : ''} detected — both `
+            + 'operatives are now flagged deviated on the roster'
+          : 'Both operatives reached the camp without entering a restricted zone',
+          violations > 0 ? 'alert' : 'success');
       },
     },
     {
       num: 9,
       title: 'Trigger Emergency',
-      desc: 'Create a critical incident and populate accountability counts.',
+      desc: 'Declare an emergency and count who is inside the affected area.',
       action: async () => {
-        await api.createIncident({ type: 'medical', severity: 'critical', location_lat: -70.85, location_lng: 11.95, affected_radius_m: 5000 });
-        addToast('Emergency declared — accountability check started across all stations', 'alert');
+        const camp = await getDestination();
+        const res = await api.createIncident({
+          type: 'medical', severity: 'critical',
+          location_lat: camp.center_lat, location_lng: camp.center_lng,
+          affected_radius_m: 5000,
+        });
+        addToast(`Emergency declared at ${camp.name} — ${res.unaccounted_count ?? 0} of `
+          + `${res.expected_count ?? 0} in the zone unaccounted for. Resolve it on the `
+          + 'Emergency page once everyone is confirmed safe.', 'alert');
       },
     },
     {
       num: 10,
       title: 'Offline Queue Test',
-      desc: 'Queue one status update offline, reconnect, and flush it.',
+      desc: 'Make a change with the link down, then watch it send itself when it returns.',
       action: async () => {
         const researchers = await getResearchers();
         if (!researchers.length) throw new Error('No personnel available');
         const person = researchers[0];
-        offlineQueue.setOffline(true);
-        addToast('System offline — next update will queue', 'warning');
+        void offlineQueue.setOffline(true);
+        addToast('Link down — the next change will wait here', 'warning');
         const nextStatus = person.status === 'at_station' ? 'in_transit' : 'returned';
-        await api.updatePersonnelStatus(person.id, nextStatus);
+        const queued = await api.updatePersonnelStatus(person.id, nextStatus);
+        if (!isQueued(queued)) throw new Error('The change went straight through instead of waiting');
+        addToast(`Held here: ${person.name} → ${nextStatus.replace('_', ' ')}`, 'info');
         await delay(800);
-        offlineQueue.setOffline(false);
-        const flushed = await offlineQueue.flush();
-        addToast(`Back online — ${flushed} queued change${flushed !== 1 ? 's' : ''} synced`, 'success');
+        const { flushed, dropped } = await offlineQueue.setOffline(false);
+        addToast(`Back online — ${flushed} queued change${flushed !== 1 ? 's' : ''} synced`
+          + (dropped ? `, ${dropped} rejected` : ''), dropped ? 'warning' : 'success');
       },
     },
   ];
@@ -224,43 +360,65 @@ export default function ScenarioPage() {
 
   return (
     <div className="max-w-5xl mx-auto pb-10">
-      {/* Header */}
-      <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-arctic-800 hover:text-arctic-600 flex items-center gap-2 text-xs font-semibold transition-colors bg-white px-3.5 py-1.5 rounded-xl border border-arctic-200 shadow-xs">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Dashboard
-          </Link>
-          <div>
-            <h1 className="text-xl font-bold text-arctic-900" style={{ fontFamily: 'Outfit, sans-serif' }}>Guided Scenario Walkthrough</h1>
-            <p className="text-xs text-frost-muted mt-0.5">Run PRAHARI end-to-end for Team 36 OURS — {completedCount}/{steps.length} complete</p>
-          </div>
-        </div>
+      <PageHeader
+        title="Live Scenario"
+        code="SIM-WLK-06"
+        description={`A guided ten-step run through everything the station does, carried out `
+          + `for real at ${station.label} — every step changes the actual records.`}
+      >
+        <button
+          onClick={() => void handleReset('operational')}
+          disabled={resetting}
+          title="Delete every expedition, consignment, incident and movement plan, and restore
+                 seeded crew and stock"
+          className="btn-secondary text-13"
+        >
+          <RotateCcw size={14} aria-hidden="true" />
+          {resetting ? 'Resetting…' : 'Reset station data'}
+        </button>
         <button
           onClick={toggleConnectivity}
-          className={`px-4 py-2 rounded-xl text-xs font-bold border transition-colors ${
-            offline ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-          }`}
+          className={`px-4 py-2 rounded-md text-13 font-bold border transition-colors
+                      flex items-center gap-1.5 font-mono tracking-caps ${
+            offline
+              ? 'bg-alert-tint text-alert border-alert-edge'
+              : 'bg-nominal-tint text-nominal border-nominal-edge'}`}
         >
-          {offline ? `⚠️ OFFLINE — ${pendingCount} pending` : '✅ CONNECTED'}
+          {offline
+            ? <><AlertTriangle size={14} aria-hidden="true" /> OFFLINE — {pendingCount} PENDING</>
+            : <><CheckCircle2 size={14} aria-hidden="true" /> CONNECTED</>}
         </button>
-      </div>
+      </PageHeader>
+
+      {counts && (
+        <p className="text-xs text-frost-muted mb-3">
+          On record across all stations: {counts.expeditions} expedition(s),{' '}
+          {counts.shipments} consignment(s), {counts.incidents} incident(s)
+          {counts.open_incidents > 0 && (
+            <span className="text-emergency font-semibold">
+              {' '}({counts.open_incidents} still open)
+            </span>
+          )}. Reruns accumulate — reset above to return to the seeded baseline.
+        </p>
+      )}
 
       {/* Progress bar */}
-      <div className="w-full bg-arctic-100 rounded-full h-2 mb-2 border border-arctic-200">
+      <div className="w-full bg-frost-subtle rounded-full h-2 mb-2 border border-frost-border
+                      overflow-hidden">
         <div
-          className="h-2 rounded-full transition-all duration-700"
+          className="h-full transition-all duration-700"
           style={{
             width: `${progress}%`,
-            background: progress === 100 ? '#22c55e' : 'linear-gradient(to right, #0088CC, #38BDF8)',
+            background: progress === 100 ? '#10b981' : '#0284c7',
           }}
         />
       </div>
-      <div className="flex justify-between text-[10px] text-frost-muted mb-6 uppercase tracking-wider" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-        <span>Progress</span>
-        <span className={progress === 100 ? 'text-emerald-600 font-bold' : ''}>{Math.round(progress)}% {progress === 100 ? '— Complete ✓' : ''}</span>
+      <div className="flex justify-between font-mono text-xs text-frost-muted mb-6
+                      uppercase tracking-caps font-bold">
+        <span>Walkthrough Progress · {completedCount}/{steps.length} steps</span>
+        <span className={progress === 100 ? 'text-nominal' : 'text-arctic-700'}>
+          {Math.round(progress)}%{progress === 100 ? ' — Complete' : ''}
+        </span>
       </div>
 
       {/* Steps grid */}
@@ -274,17 +432,17 @@ export default function ScenarioPage() {
             <div key={step.num} className={`subview-card rounded-2xl p-5 transition-all duration-300 ${getStepStyle(step.num)}`}>
               <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-2">
-                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-2xs font-bold shrink-0 ${
                     status === 'done' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' :
                     status === 'error' ? 'bg-rose-100 text-rose-700 border border-rose-300' :
                     isActive ? 'bg-arctic-100 text-arctic-700 border border-arctic-300' :
                     'bg-arctic-50 text-frost-muted border border-arctic-200'
                   }`}>{step.num}</span>
-                  <h3 className="font-bold text-sm text-arctic-900" style={{ fontFamily: 'Outfit, sans-serif' }}>{step.title}</h3>
+                  <h3 className="font-bold text-sm text-arctic-900">{step.title}</h3>
                 </div>
-                {status === 'done' && <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono shrink-0">DONE</span>}
-                {status === 'error' && <span className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-mono shrink-0">ERROR</span>}
-                {status === 'running' && <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-mono shrink-0 animate-pulse">RUNNING</span>}
+                {status === 'done' && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono shrink-0">DONE</span>}
+                {status === 'error' && <span className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-mono shrink-0">ERROR</span>}
+                {status === 'running' && <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-mono shrink-0 animate-pulse">RUNNING</span>}
               </div>
               <p className="text-xs text-frost-muted mb-4 leading-relaxed ml-8">{step.desc}</p>
               <button
@@ -292,7 +450,7 @@ export default function ScenarioPage() {
                 onClick={() => { if (canRun && status !== 'running') runStep(step.num, step.action); }}
                 disabled={!canRun || status === 'running'}
               >
-                {status === 'done' ? '↩ Re-run' : status === 'running' ? 'Running...' : status === 'error' ? '↺ Retry' : 'Execute'}
+                {status === 'done' ? 'Re-run' : status === 'running' ? 'Running...' : status === 'error' ? 'Retry' : 'Execute'}
               </button>
             </div>
           );
@@ -300,7 +458,7 @@ export default function ScenarioPage() {
       </div>
 
       {/* Timeline */}
-      <div style={{ height: 300 }}>
+      <div className="h-[340px]">
         <EventTimeline />
       </div>
     </div>

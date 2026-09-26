@@ -21,6 +21,10 @@ backend/prahari.db-shm
 .env.test.local
 .env.production.local
 
+# Local fonts (not redistributable)
+sf-pro-display-cufonfonts/
+frontend/public/fonts/
+
 # IDEs and OS files
 .vscode/
 .idea/

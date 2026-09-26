@@ -1,7 +1,10 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.1
-pydantic==2.9.0
-httpx==0.27.0
-qrcode[pil]==7.4.2
-Pillow==10.4.0
-python-multipart==0.0.9
+# Prahari backend — version ranges chosen so a clean `pip install -r requirements.txt`
+# succeeds on Python 3.11 through 3.14 (wheels available, no C toolchain needed).
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.32.1
+pydantic>=2.11.0,<3.0
+httpx>=0.27.0,<1.0
+qrcode[pil]>=7.4.2
+Pillow>=11.0.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.1
