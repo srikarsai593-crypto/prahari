@@ -1,0 +1,9 @@
+# Test-only dependencies. Kept out of requirements.txt so a station install
+# does not pull a test runner onto the machine that runs the console.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest
+
+-r requirements.txt
+
+pytest>=8.0,<10.0

@@ -184,6 +184,44 @@ something you have to remember to check.
 
 ---
 
+## 🧪 Tests
+
+```bash
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
+368 tests, ~30 s, no network and no shared state: each one gets its own
+throwaway SQLite file, and the LLM chain is stubbed so every parse falls
+through to the deterministic regex rules. A test that reached Gemini would be
+slow, cost money, need a key, and — worst of all — give a different answer on a
+different day.
+
+What they cover, and why these things in particular:
+
+| Area | What is pinned |
+|---|---|
+| `test_geo` | Great-circle distance, spherical bearing, cross-track deviation. The place where a plausible-looking wrong answer is most dangerous, because every alarm and heading is built on it. |
+| `test_simulation` | Track densification, the playback cursor, and telemetry derived from the authorised schedule rather than the console's tick rate. |
+| `test_inventory` | The depletion formula, the per-class supply policy matrix, headcount scaling, standing alerts and the cross-station lookup. |
+| `test_personnel` | The status state machine, pre-flight geofence checks, GPS playback and accountability. |
+| `test_incidents` | Head-counts, response protocols, asset dispatch, live severity and perimeter changes. |
+| `test_expeditions` | Readiness scoring, crew commitment, the fuel ledger and the resupply recommender. |
+| `test_shipments` | The scan chain, unit-safe restock, weather risk and overdue convoy detection. |
+| `test_cascade` | The cross-module chain — that a write anywhere reaches the module counting on it, and that the alarm announces a crossing rather than a state. |
+| `test_platform` | Credentials, CORS, audit-log ordering and reset hygiene. |
+| `test_models` | The bounds that make a malformed LLM parse degrade to rules instead of being believed. |
+
+The suite is checked against deliberate regressions rather than trusted on its
+line count: eighteen known bugs — a flat criticality rule, bearing by the flat
+approximation, deviation measured to waypoints, an incident closable over a
+missing person, a stock delta that carries its sign — are reintroduced one at a
+time and the suite must fail on each. A mutation that survives is a test that
+does not really exist.
+
+---
+
 ## 🧪 Verifying a change
 
 ```bash

@@ -2,6 +2,11 @@
 node_modules/
 __pycache__/
 *.pyc
+
+# Test runner caches
+.pytest_cache/
+.coverage
+htmlcov/
 .venv/
 backend/.venv/
 backend/package-lock.json
