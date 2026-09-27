@@ -43,6 +43,11 @@ module reads the same truth.
 | **Cross-track deviation** | Route deviation is the perpendicular distance to the route's *segments*. Measuring to the nearest waypoint raises false alerts for anyone walking the authorised line between two distant waypoints. |
 | **Level-H QR** | Cargo labels use 30% error correction so they still scan when frosted, torn or partly obscured. Images are generated per-label on request, not inlined into every list response. |
 | **SQLite WAL** | `journal_mode=WAL` + `busy_timeout=5000` lets telemetry writes and dashboard reads proceed concurrently. |
+| **Supply policy per item class** | Criticality is not one flat "< 15 days". A medical flight cannot land at Maitri mid-winter, so 20 days of pharmaceuticals is an emergency while 20 days of diesel is a normal interval between tanker runs. Each row is judged against its class (`app/routes/inventory.py: RISK_CLASS_POLICY`), and a station can override the floor per item. |
+| **Burn rate follows the roster** | `base_burn_rate` is the rate at the station's nominal headcount; consumable and medical depletion is scaled by the crew actually on station. A traverse party arriving from Bharati moves the ration runway, which is exactly the figure that arrival should move. |
+| **Alerts that outlive the tab** | A toast that vanishes in four seconds is not a record. Crossing a stock floor writes a standing `CRITICAL STOCK ALERT` to the audit log and clears it explicitly on recovery, so an operator who was on another page still finds it. |
+| **Readiness is continuous, not a stored claim** | A feasibility score saved at planning time describes a moment that has passed. Any write that moves station conditions re-scores every open traverse (`app/cascade.py`), and the card reports the live figure beside the one it was approved against. |
+| **Derived lateness, not a scheduler** | A consignment is overdue if the clock is past its ETA and nothing has been scanned in — computed on read. A station that is offline for days has no background job to catch up on, and the answer is never stale. |
 
 ---
 
@@ -54,18 +59,41 @@ module reads the same truth.
 2. **📦 Cargo Tracking** — QR-driven status chain
    (`dispatched → in_transit → arrived → unloaded`). Unloading replenishes the
    matching inventory item. Blizzard ΔT re-scores risk and pushes the ETA.
-3. **🔋 Dynamic Inventory** — `days_of_cover = quantity / (base_burn_rate × (1 + β × ΔT))`,
-   recomputed live against the station's current blizzard load. Stock is adjusted
-   with a **text command** (`POST /inventory/command`, e.g. *"Removed 10 litres of
-   diesel fuel"*): the command is parsed, previewed, and only written on confirm,
-   always scoped to the console's active station and logged under the
-   `stock_command` actor.
-4. **📍 Personnel Routing** — Authorise a movement plan, then replay GPS fixes
-   along it. Restricted zones are flagged **pre-flight** and again on entry.
+3. **🔋 Dynamic Inventory** — `days_of_cover = quantity / (base_burn_rate × crew_factor × (1 + β × ΔT))`,
+   recomputed live against the station's blizzard load *and* the crew currently
+   on station. The ΔT slider sits on the Inventory page itself, so the formula
+   can be driven where its output is read. Stock is adjusted with a **text
+   command** (`POST /inventory/command`, e.g. *"Removed 10 litres of diesel
+   fuel"*): the command is parsed, previewed, and only written on confirm, always
+   scoped to the console's active station. An ambiguous item comes back as
+   clickable candidates rather than a dead-end error. `GET /inventory/cross-station`
+   answers "does another base have this?" in one query.
+4. **📍 Personnel Routing** — Authorise a movement plan on a **map**: click to
+   place waypoints and steer the corridor around a crevasse field, with a live
+   verdict on how many restricted zones the path still crosses. Then replay GPS
+   fixes along it with a progress meter and a telemetry read-out — heading,
+   ground speed, distance remaining and ETA, derived from the authorised
+   schedule rather than from the console's tick rate.
 5. **🚨 Emergency Accountability** — SOS or declared incident → head-count inside
    the affected radius + nearest assets by Haversine distance. Only `at_station`
    and `returned` count as verified safe, and an incident **cannot be resolved**
-   while anyone is unaccounted for.
+   while anyone is unaccounted for. Each incident type carries a **response
+   protocol** whose steps are ticked off and timestamped into the audit log,
+   rescue assets are **dispatched and released** from the same panel, and both
+   severity and perimeter can be changed on a live incident — widening the
+   radius re-runs the head-count against the new circle instead of forcing a
+   resolve-and-redeclare that discards the count.
+
+### The cross-module chain
+
+The modules are wired to each other, not merely to the database. A blizzard ΔT
+re-scores cargo risk and pushes ETAs; delayed consignments and depleted stock
+re-score every open traverse; a traverse that falls below what it was approved
+against raises a `FEASIBILITY DEGRADED` alarm *and* offers the inbound
+consignment that would close the gap, with the hours to wait. The whole chain
+announces itself once as a `SUPPLY CHAIN CASCADE` event and a dashboard banner.
+`app/cascade.py` owns the fan-out; it is a separate module because the routers
+already import one another and putting it in any of them closes a cycle.
 
 ---
 
@@ -109,6 +137,22 @@ the station link drops. Nothing to install.
 Open <http://localhost:3000/scenario> — a ten-step walkthrough that exercises all
 five modules end to end, including a geofence violation and an offline
 queue-and-flush cycle.
+
+---
+
+## 🧯 Drills
+
+Two switches exist so the failure paths can be exercised without waiting for a
+real failure, and both are honest about what they are:
+
+* **Overdue convoy** — a consignment's *Due in (hours)* field accepts a negative
+  value, which backdates the ETA. At the nominal fourteen-day sea leg nothing is
+  ever overdue inside a demo, so there would otherwise be no way to see the
+  stalled-convoy path at all.
+* **Beacon ping** — `POST /shipments/{id}/beacon-ping` records that the station
+  requested a position report and returns the last facts it holds. Prahari has no
+  satellite link and the response says so; the value is the audit entry, which is
+  where a real convoy search would start.
 
 ---
 

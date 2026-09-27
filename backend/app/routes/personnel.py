@@ -9,10 +9,11 @@ from ..events import log_event
 from ..ws_manager import manager
 from ..geo import haversine_distance, check_geofences, check_route_deviation
 from ..simulation import (get_next_position, reset_simulation, get_planned_route,
-                          get_latest_plan, get_progress, build_track)
+                          get_latest_plan, get_progress, get_telemetry, build_track)
 from .incidents import compute_accountability, VERIFIED_SAFE_STATUSES
 from ..auth import require_key
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
+from ..cascade import propagate_station_change
 
 router = APIRouter(prefix='/personnel', tags=['personnel'])
 
@@ -148,7 +149,16 @@ def list_personnel(station: Optional[Station] = None):
     for plan in plans:
         latest.setdefault(plan['personnel_id'], plan)
     now = utc_now()
-    return [_personnel_with_tracking_status(r, latest.get(r['id']), now) for r in rows]
+    people = []
+    for row in rows:
+        plan = latest.get(row['id'])
+        person = _personnel_with_tracking_status(row, plan, now)
+        # Carried on the list so a page reload mid-traverse restores the
+        # progress meter instead of blanking it until the next tick.
+        person['progress'] = get_progress(row['id'], db) if plan else None
+        person['telemetry'] = get_telemetry(plan, db) if plan else None
+        people.append(person)
+    return people
 
 
 # NOTE: static sub-routes MUST precede /{personnel_id} or FastAPI binds the
@@ -252,6 +262,7 @@ def get_personnel(personnel_id: str):
     plan = get_latest_plan(personnel_id, db)
     result = _personnel_with_tracking_status(row, plan)
     result['progress'] = get_progress(personnel_id, db)
+    result['telemetry'] = get_telemetry(plan, db) if plan else None
     return result
 
 
@@ -336,16 +347,26 @@ async def simulate_move(personnel_id: str):
                             'gps_system', personnel_id, {'position': position},
                             station=person['station'])
 
+    # Decimal coordinates alone tell an operator nothing about whether the
+    # party is closing on the camp or drifting. Heading, ground speed, distance
+    # remaining and ETA are all derivable from the track and the authorised
+    # schedule, and they are what makes this read as navigation rather than as
+    # a database row.
+    plan_now = get_latest_plan(personnel_id, db)
+    telemetry = get_telemetry(plan_now, db) if plan_now else None
+    progress = get_progress(personnel_id, db)
+
     await manager.broadcast({'type': 'gps_update',
                              'data': {'personnel_id': personnel_id, 'name': person['name'],
                                       'lat': position['lat'], 'lng': position['lng'],
-                                      'last_update_at': now, 'alert': alert}})
+                                      'last_update_at': now, 'alert': alert,
+                                      'telemetry': telemetry, 'progress': progress}})
     if alert:
         await manager.broadcast({'type': 'alert', 'data': alert})
 
     await broadcast_open_incident_accountability(db)
     return {'personnel_id': personnel_id, 'position': position, 'alert': alert,
-            'progress': get_progress(personnel_id, db)}
+            'telemetry': telemetry, 'progress': progress}
 
 
 @router.post('/{personnel_id}/reset-simulation', dependencies=[Depends(require_key)])
@@ -424,4 +445,13 @@ async def update_status(personnel_id: str, body: PersonnelStatusRequest):
     await manager.broadcast({'type': 'personnel_update',
                              'data': {'personnel_id': personnel_id, 'status': new_status}})
     await broadcast_open_incident_accountability(db)
+    # Headcount drives consumable burn rates and crew availability, so an
+    # arrival or a departure moves the inventory runway and every open
+    # traverse's readiness with it.
+    from ..routes.inventory import evaluate_stock_alerts
+    await evaluate_stock_alerts(person['station'], db)
+    await propagate_station_change(person['station'],
+                                   f'{person["name"]} {current} -> {new_status}', db)
+    await manager.broadcast({'type': 'inventory_update',
+                             'data': {'station': person['station']}})
     return {'id': personnel_id, 'status': new_status, 'previous_status': current}

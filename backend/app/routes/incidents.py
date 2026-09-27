@@ -4,7 +4,7 @@ from ..database import get_db
 from typing import Optional
 
 from ..models import (IncidentCreate, IncidentUpdateRequest, AssetUpdateRequest,
-                      PowerFailureRequest, Station)
+                      AssetDeployRequest, IncidentTaskRequest, PowerFailureRequest, Station)
 from ..seed import STATION_ORIGINS
 from ..events import log_event
 from ..ws_manager import manager
@@ -23,6 +23,72 @@ VERIFIED_SAFE_STATUSES = ('at_station', 'returned')
 # Bharati and Himadri are thousands of kilometres apart with separate response
 # teams, so "near the station" is generous but finite.
 STATION_RESPONSE_RADIUS_M = 500_000
+
+
+# --- Standard Operating Procedures ------------------------------------------
+# The module could say who was missing and could not say what to do about it.
+# In a real Antarctic emergency the commander is not improvising: a fuel fire
+# means foam, manifold isolation and a muster at the secondary module, in that
+# order. The catalogue lives here rather than in the database because it is
+# doctrine, not station data; what gets recorded is which steps were actually
+# taken, by whom, and when.
+SOP_PLAYBOOKS: dict[str, list[tuple[str, str]]] = {
+    'fire': [
+        ('klaxon',   'Sound station-wide klaxon / evacuation alarm'),
+        ('manifold', 'Isolate main fuel manifold and tank valves'),
+        ('suppress', 'Deploy snowcat with fire-suppression sled'),
+        ('muster',   'Verify crew muster at secondary habitation module'),
+        ('satcom',   'Establish satcom comms with NCPOR base command'),
+    ],
+    'medical': [
+        ('officer',  'Dispatch medical officer to field location'),
+        ('trauma',   'Mobilise trauma kit and hypothermia blanket unit'),
+        ('medevac',  'Place rescue helicopter on medevac standby'),
+        ('satcom',   'Relay casualty status to NCPOR base command'),
+    ],
+    'power_failure': [
+        ('ats',      'Verify automatic transfer switch to diesel generator 2'),
+        ('circuits', 'Prioritise critical life-support heating circuits'),
+        ('vhf',      'Radio all outlying field camps on emergency VHF'),
+        ('fuel',     'Confirm generator day-tank level and reserve fuel'),
+    ],
+    'severe_weather': [
+        ('condition', 'Declare weather condition and confine crew to buildings'),
+        ('lifelines', 'Rig inter-building lifelines and confirm they are in place'),
+        ('recall',    'Recall every party in the field to the nearest shelter'),
+        ('secure',    'Secure external loads, vehicles and antennae'),
+    ],
+    'structural': [
+        ('evacuate', 'Evacuate and cordon the affected structure'),
+        ('utilities', 'Isolate power, fuel and water to the structure'),
+        ('assess',   'Assess load-bearing damage before any re-entry'),
+        ('muster',   'Verify crew muster and account for every occupant'),
+    ],
+}
+
+
+def _ensure_sop_tasks(db, incident_id: str, incident_type: str) -> None:
+    """Materialise the playbook for an incident. Idempotent, so it can run on
+    every read of an incident declared before this existed."""
+    playbook = SOP_PLAYBOOKS.get(incident_type)
+    if not playbook:
+        return
+    db.executemany(
+        'INSERT OR IGNORE INTO incident_tasks (incident_id, task_key, label, position) '
+        'VALUES (?, ?, ?, ?)',
+        [(incident_id, key, label, i) for i, (key, label) in enumerate(playbook)]
+    )
+    db.commit()
+
+
+def _sop_tasks(db, incident_id: str, incident_type: str) -> list[dict]:
+    _ensure_sop_tasks(db, incident_id, incident_type)
+    rows = db.execute(
+        'SELECT * FROM incident_tasks WHERE incident_id = ? ORDER BY position',
+        (incident_id,)
+    ).fetchall()
+    return [{**dict(r), 'done': bool(r['done']), 'done_at': to_utc_iso(r['done_at'])}
+            for r in rows]
 
 
 def _within_station(station: str, lat, lng) -> bool:
@@ -52,7 +118,8 @@ def _owning_station(lat, lng) -> str | None:
 def get_nearby_assets(db, lat: float, lng: float, limit: int = 10) -> list:
     """Assets ranked by great-circle distance. Coordinates come from the DB."""
     rows = db.execute("SELECT * FROM emergency_assets WHERE status != 'unavailable'").fetchall()
-    results = [{**dict(r), 'distance_m': round(haversine_distance(lat, lng, r['lat'], r['lng']))}
+    results = [{**dict(r), 'updated_at': to_utc_iso(r['updated_at']),
+                'distance_m': round(haversine_distance(lat, lng, r['lat'], r['lng']))}
                for r in rows]
     results.sort(key=lambda x: x['distance_m'])
     return results[:limit]
@@ -139,6 +206,7 @@ async def simulate_power_failure(body: PowerFailureRequest = PowerFailureRequest
     )
     db.commit()
 
+    _ensure_sop_tasks(db, inc_id, 'power_failure')
     await log_event('emergency', f'Power failure declared at {station} - '
                     f'{unaccounted} of {expected} in the affected zone unaccounted for',
                     'commander', inc_id,
@@ -195,6 +263,113 @@ async def update_asset(asset_id: str, body: AssetUpdateRequest):
     return {**dict(row), 'lat': lat, 'lng': lng, 'status': status, 'updated_at': now}
 
 
+@router.patch('/assets/{asset_id}/dispatch', dependencies=[Depends(require_key)])
+async def dispatch_asset(asset_id: str, body: AssetDeployRequest):
+    """Commit a search-and-rescue asset to an incident, or release it.
+
+    The assets table and the update route both existed; nothing in the console
+    ever called them, so "Nearest Assets" was a distance readout and a snowcat
+    could not actually be sent anywhere.
+    """
+    db = get_db()
+    row = db.execute('SELECT * FROM emergency_assets WHERE id = ?', (asset_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Asset not found')
+
+    now = utc_now_iso()
+    if body.incident_id:
+        incident = db.execute('SELECT * FROM incidents WHERE id = ?',
+                              (body.incident_id,)).fetchone()
+        if not incident:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        if incident['status'] != 'open':
+            raise HTTPException(status_code=409,
+                                detail='That incident is closed - nothing to deploy to.')
+        if row['status'] == 'unavailable':
+            raise HTTPException(
+                status_code=409,
+                detail=f'{row["name"]} is unavailable and cannot be tasked.')
+        if row['assigned_incident_id'] and row['assigned_incident_id'] != body.incident_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f'{row["name"]} is already committed to '
+                       f'{row["assigned_incident_id"]} - release it first.')
+
+        # The asset converges on the incident: its position is what the map
+        # draws, so leaving it at base would show help that never moved.
+        db.execute('UPDATE emergency_assets SET status = ?, assigned_incident_id = ?, '
+                   'lat = ?, lng = ?, updated_at = ? WHERE id = ?',
+                   ('deployed', body.incident_id, incident['location_lat'],
+                    incident['location_lng'], now, asset_id))
+        db.commit()
+        label = str(incident['type']).replace('_', ' ')
+        await log_event('emergency',
+                        f'{row["name"]} deployed to {label} incident {body.incident_id}',
+                        'commander', asset_id,
+                        {'incident_id': body.incident_id, 'asset_id': asset_id},
+                        station=row['station'])
+    else:
+        previous = row['assigned_incident_id']
+        db.execute('UPDATE emergency_assets SET status = ?, assigned_incident_id = NULL, '
+                   'lat = ?, lng = ?, updated_at = ? WHERE id = ?',
+                   ('available', row['lat'], row['lng'], now, asset_id))
+        db.commit()
+        await log_event('emergency',
+                        f'{row["name"]} released'
+                        f'{f" from {previous}" if previous else ""} and returned to service',
+                        'commander', asset_id, {'asset_id': asset_id}, station=row['station'])
+
+    updated = db.execute('SELECT * FROM emergency_assets WHERE id = ?', (asset_id,)).fetchone()
+    result = {**dict(updated), 'updated_at': to_utc_iso(updated['updated_at'])}
+    await manager.broadcast({'type': 'asset_update', 'data': result})
+    return result
+
+
+@router.get('/{incident_id}/sop')
+def get_incident_sop(incident_id: str):
+    """The response protocol for this incident, and what has been done so far."""
+    db = get_db()
+    row = db.execute('SELECT type FROM incidents WHERE id = ?', (incident_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Incident not found')
+    tasks = _sop_tasks(db, incident_id, row['type'])
+    return {'incident_id': incident_id, 'type': row['type'], 'tasks': tasks,
+            'completed': sum(1 for t in tasks if t['done']), 'total': len(tasks)}
+
+
+@router.patch('/{incident_id}/sop/{task_key}', dependencies=[Depends(require_key)])
+async def update_incident_sop(incident_id: str, task_key: str, body: IncidentTaskRequest):
+    """Tick or untick one protocol step, and put it in the audit timeline."""
+    db = get_db()
+    incident = db.execute('SELECT * FROM incidents WHERE id = ?', (incident_id,)).fetchone()
+    if not incident:
+        raise HTTPException(status_code=404, detail='Incident not found')
+    _ensure_sop_tasks(db, incident_id, incident['type'])
+    task = db.execute('SELECT * FROM incident_tasks WHERE incident_id = ? AND task_key = ?',
+                      (incident_id, task_key)).fetchone()
+    if not task:
+        raise HTTPException(status_code=404,
+                            detail=f'No protocol step "{task_key}" for this incident type')
+
+    now = utc_now_iso() if body.done else None
+    db.execute('UPDATE incident_tasks SET done = ?, done_at = ?, done_by = ? '
+               'WHERE incident_id = ? AND task_key = ?',
+               (1 if body.done else 0, now, 'commander' if body.done else None,
+                incident_id, task_key))
+    db.commit()
+
+    await log_event('emergency',
+                    f'Response protocol step {"completed" if body.done else "reopened"} for '
+                    f'{incident_id}: {task["label"]}',
+                    'commander', incident_id,
+                    {'task_key': task_key, 'done': body.done}, station=incident['station'])
+    tasks = _sop_tasks(db, incident_id, incident['type'])
+    payload = {'incident_id': incident_id, 'tasks': tasks,
+               'completed': sum(1 for t in tasks if t['done']), 'total': len(tasks)}
+    await manager.broadcast({'type': 'incident_sop_update', 'data': payload})
+    return payload
+
+
 @router.get('/{incident_id}')
 def get_incident(incident_id: str):
     db = get_db()
@@ -207,7 +382,8 @@ def get_incident(incident_id: str):
         db, d['location_lat'], d['location_lng'], d['affected_radius_m'])
     d.update({'expected_count': expected, 'confirmed_safe_count': safe,
               'unaccounted_count': unaccounted, 'personnel_in_zone': personnel,
-              'nearby_assets': get_nearby_assets(db, d['location_lat'], d['location_lng'])})
+              'nearby_assets': get_nearby_assets(db, d['location_lat'], d['location_lng']),
+              'sop_tasks': _sop_tasks(db, incident_id, d['type'])})
     return d
 
 
@@ -228,6 +404,7 @@ async def create_incident(data: IncidentCreate):
     )
     db.commit()
 
+    _ensure_sop_tasks(db, inc_id, data.type)
     await log_event('emergency', f'Incident created: {data.type} (severity: {data.severity})',
                     'commander', inc_id, {'type': data.type, 'severity': data.severity},
                     station=station)
@@ -253,6 +430,10 @@ async def update_incident(incident_id: str, body: IncidentUpdateRequest):
     if not row:
         raise HTTPException(status_code=404, detail='Incident not found')
 
+    if body.status is None and body.severity is None and body.affected_radius_m is None:
+        raise HTTPException(status_code=422,
+                            detail='Send at least one of status, severity or affected_radius_m.')
+
     if body.status == 'resolved' and (row['unaccounted_count'] or 0) > 0:
         # Closing an incident while people are still unaccounted for is exactly
         # the failure this module exists to prevent.
@@ -262,17 +443,88 @@ async def update_incident(incident_id: str, body: IncidentUpdateRequest):
                    f'Confirm every person safe first.'
         )
 
-    db.execute('UPDATE incidents SET status = ? WHERE id = ?', (body.status, incident_id))
-    db.commit()
     label = str(row['type']).replace('_', ' ')
-    action = (f'Incident {incident_id} ({label}) resolved - everyone accounted for'
-              if body.status == 'resolved'
-              else f'Incident {incident_id} ({label}) reopened')
-    await log_event('emergency', action, 'commander', incident_id, station=row['station'])
+    status = body.status or row['status']
+    severity = body.severity or row['severity']
+    radius = body.affected_radius_m if body.affected_radius_m is not None \
+        else row['affected_radius_m']
+    notes: list[str] = []
+    escalated_to_critical = severity == 'critical' and row['severity'] != 'critical'
+
+    # A wider perimeter is a different question about who is inside it, so the
+    # head-count is re-run against the new circle rather than left reporting
+    # the old one. That is the whole point of being able to widen it: the
+    # previous workaround - resolve and redeclare - threw the count away.
+    accountability = None
+    if body.affected_radius_m is not None and radius != row['affected_radius_m']:
+        expected, safe, unaccounted, personnel = compute_accountability(
+            db, row['location_lat'], row['location_lng'], radius)
+        _persist_accountability(db, incident_id, expected, safe, unaccounted)
+        accountability = {'expected': expected, 'confirmed_safe': safe,
+                          'unaccounted': unaccounted, 'personnel': personnel}
+        notes.append(f'perimeter {row["affected_radius_m"]:,.0f} m -> {radius:,.0f} m '
+                     f'({unaccounted} of {expected} unaccounted in the widened zone)')
+    if body.severity is not None and severity != row['severity']:
+        notes.append(f'severity {row["severity"]} -> {severity}')
+
+    db.execute('UPDATE incidents SET status = ?, severity = ?, affected_radius_m = ? '
+               'WHERE id = ?', (status, severity, radius, incident_id))
+    db.commit()
+
+    if body.status is not None and status != row['status']:
+        action = (f'Incident {incident_id} ({label}) resolved - everyone accounted for'
+                  if status == 'resolved'
+                  else f'Incident {incident_id} ({label}) reopened')
+        await log_event('emergency', action, 'commander', incident_id, station=row['station'])
+    if notes:
+        await log_event('emergency',
+                        f'Incident {incident_id} ({label}) updated: {"; ".join(notes)}',
+                        'commander', incident_id,
+                        {'severity': severity, 'affected_radius_m': radius},
+                        station=row['station'])
+
     await manager.broadcast({'type': 'incident_update',
-                             'data': {'incident_id': incident_id, 'status': body.status,
+                             'data': {'incident_id': incident_id, 'status': status,
+                                      'severity': severity, 'affected_radius_m': radius,
                                       'station': row['station']}})
-    return {'id': incident_id, 'status': body.status, 'station': row['station']}
+    if accountability:
+        await manager.broadcast({'type': 'accountability_update',
+                                 'data': {'incident_id': incident_id, **accountability}})
+    if escalated_to_critical and status == 'open':
+        # A critical escalation is not a card update: it is the thing that puts
+        # the full-width red banner on every console in the station.
+        await manager.broadcast({'type': 'alert',
+                                 'data': {'type': 'incident_escalation', 'severity': 'critical',
+                                          'incident_id': incident_id, 'incident_type': row['type'],
+                                          'station': row['station'],
+                                          'lat': row['location_lat'], 'lng': row['location_lng'],
+                                          'message': f'ESCALATED TO CRITICAL: {label} incident '
+                                                     f'{incident_id} at {row["station"]}'}})
+
+    if status == 'resolved':
+        # An asset left flagged 'deployed' against a closed incident is help
+        # the next emergency believes it does not have.
+        released = db.execute(
+            'SELECT id, name FROM emergency_assets WHERE assigned_incident_id = ?',
+            (incident_id,)).fetchall()
+        if released:
+            db.execute("UPDATE emergency_assets SET status = 'available', "
+                       'assigned_incident_id = NULL, updated_at = ? WHERE assigned_incident_id = ?',
+                       (utc_now_iso(), incident_id))
+            db.commit()
+            await log_event('emergency',
+                            f'{len(released)} asset(s) released on closure of {incident_id}: '
+                            f'{", ".join(r["name"] for r in released)}',
+                            'system', incident_id, station=row['station'])
+            await manager.broadcast({'type': 'asset_update',
+                                     'data': {'released_incident_id': incident_id}})
+            notes.append(f'{len(released)} asset(s) returned to service')
+
+    result = {'id': incident_id, 'status': status, 'severity': severity,
+              'affected_radius_m': radius, 'station': row['station'], 'notes': notes}
+    if accountability:
+        result['accountability'] = {k: v for k, v in accountability.items() if k != 'personnel'}
+    return result
 
 
 @router.post('/{incident_id}/accountability')

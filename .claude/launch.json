@@ -2,9 +2,27 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "prahari-backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8000"
+      ],
+      "cwd": "backend",
+      "port": 8000
+    },
+    {
       "name": "prahari-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
       "port": 3000
     }
   ]

@@ -1,6 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Package, RotateCw, Upload, Camera, Square, CloudSnow } from 'lucide-react';
+import {
+  Package, RotateCw, Upload, Camera, Square, CloudSnow, Satellite, TriangleAlert,
+} from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/Toast';
@@ -14,6 +16,9 @@ import type { Shipment, InventoryItem, CargoCategory, Priority } from '@/lib/typ
 /** Shipping weight cap per vessel — mirrors CAPACITY_KG in the backend. */
 const VESSEL_CAPACITY_KG = 10_000;
 
+/** Nominal sea leg to station — mirrors TRANSIT_DAYS in the backend. */
+const TRANSIT_DAYS = 14;
+
 const CATEGORIES: CargoCategory[] = ['fuel', 'food', 'equipment', 'medical'];
 const PRIORITIES: Priority[] = ['critical', 'normal', 'low'];
 
@@ -25,11 +30,13 @@ interface CargoForm {
   inventory_item_id: string;
   origin_station: string;
   priority: Priority;
+  /** Hours from now until the crate is due. Blank uses the nominal sea leg. */
+  eta_hours: string;
 }
 
 const emptyForm = (): CargoForm => ({
   item_name: '', category: 'fuel', weight_kg: 0, quantity: 0,
-  inventory_item_id: '', origin_station: '', priority: 'normal',
+  inventory_item_id: '', origin_station: '', priority: 'normal', eta_hours: '',
 });
 
 export default function CargoPage() {
@@ -44,6 +51,7 @@ export default function CargoPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [pinging, setPinging] = useState<string | null>(null);
   const [manualCode, setManualCode] = useState('');
   const [creating, setCreating] = useState(false);
   const [applyingWeather, setApplyingWeather] = useState(false);
@@ -137,6 +145,7 @@ export default function CargoPage() {
         priority: form.priority,
         origin_station: form.origin_station || undefined,
         destination_station: stationId,
+        eta_hours: form.eta_hours.trim() === '' ? undefined : Number(form.eta_hours),
       });
       const route = form.origin_station
         ? `${form.origin_station} → ${station.label}`
@@ -247,6 +256,31 @@ export default function CargoPage() {
           ? 'bg-rose-50 border-rose-200 text-rose-800'
           : 'bg-amber-50 border-amber-200 text-amber-800';
 
+  /**
+   * Interrogate a stalled consignment.
+   *
+   * Prahari has no satellite link and this does not pretend otherwise: it
+   * records that the station asked for a position report and reports back the
+   * last facts it holds, which is where a real convoy search would start.
+   */
+  const handleBeaconPing = async (shipmentId: string, barcode: string) => {
+    setPinging(shipmentId);
+    try {
+      const res = await api.requestBeaconPing(shipmentId);
+      addToast(`Beacon interrogation logged for ${barcode} — `
+        + (res.hours_overdue != null ? `overdue by ${res.hours_overdue}h, ` : '')
+        + (res.last_scanned_at
+          ? `last scanned ${new Date(res.last_scanned_at).toLocaleString('en-GB')}`
+          : 'never scanned since dispatch'),
+        'warning');
+      void load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Could not request a beacon ping', 'alert');
+    } finally { setPinging(null); }
+  };
+
+  const overdueCount = shipments.filter((s) => s.is_overdue).length;
+
   const severity = deltaTInput < 14 ? 'LOW' : deltaTInput < 28 ? 'MODERATE' : 'SEVERE';
   const severityStyle = deltaTInput < 14
     ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
@@ -343,6 +377,21 @@ export default function CargoPage() {
               </div>
 
               <div>
+                <label htmlFor="cg-eta">Due in (hours)</label>
+                <input id="cg-eta" type="number" step="any"
+                       value={form.eta_hours} placeholder={`${TRANSIT_DAYS * 24} (sea leg)`}
+                       onChange={(e) => setForm({ ...form, eta_hours: e.target.value })} />
+                <p className="text-2xs text-frost-muted mt-1">
+                  {/* A convoy cannot be watched for lateness until one can be
+                      late: at the nominal fourteen-day sea leg nothing is ever
+                      overdue inside a drill. A negative value backdates the
+                      ETA so the stalled-convoy path can be exercised. */}
+                  Blank uses the {TRANSIT_DAYS}-day sea leg. A negative value backdates the ETA,
+                  so the crate registers as an overdue convoy for a drill.
+                </p>
+              </div>
+
+              <div>
                 <label htmlFor="cg-cat">Category</label>
                 <select id="cg-cat" value={form.category}
                         onChange={(e) => setForm({
@@ -390,6 +439,18 @@ export default function CargoPage() {
                 <span className="ml-2 text-xs font-normal text-frost-muted">
                   {activeCount} active
                 </span>
+                {/* A convoy that has missed its ETA without being scanned in is
+                    the most urgent thing on this page; the backend sorts those
+                    rows to the top, so the count belongs beside the title. */}
+                {overdueCount > 0 && (
+                  <span data-compact
+                        className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full
+                                   border border-rose-300 bg-rose-50 text-rose-800 text-2xs
+                                   font-semibold font-mono align-middle">
+                    <TriangleAlert size={11} aria-hidden="true" />
+                    {overdueCount} overdue
+                  </span>
+                )}
               </h2>
               <button className="btn-secondary text-xs" onClick={load}>
                 <RotateCw size={14} aria-hidden="true" /> Refresh
@@ -412,11 +473,12 @@ export default function CargoPage() {
                       <th className="pb-3 font-semibold">Contents</th>
                       <th className="pb-3 font-semibold">Status</th>
                       <th className="pb-3 font-semibold">Risk</th>
+                      <th className="pb-3 font-semibold sr-only">Convoy</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-arctic-50">
                     {shipments.length === 0 ? (
-                      <tr><td colSpan={5} className="py-8 text-center text-frost-muted text-13">
+                      <tr><td colSpan={6} className="py-8 text-center text-frost-muted text-13">
                         No consignments routed to {station.label}. Register one above.
                       </td></tr>
                     ) : shipments.map((s) => (
@@ -424,11 +486,29 @@ export default function CargoPage() {
                         key={s.id}
                         onClick={() => setSelectedId((prev) => (prev === s.id ? null : s.id))}
                         className={`cursor-pointer transition-colors ${
-                          selectedId === s.id ? 'bg-arctic-50' : 'hover:bg-arctic-50/50'}`}
+                          s.is_overdue
+                            ? 'bg-rose-50/70 hover:bg-rose-50 border-l-4 border-l-rose-400'
+                            : selectedId === s.id ? 'bg-arctic-50' : 'hover:bg-arctic-50/50'}`}
                       >
                         <td className="py-3">
                           <div className="font-bold text-arctic-900">{s.item_name}</div>
                           <div className="text-2xs text-frost-muted font-mono">{s.barcode_id}</div>
+                          {s.is_overdue && (
+                            <>
+                              <span data-compact
+                                    className="mt-1 inline-flex items-center gap-1 px-2 py-0.5
+                                               rounded-full border border-rose-300 bg-rose-100
+                                               text-rose-900 text-2xs font-bold font-mono">
+                                <TriangleAlert size={10} aria-hidden="true" />
+                                OVERDUE (+{s.hours_overdue}h)
+                              </span>
+                              {s.stalled_warning && (
+                                <div className="text-2xs text-rose-700 mt-1 max-w-xs">
+                                  {s.stalled_warning}
+                                </div>
+                              )}
+                            </>
+                          )}
                         </td>
                         <td className="py-3 text-frost-muted whitespace-nowrap">
                           {s.origin_station ?? 'Resupply'} → {s.destination_station}
@@ -448,6 +528,24 @@ export default function CargoPage() {
                             {s.risk_score > 70 ? 'Severe' : s.risk_score > 40 ? 'Elevated' : 'Low'}
                             {' '}({s.risk_score}%)
                           </span>
+                        </td>
+                        <td className="py-3 text-right">
+                          {s.is_overdue && (
+                            <button
+                              type="button"
+                              data-compact
+                              disabled={pinging === s.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleBeaconPing(s.id, s.barcode_id);
+                              }}
+                              className="btn-secondary !min-h-0 !px-2 !py-1 text-2xs
+                                         whitespace-nowrap"
+                            >
+                              <Satellite size={11} aria-hidden="true" />
+                              {pinging === s.id ? 'Pinging…' : 'Beacon ping'}
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

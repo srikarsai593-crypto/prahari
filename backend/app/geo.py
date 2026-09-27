@@ -74,3 +74,33 @@ def check_route_deviation(lat, lng, planned_waypoints, threshold_m=2000) -> bool
     """
     distance = distance_from_route_m(lat, lng, planned_waypoints)
     return distance is not None and distance > threshold_m
+
+
+def bearing_deg(lat1, lon1, lat2, lon2) -> float:
+    """Initial great-circle bearing from point 1 to point 2, in 0-360 degrees.
+
+    The flat atan2(dlng, dlat) shortcut is wrong at Antarctic latitudes: a
+    degree of longitude is ~13 km at Maitri's -70.8 but ~111 km at the equator,
+    so an unprojected delta reports a heading tens of degrees off. This is the
+    spherical forward azimuth.
+    """
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_lambda = math.radians(lon2 - lon1)
+    y = math.sin(delta_lambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(delta_lambda)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+
+_COMPASS = ('N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+            'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW')
+
+
+def compass_point(bearing: float) -> str:
+    """16-point cardinal label for a bearing, e.g. 34 deg -> 'NNE'."""
+    return _COMPASS[int((bearing % 360) / 22.5 + 0.5) % 16]
+
+
+def path_length_m(points) -> float:
+    """Total great-circle length of a polyline of {lat, lng} dicts."""
+    return sum(haversine_distance(a['lat'], a['lng'], b['lat'], b['lng'])
+               for a, b in zip(points, points[1:]))

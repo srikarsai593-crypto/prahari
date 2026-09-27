@@ -26,6 +26,19 @@ export interface Personnel {
   has_movement_plan?: boolean;
   plan_status?: string;
   progress?: { step: number; total: number; percent: number } | null;
+  telemetry?: Telemetry | null;
+}
+
+/** Derived navigation state for someone under active GPS tracking.
+ *  Speed comes from the authorised schedule, not from wall-clock time between
+ *  console ticks — the tick is a UI cadence, not a rate of travel. */
+export interface Telemetry {
+  heading_deg: number | null;
+  heading_compass: string | null;
+  speed_kmh: number | null;
+  distance_remaining_km: number;
+  eta_minutes: number | null;
+  eta_at: string | null;
 }
 
 export type IncidentStatus = 'open' | 'resolved';
@@ -62,6 +75,8 @@ export interface PersonnelInZone {
   distance_m: number;
 }
 
+export type AssetStatus = 'available' | 'standby' | 'deployed' | 'unavailable' | string;
+
 export interface NearbyAsset {
   id: string;
   name: string;
@@ -69,8 +84,30 @@ export interface NearbyAsset {
   lat: number;
   lng: number;
   station: string;
-  status: string;
+  status: AssetStatus;
+  /** The incident this asset is committed to, if any. */
+  assigned_incident_id?: string | null;
   distance_m: number;
+  updated_at?: string;
+}
+
+/** One step of an incident's Standard Operating Procedure. */
+export interface IncidentTask {
+  incident_id: string;
+  task_key: string;
+  label: string;
+  position: number;
+  done: boolean;
+  done_at: string | null;
+  done_by: string | null;
+}
+
+export interface IncidentSop {
+  incident_id: string;
+  type?: string;
+  tasks: IncidentTask[];
+  completed: number;
+  total: number;
 }
 
 export type CargoCategory = 'fuel' | 'food' | 'equipment' | 'medical';
@@ -103,6 +140,10 @@ export interface Shipment {
   delay_reason: string | null;
   last_scanned_at: string | null;
   updated_at: string;
+  /** Derived on read: the ETA has passed and nothing has been scanned in. */
+  is_overdue?: boolean;
+  hours_overdue?: number | null;
+  stalled_warning?: string | null;
 }
 
 /** What the Cargo form sends. */
@@ -117,6 +158,9 @@ export interface ShipmentInput {
   origin_station?: string;
   destination_station: string;
   expedition_id?: string;
+  /** Hours from now until the crate is due; negative backdates it, which is
+   *  how an overdue convoy can be exercised without waiting a fortnight. */
+  eta_hours?: number;
 }
 
 /** One station's blizzard load, and every consignment it re-scored. */
@@ -128,6 +172,8 @@ export interface StationWeatherResult {
   rescored: Array<{
     id: string; barcode_id: string; risk_score: number; status: string; eta: string;
   }>;
+  /** Weather → cargo → expedition: the traverses this blizzard just undermined. */
+  degraded_expeditions?: DegradedExpedition[];
 }
 
 export interface ShipmentStatusTransition {
@@ -185,7 +231,20 @@ export interface Expedition {
   crew_assigned?: number;
   /** What changed when the status last moved — crew deployed, fuel drawn. */
   notes?: string[];
+  /** The score this traverse was approved against. */
+  baseline_readiness_score?: number | null;
+  /** What the station can support right now. The gap between the two is the
+   *  degradation alarm: a stored score is a claim about a moment that passed. */
+  live_readiness_score?: number | null;
+  readiness_degraded?: boolean;
+  readiness_checked_at?: string | null;
+  live_feasibility?: FeasibilityLineItem[] | null;
 }
+
+/** Which supply-policy band a stock row is judged against. Derived from what
+ *  the row actually is, because `category` only ever holds consumable/reusable. */
+export type RiskClass = 'medical' | 'fuel' | 'rations' | 'spare_parts' | 'consumable';
+export type StockState = 'critical' | 'depleting' | 'nominal';
 
 export interface InventoryItem {
   id: string;
@@ -199,6 +258,49 @@ export interface InventoryItem {
   days_of_cover: number | null;
   updated_at: string;
   depletion_rate?: number | null;
+  delta_t?: number;
+  /** base_burn_rate scaled by live headcount, for what the crew consumes. */
+  effective_base_rate?: number;
+  headcount_factor?: number;
+  risk_class?: RiskClass;
+  /** Days of cover below which this row is critical / merely depleting. */
+  critical_days?: number;
+  warning_days?: number;
+  /** The station's own floor for this row, if one has been set. */
+  minimum_threshold?: number | null;
+  safety_stock_days?: number | null;
+  is_below_minimum?: boolean;
+  stock_state?: StockState;
+}
+
+/** What a station's consumable burn rates are currently scaled against. */
+export interface HeadcountBasis {
+  station: string;
+  headcount: number;
+  nominal_headcount: number;
+  factor: number;
+}
+
+/** A standing low-stock alert — persists in the audit log until stock recovers. */
+export interface StockAlert {
+  item_id: string;
+  name: string;
+  station: string;
+  quantity: number;
+  unit: string | null;
+  days_of_cover: number;
+  critical_days: number;
+  is_below_minimum: boolean;
+  minimum_threshold: number | null;
+}
+
+/** The same item across every station Prahari covers. */
+export interface CrossStationStock {
+  query: string;
+  matched: number;
+  items: InventoryItem[];
+  units: string[];
+  best_source: string | null;
 }
 
 export interface Geofence {
@@ -259,12 +361,27 @@ export interface ParsedExpedition extends Omit<Expedition, 'id' | 'status' | 'cr
   parse_source: 'gemini' | 'ollama' | 'fallback';
 }
 
+/** An inbound consignment that would close a shortfall the check found. */
+export interface ResupplyRecommendation {
+  shipment_id: string;
+  barcode_id: string;
+  item_name: string;
+  quantity: number | null;
+  unit: string | null;
+  eta: string | null;
+  eta_hours: number | null;
+  status: string;
+  covers_shortfall: boolean;
+  recommendation_text: string;
+}
+
 export interface FeasibilityLineItem {
   label: string;
   required: number;
   available: number;
   ok: boolean;
   detail?: string;
+  resupply?: ResupplyRecommendation | null;
 }
 
 export interface FeasibilityResult {
@@ -307,6 +424,19 @@ export interface StockCommandResult {
   warning?: string;
   error?: string;
   ambiguous_matches?: string[];
+}
+
+/** A traverse whose readiness has fallen below what it was approved against. */
+export interface DegradedExpedition {
+  expedition_id: string;
+  name: string;
+  station: string;
+  status: string;
+  baseline_readiness: number;
+  live_readiness: number;
+  degraded: boolean;
+  shortfalls: Array<{ label: string; required: number; available: number;
+                      detail?: string | null }>;
 }
 
 /** Blizzard delta-T is per station, not a single global value. */

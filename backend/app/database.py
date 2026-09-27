@@ -146,6 +146,20 @@ def init_db():
         delta_t REAL NOT NULL DEFAULT 0,
         updated_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS incident_tasks (
+        -- One row per Standard Operating Procedure step an incident's response
+        -- requires. The catalogue lives in code (routes/incidents.py) because
+        -- it is doctrine, not data; the rows here record what was actually
+        -- done, by whom and when, so the audit survives a reload.
+        incident_id TEXT NOT NULL,
+        task_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        done INTEGER NOT NULL DEFAULT 0,
+        done_at TEXT,
+        done_by TEXT,
+        PRIMARY KEY (incident_id, task_key)
+    );
     CREATE TABLE IF NOT EXISTS emergency_assets (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -202,6 +216,31 @@ def _run_migrations(conn) -> None:
     # that predates the column, CREATE TABLE IF NOT EXISTS is a no-op and the
     # index would reference a column that only this ALTER creates.
     conn.execute('CREATE INDEX IF NOT EXISTS idx_personnel_station ON personnel(station)')
+
+    # Per-item supply policy. Criticality used to be a hard-coded "< 15 days"
+    # in the browser, which treated surgical consumables and spare bolts alike.
+    # These let a station express its own floor for a row that needs one; the
+    # class defaults in routes/inventory.py cover every row that does not.
+    _add_column(conn, 'inventory_items', 'minimum_threshold', 'REAL')
+    _add_column(conn, 'inventory_items', 'safety_stock_days', 'REAL')
+
+    # Which incident an asset is committed to. Without it "deployed" said that
+    # a snowcat was out but not what it was out for, so releasing it was a
+    # guess and two incidents could each believe they had it.
+    _add_column(conn, 'emergency_assets', 'assigned_incident_id', 'TEXT')
+
+    # Expedition readiness is continuous, not a figure frozen at planning time.
+    # baseline_readiness_score is what the traverse was approved against;
+    # live_readiness_score is what the station can support right now, and the
+    # gap between them is the degradation alarm.
+    _add_column(conn, 'expeditions', 'baseline_readiness_score', 'INTEGER')
+    _add_column(conn, 'expeditions', 'live_readiness_score', 'INTEGER')
+    _add_column(conn, 'expeditions', 'live_feasibility', 'TEXT')
+    _add_column(conn, 'expeditions', 'readiness_checked_at', 'TEXT')
+    # Existing records have a score but no baseline: adopt the stored score as
+    # the baseline rather than reporting every one of them as degraded.
+    conn.execute('UPDATE expeditions SET baseline_readiness_score = readiness_score '
+                 'WHERE baseline_readiness_score IS NULL AND readiness_score IS NOT NULL')
 
     # Legacy rows seeded before personnel had distinct coordinates stacked on a
     # single point, which rendered as one map marker for the whole roster.

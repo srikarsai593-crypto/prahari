@@ -1,16 +1,17 @@
 from fastapi import APIRouter, HTTPException, Depends
 import uuid, json
-from datetime import datetime
+from datetime import datetime, timezone
 from ..database import get_db
 from ..models import (ExpeditionCreate, FeasibilityRequest, FeasibilityResponse,
-                      FeasibilityLineItem, ParseNLRequest, ExpeditionStatusRequest,
-                      ExpeditionCrewRequest, Station)
+                      FeasibilityLineItem, ResupplyRecommendation, ParseNLRequest,
+                      ExpeditionStatusRequest, ExpeditionCrewRequest, Station)
 from ..ws_manager import manager
 from typing import Optional
 from ..events import log_event
 from ..llm import parse_expedition_nl
 from ..auth import require_key
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
+from ..cascade import propagate_station_change
 
 router = APIRouter(prefix='/expeditions', tags=['expeditions'])
 
@@ -42,6 +43,91 @@ CREW_EDITABLE_STATUSES = ('draft',)
 FUEL_ITEM_MATCH = '%fuel%'
 
 
+# Cargo statuses that mean the crate is still coming. An arrived or unloaded
+# consignment has already been counted in the stock figure the shortfall was
+# measured against, so offering it as the answer would double-count it.
+INBOUND_STATUSES = ('dispatched', 'in_transit', 'delayed')
+
+
+def _hours_until(eta) -> float | None:
+    parsed = _parse_iso(eta)
+    if parsed is None:
+        return None
+    return round((parsed - utc_now()).total_seconds() / 3600, 1)
+
+
+def _parse_iso(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None \
+        else parsed.astimezone(timezone.utc)
+
+
+def _find_resupply(db, station: str, shortfall: float, unit: str,
+                   inventory_item_id: str | None, name_match: str
+                   ) -> ResupplyRecommendation | None:
+    """The earliest inbound consignment that would help close a shortfall.
+
+    "You cannot depart, you are 3,500 L short" is a diagnosis. The shipments
+    table already holds the answer — a tanker due in fourteen hours — and
+    making the commander go and find it by hand is the difference between a
+    dashboard and a decision-support system.
+    """
+    placeholders = ','.join('?' * len(INBOUND_STATUSES))
+    params: list = [station]
+    clause = ''
+    if inventory_item_id:
+        clause = 'AND (inventory_item_id = ? OR LOWER(item_name) LIKE ?) '
+        params += [inventory_item_id, f'%{name_match.lower()}%']
+    else:
+        clause = 'AND LOWER(item_name) LIKE ? '
+        params.append(f'%{name_match.lower()}%')
+    params += list(INBOUND_STATUSES)
+
+    row = db.execute(
+        f'SELECT * FROM shipments WHERE destination_station = ? {clause}'
+        f'AND status IN ({placeholders}) ORDER BY eta LIMIT 1', params
+    ).fetchone()
+    if not row:
+        return None
+
+    shipment = dict(row)
+    quantity = shipment['quantity']
+    hours = _hours_until(shipment['eta'])
+    covers = quantity is not None and quantity >= shortfall
+
+    eta_phrase = (f'in ~{hours:g} h' if hours is not None and hours > 0
+                  else 'imminently' if hours is not None else 'on an unstated schedule')
+    payload = (f'{quantity:,.0f} {shipment["unit"] or ""}'.strip() if quantity
+               else 'an unstated quantity')
+    if covers:
+        verdict = (f'Shortfall resolvable: delaying departure until it lands clears the '
+                   f'{shortfall:,.0f} {unit} gap in full.')
+    elif quantity:
+        verdict = (f'Partial cover only: it closes {quantity:,.0f} of the '
+                   f'{shortfall:,.0f} {unit} gap.')
+    else:
+        verdict = ('The consignment carries no stated quantity, so it cannot be counted '
+                   'against the shortfall until it is booked against a stock row.')
+    if shipment['status'] == 'delayed':
+        verdict += (f' It is itself delayed'
+                    f'{" (" + shipment["delay_reason"] + ")" if shipment["delay_reason"] else ""},'
+                    f' so treat the ETA as provisional.')
+
+    return ResupplyRecommendation(
+        shipment_id=shipment['id'], barcode_id=shipment['barcode_id'],
+        item_name=shipment['item_name'], quantity=quantity, unit=shipment['unit'],
+        eta=to_utc_iso(shipment['eta']), eta_hours=hours, status=shipment['status'],
+        covers_shortfall=bool(covers),
+        recommendation_text=(f'Inbound {shipment["barcode_id"]} carrying {payload} of '
+                             f'{shipment["item_name"]} arrives {eta_phrase}. {verdict}'),
+    )
+
+
 def _crew_for(db, expedition_id: str) -> list[dict]:
     rows = db.execute(
         'SELECT id, name, role, status, station FROM personnel WHERE expedition_id = ? '
@@ -55,6 +141,23 @@ def _with_crew(db, row) -> dict:
     d['created_at'] = to_utc_iso(d['created_at'])
     d['crew'] = _crew_for(db, d['id'])
     d['crew_assigned'] = len(d['crew'])
+
+    # Readiness as it stands now, next to the figure the traverse was approved
+    # against. A card that reports only the stored score is reporting a claim
+    # about a moment that has passed.
+    from ..cascade import DEGRADE_TOLERANCE
+    baseline = d.get('baseline_readiness_score')
+    if baseline is None:
+        baseline = d.get('readiness_score')
+    live = d.get('live_readiness_score')
+    d['baseline_readiness_score'] = baseline
+    d['readiness_degraded'] = bool(
+        live is not None and baseline is not None and live < baseline - DEGRADE_TOLERANCE)
+    try:
+        d['live_feasibility'] = json.loads(d['live_feasibility']) if d.get('live_feasibility') \
+            else None
+    except (TypeError, ValueError):
+        d['live_feasibility'] = None
     return d
 
 
@@ -226,6 +329,20 @@ async def parse_natural_language(body: ParseNLRequest):
 
 @router.post('/feasibility')
 async def check_feasibility(req: FeasibilityRequest) -> FeasibilityResponse:
+    """Score a traverse against what the station can support right now."""
+    return await score_feasibility(req, log=True)
+
+
+async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> FeasibilityResponse:
+    """The scoring itself, separated from the route.
+
+    `log` is False when the cascade re-scores in the background: a continuous
+    monitor that writes an audit row on every recomputation buries the
+    operator's own actions under its own heartbeat. It is a parameter of the
+    function rather than of the endpoint because FastAPI would otherwise expose
+    it as a query parameter and let any caller silently suppress the audit
+    trail for a readiness check.
+    """
     db = get_db()
 
     # ── Personnel: who is actually available to be assigned ──────────────────
@@ -284,7 +401,10 @@ async def check_feasibility(req: FeasibilityRequest) -> FeasibilityResponse:
                             available=available_fuel, ok=fuel_ok,
                             detail=f'{available_fuel:,.0f} L in store at {req.station}'
                             if fuel_ok else
-                            f'Short by {req.fuel_required_l - available_fuel:.0f} L'),
+                            f'Short by {req.fuel_required_l - available_fuel:.0f} L',
+                            resupply=None if fuel_ok else _find_resupply(
+                                db, req.station, req.fuel_required_l - available_fuel, 'L',
+                                fuel_row['id'] if fuel_row else None, 'fuel')),
         FeasibilityLineItem(label='Inbound Supplies', required=0, available=len(pending),
                             ok=cargo_ok, detail=cargo_detail),
         FeasibilityLineItem(label='Beds at Base', required=req.personnel_required,
@@ -302,13 +422,60 @@ async def check_feasibility(req: FeasibilityRequest) -> FeasibilityResponse:
     readiness_score = round(sum(breakdown[k] * w for k, w in READINESS_WEIGHTS.items()))
 
     status = 'ready' if all(i.ok for i in items) else 'short'
-    await log_event('expedition', f'Readiness check at {req.station}: {status} '
-                    f'({readiness_score}%)', 'system',
-                    metadata={'breakdown': breakdown, 'weights': READINESS_WEIGHTS},
-                    station=req.station)
+    if log:
+        await log_event('expedition', f'Readiness check at {req.station}: {status} '
+                        f'({readiness_score}%)', 'system',
+                        metadata={'breakdown': breakdown, 'weights': READINESS_WEIGHTS},
+                        station=req.station)
 
     return FeasibilityResponse(items=items, readiness_score=readiness_score,
                                readiness_breakdown=breakdown)
+
+
+@router.post('/{expedition_id}/rescore', dependencies=[Depends(require_key)])
+async def rescore_expedition(expedition_id: str):
+    """Re-run readiness for one traverse and adopt the result as its new baseline.
+
+    This is what the operator presses after acting on a degradation alarm: it
+    says "I have seen the new numbers and this is what the traverse is now
+    measured against", which is what stops the alarm re-firing for ever.
+    """
+    db = get_db()
+    row = db.execute('SELECT * FROM expeditions WHERE id = ?', (expedition_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Expedition not found')
+
+    result = await score_feasibility(FeasibilityRequest(
+        station=row['station'],
+        personnel_required=row['personnel_required'] or 0,
+        fuel_required_l=row['fuel_required_l'] or 0,
+        expedition_id=expedition_id,
+    ), log=False)
+
+    previous = row['baseline_readiness_score'] if row['baseline_readiness_score'] is not None \
+        else row['readiness_score']
+    db.execute(
+        'UPDATE expeditions SET readiness_score = ?, baseline_readiness_score = ?, '
+        'live_readiness_score = ?, readiness_breakdown = ?, feasibility_result = ?, '
+        'live_feasibility = ?, readiness_checked_at = ? WHERE id = ?',
+        (result.readiness_score, result.readiness_score, result.readiness_score,
+         json.dumps(result.readiness_breakdown),
+         json.dumps([i.model_dump() for i in result.items]),
+         json.dumps([i.model_dump() for i in result.items]),
+         utc_now_iso(), expedition_id))
+    db.commit()
+
+    await log_event('expedition', f'"{row["name"]}" re-scored against live conditions: '
+                    f'{previous if previous is not None else "unscored"}% -> '
+                    f'{result.readiness_score}%', 'commander', expedition_id,
+                    station=row['station'])
+    await manager.broadcast({'type': 'expedition_update',
+                             'data': {'expedition_id': expedition_id,
+                                      'status': row['status'], 'station': row['station']}})
+    updated = _with_crew(db, db.execute('SELECT * FROM expeditions WHERE id = ?',
+                                        (expedition_id,)).fetchone())
+    updated['feasibility'] = result.model_dump()
+    return updated
 
 
 @router.patch('/{expedition_id}', dependencies=[Depends(require_key)])
@@ -351,7 +518,7 @@ async def update_expedition_status(expedition_id: str, body: ExpeditionStatusReq
                 detail=f'"{row["name"]}" needs {required} crew and has {len(crew)} assigned. '
                        f'Add {required - len(crew)} more before authorising it.')
 
-        feasibility = await check_feasibility(FeasibilityRequest(
+        feasibility = await score_feasibility(FeasibilityRequest(
             station=station,
             personnel_required=required,
             fuel_required_l=fuel_needed,
@@ -431,6 +598,12 @@ async def update_expedition_status(expedition_id: str, body: ExpeditionStatusReq
                              'data': {'expedition_id': expedition_id, 'status': new_status}})
     await manager.broadcast({'type': 'inventory_update',
                              'data': {'station': station}})
+    # Fuel left the store and crew left the roster, so every OTHER traverse at
+    # this station was just scored against numbers that no longer hold.
+    from ..routes.inventory import evaluate_stock_alerts
+    await evaluate_stock_alerts(station, db)
+    await propagate_station_change(station, f'"{row["name"]}" {WORDING.get(new_status, new_status)}',
+                                   db)
 
     updated = db.execute('SELECT * FROM expeditions WHERE id = ?', (expedition_id,)).fetchone()
     result = _with_crew(db, updated)

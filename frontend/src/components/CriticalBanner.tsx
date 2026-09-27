@@ -11,7 +11,11 @@ import { useWebSocket } from './WebSocketProvider';
  * the operator is in — a toast that auto-dismisses after five seconds is the
  * wrong affordance for "someone is in a crevasse field".
  */
-const CRITICAL_TYPES = new Set(['sos', 'geofence_violation', 'incident', 'power_failure']);
+const CRITICAL_TYPES = new Set(['sos', 'geofence_violation', 'incident', 'power_failure',
+  // An incident escalated to critical is exactly the case this banner exists
+  // for: the record already exists, and what changed is that it now threatens
+  // the station. It has to reach consoles that are not on the Emergency page.
+  'incident_escalation']);
 
 interface CriticalAlert {
   key: string;

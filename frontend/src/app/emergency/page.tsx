@@ -9,6 +9,7 @@ import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { MapView } from '@/components/MapView';
 import { EventTimeline } from '@/components/EventTimeline';
+import { IncidentResponsePanel } from '@/components/IncidentResponsePanel';
 import type { Incident, Accountability, NearbyAsset } from '@/lib/types';
 
 const INCIDENT_TYPES = [
@@ -70,7 +71,10 @@ export default function EmergencyPage() {
   const loadNearbyAssets = useCallback(async (aLat: number, aLng: number) => {
     try {
       const data = await api.searchNearbyAssets(aLat, aLng);
-      setNearbyAssets(Array.isArray(data) ? data.slice(0, 3) : []);
+      // Kept whole rather than sliced to three: an operator tasking a rescue
+      // needs to reach the helicopter and the boat, not only whichever asset
+      // happens to be nearest.
+      setNearbyAssets(Array.isArray(data) ? data.slice(0, 6) : []);
     } catch {
       addToast('Could not fetch nearby assets — check the station link', 'warning');
       setNearbyAssets([]);
@@ -128,8 +132,23 @@ export default function EmergencyPage() {
       || (lastMessage.type === 'alert' && lastMessage.data?.type === 'incident')
       || lastMessage.type === 'station_reset') {
       void loadIncidents();
+    } else if (lastMessage.type === 'asset_update') {
+      // A snowcat tasked from another console has to show as committed here
+      // too, or two operators will each believe they have it.
+      if (focusIncident) {
+        void loadNearbyAssets(focusIncident.location_lat, focusIncident.location_lng);
+      }
     }
-  }, [lastMessage, focusId, loadIncidents]);
+  }, [lastMessage, focusId, focusIncident, loadIncidents, loadNearbyAssets]);
+
+  /** Re-read the incident and its assets after a response action. */
+  const refreshResponse = useCallback(() => {
+    void loadIncidents();
+    if (focusIncident) {
+      void loadNearbyAssets(focusIncident.location_lat, focusIncident.location_lng);
+      api.readAccountability(focusIncident.id).then(setAccountability).catch(() => {});
+    }
+  }, [focusIncident, loadIncidents, loadNearbyAssets]);
 
   // ── Declare ────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -190,7 +209,7 @@ export default function EmergencyPage() {
   const handleResolve = async (incident: Incident) => {
     setBusyId(incident.id);
     try {
-      await api.updateIncident(incident.id, 'resolved');
+      await api.updateIncident(incident.id, { status: 'resolved' });
       addToast(`${incident.type.replace('_', ' ')} incident resolved`, 'success');
       void loadIncidents();
     } catch (e) {
@@ -390,23 +409,15 @@ export default function EmergencyPage() {
             )}
           </div>
 
-          {/* Nearby assets */}
-          {nearbyAssets.length > 0 && (
-            <div className="subview-card rounded-2xl p-5">
-              <h3 className="section-heading mb-3">Nearest Assets</h3>
-              <div className="space-y-2">
-                {nearbyAssets.map((asset) => (
-                  <div key={asset.id} className="bg-arctic-50 p-3 rounded-xl border
-                                                 border-arctic-200">
-                    <div className="font-bold text-arctic-900 text-xs">{asset.name}</div>
-                    <div className="text-2xs text-frost-muted capitalize">{asset.type}</div>
-                    <div className="text-xs metric text-arctic-700 mt-0.5">
-                      {asset.distance_m}m away
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {/* What the commander can actually do about it: the protocol
+              checklist, severity escalation, the perimeter, and dispatching
+              the assets that used to be a read-only distance list. */}
+          {focusIncident && (
+            <IncidentResponsePanel
+              incident={focusIncident}
+              assets={nearbyAssets}
+              onChanged={refreshResponse}
+            />
           )}
 
           {/* Accountability — always says which incident it is counting. */}

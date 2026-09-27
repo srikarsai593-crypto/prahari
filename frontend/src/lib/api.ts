@@ -4,7 +4,8 @@ import type {
   Expedition, ExpeditionInput, ExpeditionStatus, InventoryItem, Geofence, MovementPlan, AppEvent,
   ParsedExpedition, FeasibilityResult, ShipmentStatusTransition, StationWeatherResult,
   ExactCount, StockCommandResult, StationConditions, MovementPlanInput,
-  StationCounts, StationResetResult,
+  StationCounts, StationResetResult, Telemetry, IncidentSop, HeadcountBasis, StockAlert,
+  CrossStationStock,
 } from './types';
 
 const BASE = '/api';
@@ -144,6 +145,15 @@ export const api = {
   setExpeditionCrew: (id: string, crewIds: string[]) =>
     request<Expedition>(`${BASE}/expeditions/${id}/crew`,
       jsonOptions('PATCH', { crew_ids: crewIds }), 'update expedition crew'),
+  /**
+   * Re-score a traverse against live conditions and adopt the result as its
+   * new baseline. This is what an operator presses after acting on a
+   * degradation alarm: it says "I have seen the new numbers", which is what
+   * stops the alarm re-firing for ever.
+   */
+  rescoreExpedition: (id: string) =>
+    request<Expedition & { feasibility: FeasibilityResult }>(
+      `${BASE}/expeditions/${id}/rescore`, jsonOptions('POST'), 'rescore expedition'),
 
   // ── Shipments ──────────────────────────────────────────────────────────────
   listShipments: (params?: Record<string, string>) =>
@@ -154,6 +164,16 @@ export const api = {
   createShipment: (data: ShipmentInput) =>
     request<Shipment & { capacity_warning?: string; restock_warning?: string }>(
       `${BASE}/shipments`, jsonOptions('POST', data), 'create shipment'),
+  /**
+   * Log a satellite beacon interrogation for a consignment that has stalled.
+   * Prahari has no satellite link and this does not pretend otherwise — it
+   * records the request and returns what the station actually knows.
+   */
+  requestBeaconPing: (id: string) =>
+    request<{ shipment_id: string; barcode_id: string; is_overdue: boolean;
+              hours_overdue: number | null; last_scanned_at: string | null;
+              eta: string | null; note: string }>(
+      `${BASE}/shipments/${id}/beacon-ping`, jsonOptions('POST'), 'request beacon ping'),
   scanBarcode: (barcodeId: string) =>
     request<ShipmentStatusTransition>(`${BASE}/shipments/scan-barcode`,
       jsonOptions('POST', { barcode_id: barcodeId }), 'scan shipment barcode'),
@@ -185,6 +205,27 @@ export const api = {
   updateInventory: (id: string, quantity: number, station?: string) =>
     request<InventoryItem>(`${BASE}/inventory/${id}`,
       jsonOptions('PATCH', { quantity, station }), 'update inventory'),
+  /**
+   * This row's own supply floor. Criticality used to be inferred entirely from
+   * hard-coded day maths in the browser, so a battery bank that must never
+   * drop below 10 units had nowhere to say so.
+   */
+  updateInventoryPolicy: (id: string, body: {
+    minimum_threshold?: number | null; safety_stock_days?: number | null;
+    clear_minimum?: boolean; clear_safety_stock_days?: boolean; station?: string;
+  }) =>
+    request<InventoryItem>(`${BASE}/inventory/${id}/policy`,
+      jsonOptions('PATCH', body), 'update inventory policy'),
+  /** What the station's consumable burn rates are scaled against right now. */
+  getHeadcountBasis: (station: string) =>
+    request<HeadcountBasis>(`${BASE}/inventory/headcount/${station}`),
+  /** Standing low-stock alerts — these persist until stock recovers. */
+  listStockAlerts: (station?: string) =>
+    request<StockAlert[]>(`${BASE}/inventory/alerts${qs({ station })}`),
+  /** The same item across all three stations, side by side. */
+  crossStationStock: (itemName: string) =>
+    request<CrossStationStock>(
+      `${BASE}/inventory/cross-station?item_name=${encodeURIComponent(itemName)}`),
 
   // ── Personnel ──────────────────────────────────────────────────────────────
   /** `station` narrows the roster to one base — the console's active station. */
@@ -198,6 +239,7 @@ export const api = {
   simulateMove: (id: string) =>
     request<{ status?: string; position?: { lat: number; lng: number };
               alert?: { type: string; message?: string } | null;
+              telemetry?: Telemetry | null;
               progress?: { step: number; total: number; percent: number } }>(
       `${BASE}/personnel/${id}/simulate-move`, jsonOptions('POST'), 'advance GPS fix'),
   resetSimulation: (id: string) =>
@@ -217,9 +259,38 @@ export const api = {
     request<Incident & { expected_count: number; confirmed_safe_count: number;
                          unaccounted_count: number }>(
       `${BASE}/incidents`, jsonOptions('POST', data), 'declare emergency'),
-  updateIncident: (id: string, status: 'open' | 'resolved') =>
-    request<Incident>(`${BASE}/incidents/${id}`, jsonOptions('PATCH', { status }),
-      'update incident'),
+  /**
+   * Status, severity and perimeter are all patchable. Severity and radius used
+   * to be frozen at declaration, so an escalating fire or a spreading fume
+   * leak could only be represented by resolving the record and declaring a new
+   * one — which discards the running head-count and the audit trail with it.
+   * Widening the radius re-runs accountability against the new circle.
+   */
+  updateIncident: (id: string, body: {
+    status?: 'open' | 'resolved'; severity?: Incident['severity'];
+    affected_radius_m?: number;
+  }) =>
+    request<Incident & { notes?: string[];
+                         accountability?: { expected: number; confirmed_safe: number;
+                                            unaccounted: number } }>(
+      `${BASE}/incidents/${id}`, jsonOptions('PATCH', body), 'update incident'),
+  /** The response protocol for this incident, and what has been done so far. */
+  getIncidentSop: (id: string) => request<IncidentSop>(`${BASE}/incidents/${id}/sop`),
+  /** Tick or untick one protocol step. Each change lands in the audit timeline. */
+  setIncidentSopTask: (id: string, taskKey: string, done: boolean) =>
+    request<IncidentSop>(`${BASE}/incidents/${id}/sop/${taskKey}`,
+      jsonOptions('PATCH', { done }), 'update incident protocol step'),
+  /**
+   * Commit a search-and-rescue asset to an incident, or release it by passing
+   * a null incidentId. The route existed and nothing ever called it, so
+   * "Nearest Assets" was a distance readout and a snowcat could not be sent.
+   */
+  dispatchAsset: (assetId: string, incidentId: string | null) =>
+    request<NearbyAsset>(`${BASE}/incidents/assets/${assetId}/dispatch`,
+      jsonOptions('PATCH', { incident_id: incidentId }),
+      incidentId ? 'deploy rescue asset' : 'release rescue asset'),
+  listAssets: (station?: string) =>
+    request<NearbyAsset[]>(`${BASE}/incidents/assets${qs({ station })}`),
   /** Declares a real power-failure incident at the station, with an
    *  accountability count — not just a toast. */
   declarePowerFailure: (station: string) =>

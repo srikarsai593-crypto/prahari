@@ -1,12 +1,19 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Pencil, RotateCw, Terminal, X } from 'lucide-react';
+import { Check, Globe, Pencil, RotateCw, ShieldAlert, Terminal, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
-import type { InventoryItem, StockCommandResult, ExactCount } from '@/lib/types';
+import { useStationConditions } from '@/lib/useStationConditions';
+import {
+  CrossStationDialog, HeadcountChip, ThermalLoadControl,
+  STOCK_STATE_LABEL, STOCK_STATE_STYLE, STOCK_STATE_TEXT, stateOf,
+} from '@/components/InventoryControls';
+import type {
+  InventoryItem, StockCommandResult, ExactCount, HeadcountBasis,
+} from '@/lib/types';
 
 const CATEGORIES = ['All', 'consumable', 'reusable'] as const;
 
@@ -30,13 +37,28 @@ export default function InventoryPage() {
   const [loadingExact, setLoadingExact] = useState(false);
   const [editQty, setEditQty] = useState<string | null>(null);
   const [savingQty, setSavingQty] = useState(false);
+  /** What the station's consumable burn rates are currently scaled against. */
+  const [headcount, setHeadcount] = useState<HeadcountBasis | null>(null);
+  /** The item whose three-station comparison is open, if any. */
+  const [comparing, setComparing] = useState<InventoryItem | null>(null);
+  /** Per-item supply floor being edited in the detail panel. */
+  const [policyDraft, setPolicyDraft] = useState<{ minimum: string; days: string } | null>(null);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const { deltaT } = useStationConditions(stationId);
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.listInventory({ station: stationId });
-      const items = Array.isArray(data) ? data : [];
+      // The headcount basis is fetched alongside the rows because it is what
+      // makes the days-of-cover figure traceable: a runway that halved because
+      // eight people arrived reads very differently from one halved by weather.
+      const [data, basis] = await Promise.allSettled([
+        api.listInventory({ station: stationId }),
+        api.getHeadcountBasis(stationId),
+      ]);
+      const items = data.status === 'fulfilled' && Array.isArray(data.value) ? data.value : [];
       setInventory(items);
+      setHeadcount(basis.status === 'fulfilled' ? basis.value : null);
       setSelectedItem((prev) => (prev ? items.find((i) => i.id === prev.id) ?? null : null));
     } catch (e) {
       console.error('Failed to load inventory:', e);
@@ -48,11 +70,13 @@ export default function InventoryPage() {
   useEffect(() => { if (ready) void loadInventory(); }, [loadInventory, ready]);
 
   // Switching station invalidates anything that named the old one.
-  useEffect(() => { setPreview(null); setEditQty(null); }, [stationId]);
+  useEffect(() => {
+    setPreview(null); setEditQty(null); setPolicyDraft(null); setComparing(null);
+  }, [stationId]);
 
   useEffect(() => {
-    if (lastMessage && ['inventory_update', 'blizzard_update', 'shipment_update', 'station_reset']
-      .includes(lastMessage.type)) {
+    if (lastMessage && ['inventory_update', 'blizzard_update', 'shipment_update',
+      'station_reset', 'inventory_alert', 'personnel_update'].includes(lastMessage.type)) {
       void loadInventory();
     }
   }, [lastMessage, loadInventory]);
@@ -70,6 +94,31 @@ export default function InventoryPage() {
     setPreview(null);
     try {
       const res = await api.stockCommand(transcript, stationId, true);
+      setPreview(res);
+      if (res.error) addToast(res.error, 'warning');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Stock command failed', 'alert');
+    } finally { setParsing(false); }
+  };
+
+  /**
+   * Resolve an ambiguous parse by naming the exact row.
+   *
+   * The backend already returns every candidate; the page used to print them
+   * as a dead-end sentence and leave the commander to re-type the whole
+   * command with more precise wording.
+   */
+  const handleDisambiguate = async (itemName: string) => {
+    const parsed = preview?.parsed;
+    const rewritten = parsed
+      ? `${parsed.action === 'increment' ? 'Added' : 'Removed'} ${parsed.quantity} `
+        + `${itemName}`
+      : itemName;
+    setTranscript(rewritten);
+    setParsing(true);
+    setPreview(null);
+    try {
+      const res = await api.stockCommand(rewritten, stationId, true);
       setPreview(res);
       if (res.error) addToast(res.error, 'warning');
     } catch (e) {
@@ -119,6 +168,38 @@ export default function InventoryPage() {
     } finally { setSavingQty(false); }
   };
 
+  // ── Per-item supply floor ──────────────────────────────────────────────────
+  const savePolicy = async () => {
+    if (!selectedItem || !policyDraft) return;
+    const minimum = policyDraft.minimum.trim();
+    const days = policyDraft.days.trim();
+    const minValue = minimum === '' ? null : Number(minimum);
+    const daysValue = days === '' ? null : Number(days);
+    if (minValue !== null && (!Number.isFinite(minValue) || minValue < 0)) {
+      return addToast('Enter a minimum of 0 or more, or leave it blank', 'warning');
+    }
+    if (daysValue !== null && (!Number.isFinite(daysValue) || daysValue <= 0)) {
+      return addToast('Enter a buffer of more than 0 days, or leave it blank', 'warning');
+    }
+    setSavingPolicy(true);
+    try {
+      await api.updateInventoryPolicy(selectedItem.id, {
+        minimum_threshold: minValue ?? undefined,
+        safety_stock_days: daysValue ?? undefined,
+        // A PATCH treats an omitted field as "unchanged", so clearing a floor
+        // has to be stated rather than implied by a blank box.
+        clear_minimum: minValue === null,
+        clear_safety_stock_days: daysValue === null,
+        station: stationId,
+      });
+      addToast(`Supply policy saved for ${selectedItem.name}`, 'success');
+      setPolicyDraft(null);
+      void loadInventory();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Could not save the policy', 'alert');
+    } finally { setSavingPolicy(false); }
+  };
+
   // ── Deterministic count ────────────────────────────────────────────────────
   const countItem = selectedItem?.name ?? 'fuel';
 
@@ -135,8 +216,15 @@ export default function InventoryPage() {
   // A count for one item is meaningless next to a different item's row.
   useEffect(() => { setExactCount(null); }, [stationId, countItem]);
 
-  const getDaysColor = (days: number) =>
-    days > 30 ? 'text-emerald-600' : days > 15 ? 'text-amber-600' : 'text-rose-600';
+  /**
+   * Colour by the row's own policy band rather than by one flat "< 15 days".
+   *
+   * The old rule put surgical consumables and spare bolts in the same band:
+   * eighteen days of pharmaceuticals is an emergency because a medical flight
+   * cannot land mid-winter, while eighteen days of diesel is an ordinary
+   * interval between tanker runs.
+   */
+  const coverColour = (item: InventoryItem) => STOCK_STATE_TEXT[stateOf(item)];
 
   const parsed = preview?.parsed;
 
@@ -152,6 +240,15 @@ export default function InventoryPage() {
           <RotateCw size={14} aria-hidden="true" /> Refresh
         </button>
       </PageHeader>
+
+      {/* ΔT drives the depletion formula this whole page is about, and it
+          used to be reachable only from the Cargo module. */}
+      <ThermalLoadControl
+        stationId={stationId}
+        stationLabel={station.label}
+        deltaT={deltaT}
+        onApplied={loadInventory}
+      />
 
       {/* ── Stock command ─────────────────────────────────────────────────── */}
       <div className="subview-card rounded-2xl p-6">
@@ -196,9 +293,25 @@ export default function InventoryPage() {
                   </p>
                 )}
                 {preview.ambiguous_matches && (
-                  <p className="text-xs text-frost-muted mt-1.5">
-                    Matched: {preview.ambiguous_matches.join(', ')}
-                  </p>
+                  <div className="mt-2.5">
+                    <p className="text-xs text-frost-muted mb-1.5">
+                      Ambiguous match for &quot;{parsed?.item}&quot;. Which item did you mean?
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {preview.ambiguous_matches.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          data-compact
+                          disabled={parsing}
+                          onClick={() => void handleDisambiguate(name)}
+                          className="btn-secondary !min-h-0 !px-2.5 !py-1 text-2xs"
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
               <button type="button" data-compact aria-label="Discard preview"
@@ -282,9 +395,12 @@ export default function InventoryPage() {
         {/* Table */}
         <div className={`subview-card rounded-2xl p-6 ${selectedItem ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
           <div className="flex justify-between items-center mb-5 flex-wrap gap-3">
-            <h2 className="text-base font-bold text-arctic-900">
-              Inventory Levels — {station.label}
-            </h2>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h2 className="text-base font-bold text-arctic-900">
+                Inventory Levels — {station.label}
+              </h2>
+              <HeadcountChip basis={headcount} />
+            </div>
             <div className="flex items-center gap-3">
               {/* Category only. The station comes from the header switcher, so
                   the table can never disagree with the badge above it. */}
@@ -326,11 +442,13 @@ export default function InventoryPage() {
                     <th className="pb-3 font-semibold">Quantity</th>
                     <th className="pb-3 font-semibold">Rate/day</th>
                     <th className="pb-3 font-semibold">Cover</th>
+                    <th className="pb-3 font-semibold">Status</th>
+                    <th className="pb-3 font-semibold sr-only">Other stations</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-arctic-50">
                   {visible.length === 0 ? (
-                    <tr><td colSpan={6} className="py-8 text-center text-frost-muted text-13">
+                    <tr><td colSpan={8} className="py-8 text-center text-frost-muted text-13">
                       No {category === 'All' ? '' : `${category} `}stock records at {station.label}.
                     </td></tr>
                   ) : visible.map((item) => (
@@ -355,10 +473,39 @@ export default function InventoryPage() {
                       </td>
                       <td className="py-3">
                         {typeof item.days_of_cover === 'number' ? (
-                          <span className={`font-bold ${getDaysColor(item.days_of_cover)}`}>
+                          <span className={`font-bold ${coverColour(item)}`}>
                             {item.days_of_cover >= 9999 ? '∞' : `${item.days_of_cover.toFixed(1)}d`}
                           </span>
                         ) : <span className="text-frost-muted">n/a</span>}
+                      </td>
+                      <td className="py-3">
+                        <span data-compact
+                              className={`px-2 py-0.5 rounded-full border text-2xs font-semibold
+                                          whitespace-nowrap
+                                          ${STOCK_STATE_STYLE[stateOf(item)]}`}>
+                          {STOCK_STATE_LABEL[stateOf(item)]}
+                        </span>
+                        {item.is_below_minimum && (
+                          <span className="ml-1.5 inline-flex items-center gap-1 text-2xs
+                                           font-semibold text-rose-700"
+                                title={`Below the station's floor of ${item.minimum_threshold} `
+                                  + `${item.unit ?? ''}`}>
+                            <ShieldAlert size={11} aria-hidden="true" /> floor
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 text-right">
+                        <button
+                          type="button"
+                          data-compact
+                          title={`Compare ${item.name} across all three stations`}
+                          aria-label={`Compare ${item.name} across all three stations`}
+                          onClick={(e) => { e.stopPropagation(); setComparing(item); }}
+                          className="text-frost-muted hover:text-arctic-800 p-1 rounded-md
+                                     hover:bg-white transition-colors"
+                        >
+                          <Globe size={13} aria-hidden="true" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -437,7 +584,13 @@ export default function InventoryPage() {
 
               {[
                 { label: 'Normal Use', val: selectedItem.base_burn_rate != null ? `${selectedItem.base_burn_rate} ${selectedItem.unit ?? ''} / day` : 'n/a' },
-                { label: 'Cold Load', val: `ΔT +${(selectedItem as InventoryItem & { delta_t?: number }).delta_t ?? 0} °C` },
+                { label: 'Crew Load',
+                  val: selectedItem.headcount_factor != null
+                    && selectedItem.effective_base_rate != null
+                    ? `${selectedItem.effective_base_rate.toFixed(2)} ${selectedItem.unit ?? ''}`
+                      + ` / day (${selectedItem.headcount_factor.toFixed(2)}× crew)`
+                    : 'not crew-scaled' },
+                { label: 'Cold Load', val: `ΔT +${selectedItem.delta_t ?? 0} °C` },
                 { label: 'Using Now', val: typeof selectedItem.depletion_rate === 'number' ? `${selectedItem.depletion_rate.toFixed(2)} ${selectedItem.unit ?? ''} / day` : 'n/a' },
               ].map((row) => (
                 <div key={row.label}>
@@ -447,11 +600,117 @@ export default function InventoryPage() {
               ))}
               <div>
                 <span className="overline">Days of Cover</span>
-                <p className={`font-bold text-2xl mt-0.5 ${getDaysColor(selectedItem.days_of_cover ?? 0)}`}>
+                <p className={`font-bold text-2xl mt-0.5 ${coverColour(selectedItem)}`}>
                   {typeof selectedItem.days_of_cover === 'number'
                     ? selectedItem.days_of_cover >= 9999 ? '∞ (no depletion)' : `${selectedItem.days_of_cover.toFixed(1)}d`
                     : 'n/a'}
                 </p>
+                <p className="text-2xs text-frost-muted mt-1">
+                  Judged as{' '}
+                  <span className="font-semibold">
+                    {STOCK_STATE_LABEL[stateOf(selectedItem)].toLowerCase()}
+                  </span>
+                  {selectedItem.critical_days != null && (
+                    <> — critical below {selectedItem.critical_days}d, depleting below{' '}
+                      {selectedItem.warning_days}d
+                      {selectedItem.risk_class && (
+                        <> ({selectedItem.risk_class.replace('_', ' ')} policy)</>
+                      )}.
+                    </>
+                  )}
+                </p>
+              </div>
+
+              {/* ── Configurable floor ───────────────────────────────────── */}
+              <div className="pt-3 border-t border-frost-border">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="overline">Supply Floor</span>
+                  {policyDraft === null && (
+                    <button type="button" data-compact
+                            className="btn-secondary text-2xs !px-2.5 !py-1 !min-h-0"
+                            onClick={() => setPolicyDraft({
+                              minimum: selectedItem.minimum_threshold != null
+                                ? String(selectedItem.minimum_threshold) : '',
+                              days: selectedItem.safety_stock_days != null
+                                ? String(selectedItem.safety_stock_days) : '',
+                            })}>
+                      <Pencil size={12} aria-hidden="true" /> Configure
+                    </button>
+                  )}
+                </div>
+
+                {policyDraft === null ? (
+                  <p className="text-2xs text-frost-muted mt-1 leading-relaxed">
+                    {selectedItem.minimum_threshold != null
+                      || selectedItem.safety_stock_days != null ? (
+                        <>
+                          {selectedItem.minimum_threshold != null && (
+                            <>Alert below{' '}
+                              <span className="font-mono font-bold text-arctic-900">
+                                {selectedItem.minimum_threshold} {selectedItem.unit ?? ''}
+                              </span>.{' '}
+                            </>
+                          )}
+                          {selectedItem.safety_stock_days != null && (
+                            <>Critical below{' '}
+                              <span className="font-mono font-bold text-arctic-900">
+                                {selectedItem.safety_stock_days} days
+                              </span> of cover.
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <>No station-specific floor set — judged on the{' '}
+                          {selectedItem.risk_class?.replace('_', ' ') ?? 'default'} class
+                          defaults above.</>
+                      )}
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    <div>
+                      <label htmlFor="inv-min" className="text-2xs">
+                        Alert below ({selectedItem.unit ?? 'units'})
+                      </label>
+                      <input id="inv-min" type="number" min={0} step="any"
+                             placeholder="e.g. 5000 — blank to clear"
+                             value={policyDraft.minimum}
+                             onChange={(e) => setPolicyDraft(
+                               { ...policyDraft, minimum: e.target.value })}
+                             className="!min-h-0 !py-1.5 font-mono" />
+                    </div>
+                    <div>
+                      <label htmlFor="inv-days" className="text-2xs">
+                        Critical below (days of cover)
+                      </label>
+                      <input id="inv-days" type="number" min={1} step="any"
+                             placeholder={`class default ${selectedItem.critical_days ?? 15}`}
+                             value={policyDraft.days}
+                             onChange={(e) => setPolicyDraft(
+                               { ...policyDraft, days: e.target.value })}
+                             className="!min-h-0 !py-1.5 font-mono" />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button type="button" data-compact
+                              className="btn-secondary text-2xs !px-2.5 !py-1 !min-h-0"
+                              onClick={() => setPolicyDraft(null)}>
+                        Cancel
+                      </button>
+                      <button type="button" data-compact disabled={savingPolicy}
+                              className="btn-primary text-2xs !px-2.5 !py-1 !min-h-0"
+                              onClick={() => void savePolicy()}>
+                        <Check size={12} aria-hidden="true" />
+                        {savingPolicy ? 'Saving…' : 'Save Policy'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-frost-border">
+                <button type="button" className="btn-secondary text-2xs w-full !min-h-0 !py-1.5"
+                        onClick={() => setComparing(selectedItem)}>
+                  <Globe size={12} aria-hidden="true" /> Check other stations
+                </button>
               </div>
             </div>
             <div className="mt-5 p-4 bg-arctic-50 rounded-xl border border-arctic-200">
@@ -465,6 +724,14 @@ export default function InventoryPage() {
           </div>
         )}
       </div>
+
+      {comparing && (
+        <CrossStationDialog
+          itemName={comparing.name}
+          homeStation={stationId}
+          onClose={() => setComparing(null)}
+        />
+      )}
     </div>
   );
 }

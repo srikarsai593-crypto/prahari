@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Wand2, ClipboardCheck, Play, CheckCircle2, XCircle, Users, UserPlus, X,
+  Timer, TrendingDown, Truck,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/Toast';
@@ -11,8 +12,62 @@ import { useWebSocket } from '@/components/WebSocketProvider';
 import { STATIONS } from '@/lib/stations';
 import type {
   Expedition, ExpeditionInput, ExpeditionStatus, FeasibilityResult, FeasibilityLineItem,
-  Personnel,
+  Personnel, ResupplyRecommendation,
 } from '@/lib/types';
+
+/**
+ * An inbound consignment that would close a shortfall.
+ *
+ * The readiness check used to end at "Diesel Fuel short at Maitri: need 8000,
+ * have 4500" and leave the commander to go and hunt through the Cargo page for
+ * a tanker. The shipments table already knows what is coming and when.
+ */
+function ResupplyPanel({ resupply }: { resupply: ResupplyRecommendation }) {
+  const hours = resupply.eta_hours;
+  return (
+    <div className="mt-2 p-3 rounded-lg border border-sky-200 bg-sky-50/80">
+      <p className="flex items-start gap-2 text-2xs font-bold text-sky-900">
+        <Truck size={12} className="shrink-0 mt-0.5" aria-hidden="true" />
+        Inbound resupply may cover this
+      </p>
+      <p className="text-2xs text-sky-900 mt-1 leading-relaxed">
+        {resupply.recommendation_text}
+      </p>
+      <dl className="grid grid-cols-3 gap-2 mt-2 font-mono text-2xs">
+        {[
+          ['Consignment', resupply.barcode_id],
+          ['Carrying', resupply.quantity != null
+            ? `${resupply.quantity.toLocaleString()} ${resupply.unit ?? ''}`.trim() : 'unstated'],
+          ['ETA', hours != null && hours > 0 ? `~${hours}h` : 'imminent'],
+        ].map(([label, value]) => (
+          <div key={label} className="bg-white border border-sky-200 rounded-md px-2 py-1.5">
+            <dt className="text-2xs uppercase tracking-caps text-frost-muted">{label}</dt>
+            <dd className="font-bold text-arctic-900 truncate mt-0.5">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {hours != null && hours > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 text-2xs text-sky-900">
+          <Timer size={11} className="shrink-0 mt-0.5" aria-hidden="true" />
+          <span>
+            Recommended action: hold the departure until{' '}
+            <span className="font-mono font-bold">
+              {resupply.eta
+                ? `${new Date(resupply.eta).toLocaleString('en-GB', {
+                  hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short',
+                  timeZone: 'UTC',
+                })} UTC`
+                : `+${hours}h`}
+            </span>
+            {resupply.covers_shortfall
+              ? ' and load from the inbound cargo.'
+              : ' and re-score — it closes only part of the gap.'}
+          </span>
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** Statuses from which someone can still be put on a traverse. */
 const ASSIGNABLE = new Set(['at_station', 'returned']);
@@ -81,6 +136,7 @@ export default function ExpeditionPage() {
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [crewEditFor, setCrewEditFor] = useState<string | null>(null);
+  const [rescoringId, setRescoringId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: '',
@@ -118,9 +174,49 @@ export default function ExpeditionPage() {
   }, [stationId, ready]);
 
   useEffect(() => {
-    if (lastMessage && ['expedition_update', 'personnel_update', 'station_reset']
-      .includes(lastMessage.type)) void load();
-  }, [lastMessage, load]);
+    if (!lastMessage) return;
+    if (['expedition_update', 'personnel_update', 'station_reset', 'inventory_update',
+      'blizzard_update', 'shipment_update'].includes(lastMessage.type)) {
+      void load();
+    }
+    // The closed-loop monitor announces a traverse that is no longer viable.
+    // Without this the card would keep reporting the score it was approved
+    // against until somebody happened to reload the page.
+    if (lastMessage.type === 'expedition_readiness') {
+      const degraded = lastMessage.data?.degraded ?? [];
+      degraded.forEach((entry: { name: string; baseline_readiness: number;
+                                 live_readiness: number }) => {
+        addToast(`Attention: "${entry.name}" is no longer resource-viable — readiness `
+          + `${entry.baseline_readiness}% → ${entry.live_readiness}%`, 'alert');
+      });
+      void load();
+    }
+    if (lastMessage.type === 'cascade_alert' && lastMessage.data?.summary) {
+      addToast(lastMessage.data.summary, 'alert');
+      void load();
+    }
+  }, [lastMessage, load, addToast]);
+
+  /**
+   * Re-score a traverse against live conditions and adopt the result as its
+   * new baseline — the operator saying "I have seen the new numbers", which is
+   * what stops the degradation alarm re-firing for ever.
+   */
+  const handleRescore = async (exp: Expedition) => {
+    setRescoringId(exp.id);
+    try {
+      const res = await api.rescoreExpedition(exp.id);
+      const short = res.feasibility?.items?.filter((i) => !i.ok).map((i) => i.label) ?? [];
+      addToast(short.length === 0
+        ? `${exp.name} re-scored — ${res.feasibility.readiness_score}% ready`
+        : `${exp.name} re-scored at ${res.feasibility.readiness_score}% — `
+          + `${short.join(', ')} still short`,
+        short.length === 0 ? 'success' : 'warning');
+      void load();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Could not re-score the traverse', 'alert');
+    } finally { setRescoringId(null); }
+  };
 
   /** People at this station not already committed to another traverse. */
   const available = useMemo(
@@ -407,6 +503,7 @@ export default function ExpeditionPage() {
                   {item.detail && (
                     <p className="text-2xs text-frost-muted mt-0.5">{item.detail}</p>
                   )}
+                  {item.resupply && <ResupplyPanel resupply={item.resupply} />}
                 </div>
               ))}
             </div>
@@ -442,9 +539,13 @@ export default function ExpeditionPage() {
                 const crew = e.crew ?? [];
                 const needs = (e.personnel_required ?? 0) - crew.length;
                 const editing = crewEditFor === e.id;
+                const degraded = e.readiness_degraded === true;
+                const liveShortfalls = (e.live_feasibility ?? []).filter((i) => !i.ok);
                 return (
                   <div key={e.id}
-                       className="p-3 bg-arctic-50/60 rounded-xl border border-arctic-200">
+                       className={`p-3 rounded-xl border ${degraded
+                         ? 'bg-amber-50/70 border-amber-300 ring-1 ring-amber-200'
+                         : 'bg-arctic-50/60 border-arctic-200'}`}>
                     <div className="flex justify-between items-start gap-2 mb-1">
                       <span className="font-bold text-arctic-900 truncate">{e.name}</span>
                       <span data-compact
@@ -456,8 +557,49 @@ export default function ExpeditionPage() {
                     </div>
                     <p className="text-2xs text-frost-muted">
                       {e.personnel_required} crew · {e.fuel_required_l?.toLocaleString()} L fuel
-                      {e.readiness_score != null && ` · ${e.readiness_score}% ready`}
+                      {e.live_readiness_score != null
+                        ? ` · ${e.live_readiness_score}% ready now`
+                        : e.readiness_score != null && ` · ${e.readiness_score}% ready`}
                     </p>
+
+                    {/* A stored readiness score is a claim about a moment that
+                        has passed. If a blizzard has since halved the fuel or
+                        a rescue pulled crew off the roster, a card still
+                        reading "100% ready" is how a departure gets authorised
+                        on assumptions that expired hours ago. */}
+                    {degraded && (
+                      <div className="mt-2 p-2 rounded-lg border border-amber-300 bg-amber-50">
+                        <p className="flex items-center gap-1.5 text-2xs font-bold
+                                      text-amber-900">
+                          <TrendingDown size={11} className="shrink-0" aria-hidden="true" />
+                          FEASIBILITY DEGRADED ({e.baseline_readiness_score}% →{' '}
+                          {e.live_readiness_score}%)
+                        </p>
+                        {liveShortfalls.length > 0 && (
+                          <ul className="mt-1 space-y-0.5">
+                            {liveShortfalls.map((item) => (
+                              <li key={item.label} className="text-2xs text-amber-900">
+                                <span className="font-semibold">{item.label}:</span>{' '}
+                                {item.detail ?? `need ${item.required}, have ${item.available}`}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {liveShortfalls.map((item) => (
+                          item.resupply
+                            ? <ResupplyPanel key={`r-${item.label}`} resupply={item.resupply} />
+                            : null
+                        ))}
+                        <button type="button" data-compact
+                                disabled={rescoringId === e.id}
+                                onClick={() => void handleRescore(e)}
+                                className="btn-secondary !min-h-0 !px-2 !py-1 text-2xs w-full
+                                           mt-2">
+                          <ClipboardCheck size={11} aria-hidden="true" />
+                          {rescoringId === e.id ? 'Re-scoring…' : 'Re-score & adjust'}
+                        </button>
+                      </div>
+                    )}
 
                     {/* Roster */}
                     <div className="mt-2">
@@ -535,6 +677,16 @@ export default function ExpeditionPage() {
                           </button>
                         )}
                       </div>
+                    )}
+
+                    {!degraded && ['draft', 'active'].includes(e.status) && (
+                      <button type="button" data-compact
+                              disabled={rescoringId === e.id}
+                              onClick={() => void handleRescore(e)}
+                              className="btn-secondary !min-h-0 !px-2 !py-1 text-2xs w-full mt-2">
+                        <ClipboardCheck size={11} aria-hidden="true" />
+                        {rescoringId === e.id ? 'Re-scoring…' : 'Re-score against live conditions'}
+                      </button>
                     )}
 
                     {actions.length > 0 ? (

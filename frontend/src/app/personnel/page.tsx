@@ -12,9 +12,19 @@ import { useToast } from '@/components/Toast';
 import { MapView } from '@/components/MapView';
 import { MovementPlanDialog } from '@/components/MovementPlanDialog';
 import { Coordinate } from '@/components/Coordinate';
-import type { Personnel, MovementPlan } from '@/lib/types';
+import { TraverseProgress, TelemetryHud } from '@/components/TraverseTelemetry';
+import type { Personnel, MovementPlan, Telemetry } from '@/lib/types';
 
-const GPS_TICK_MS = 2000;
+/**
+ * Tick cadence for GPS playback.
+ *
+ * With the backend emitting 8 fixes per authorised leg, a four-segment route
+ * is 33 fixes and an eight-segment one is 65 — so a traverse now plays for
+ * 50-100 s instead of finishing in 26. That is long enough to watch a geofence
+ * boundary being crossed and a status flip to `deviated`, which is the whole
+ * point of replaying it.
+ */
+const GPS_TICK_MS = 1500;
 
 /**
  * Status moves an operator can make, mirroring VALID_TRANSITIONS in
@@ -73,6 +83,17 @@ export default function PersonnelPage() {
   const [simulating, setSimulating] = useState<Record<string, boolean>>({});
   const [planningFor, setPlanningFor] = useState<Personnel | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /**
+   * Live playback state per operative. The backend has always returned
+   * progress and now returns telemetry on every fix; the card used to throw
+   * both away, leaving the operator watching a dot with no idea how far along
+   * the party was or whether the feed had simply stalled.
+   */
+  const [tracking, setTracking] = useState<Record<string, {
+    progress?: { step: number; total: number; percent: number } | null;
+    telemetry?: Telemetry | null;
+    arrived?: boolean;
+  }>>({});
   const { station, stationId, ready } = useStation();
 
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -90,9 +111,29 @@ export default function PersonnelPage() {
       api.listPersonnel(stationId),
       api.listMovementPlans(stationId),
     ]);
-    if (p.status === 'fulfilled') setPersonnel(Array.isArray(p.value) ? p.value : []);
-    else addToast('Could not reach the station records — check the connection indicator above',
-      'alert');
+    if (p.status === 'fulfilled') {
+      const list = Array.isArray(p.value) ? p.value : [];
+      setPersonnel(list);
+      // The roster carries progress and telemetry, so a page reload part-way
+      // through a traverse restores the meter rather than blanking it until
+      // the next tick lands.
+      setTracking((prev) => {
+        const next = { ...prev };
+        list.forEach((person) => {
+          if (person.progress || person.telemetry) {
+            next[person.id] = {
+              ...next[person.id],
+              progress: person.progress ?? next[person.id]?.progress ?? null,
+              telemetry: person.telemetry ?? next[person.id]?.telemetry ?? null,
+            };
+          }
+        });
+        return next;
+      });
+    } else {
+      addToast('Could not reach the station records — check the connection indicator above',
+        'alert');
+    }
     if (m.status === 'fulfilled') {
       setRoutes(parseMovementRoutes(Array.isArray(m.value) ? m.value : []));
     }
@@ -120,6 +161,15 @@ export default function PersonnelPage() {
         ? { ...p, current_lat: d.lat, current_lng: d.lng, last_update_at: d.last_update_at,
             status: d.alert ? 'deviated' : 'in_transit' }
         : p)));
+      // Carried on the broadcast too, so a second console watching the same
+      // traverse shows the same meter as the one driving it.
+      if (d.progress || d.telemetry) {
+        setTracking((prev) => ({
+          ...prev,
+          [d.personnel_id]: { progress: d.progress ?? prev[d.personnel_id]?.progress ?? null,
+                              telemetry: d.telemetry ?? null, arrived: false },
+        }));
+      }
     } else if (lastMessage.type === 'alert') {
       addToast(lastMessage.data?.message ?? 'Alert received', 'alert');
       void loadAll();
@@ -160,10 +210,24 @@ export default function PersonnelPage() {
         const res = await api.simulateMove(id);
         if (res?.status === 'arrived') {
           stopSim(id);
+          // Run the bar to 100% before it clears, so arrival reads as an
+          // outcome rather than as the meter vanishing.
+          setTracking((prev) => ({
+            ...prev,
+            [id]: { ...prev[id], arrived: true, telemetry: null,
+                    progress: prev[id]?.progress
+                      ? { ...prev[id].progress!, step: prev[id].progress!.total, percent: 100 }
+                      : null },
+          }));
           addToast('Arrived at destination', 'success');
           void loadAll();
           return;
         }
+        setTracking((prev) => ({
+          ...prev,
+          [id]: { progress: res?.progress ?? prev[id]?.progress ?? null,
+                  telemetry: res?.telemetry ?? null, arrived: false },
+        }));
         timers.current[id] = setTimeout(tick, GPS_TICK_MS);
       } catch (e) {
         stopSim(id);
@@ -181,6 +245,7 @@ export default function PersonnelPage() {
     stopSim(id);
     try {
       await api.resetSimulation(id);
+      setTracking((prev) => ({ ...prev, [id]: {} }));
       addToast('Track rewound to plan origin', 'info');
       void loadAll();
     } catch (e) {
@@ -291,6 +356,21 @@ export default function PersonnelPage() {
                   <Coordinate lat={p.current_lat} lng={p.current_lng} decimals
                               className="text-arctic-900 font-bold" />
                 </div>
+
+                {/* How far along the authorised track this party is. The
+                    backend has always returned it; the card used to discard
+                    it, so playback was a dot with no sense of progress. */}
+                <TraverseProgress
+                  progress={tracking[p.id]?.progress}
+                  arrived={tracking[p.id]?.arrived}
+                  active={simulating[p.id] || ['in_transit', 'deviated'].includes(status)}
+                  deviated={status === 'deviated'}
+                />
+
+                {/* Decimal coordinates say nothing about whether the party is
+                    closing on the camp or drifting away from it. */}
+                <TelemetryHud telemetry={tracking[p.id]?.telemetry}
+                              destination={p.destination_name} />
 
                 <p className="text-2xs text-frost-muted mb-3">
                   {hasPlan

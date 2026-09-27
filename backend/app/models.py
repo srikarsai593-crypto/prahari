@@ -64,12 +64,32 @@ class ExpeditionCrewRequest(BaseModel):
     """The named roster for a draft expedition."""
     crew_ids: List[str] = Field(default_factory=list, max_length=500)
 
+class ResupplyRecommendation(BaseModel):
+    """An inbound consignment that would close a shortfall.
+
+    Telling a commander they are 3,500 L short and stopping there sends them to
+    the Cargo page to scroll for a tanker by hand. The shipments table already
+    knows what is on its way and when.
+    """
+    shipment_id: str
+    barcode_id: str
+    item_name: str
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    eta: Optional[str] = None
+    eta_hours: Optional[float] = None
+    status: str
+    covers_shortfall: bool
+    recommendation_text: str
+
+
 class FeasibilityLineItem(BaseModel):
     label: str
     required: float
     available: float
     ok: bool
     detail: Optional[str] = None
+    resupply: Optional[ResupplyRecommendation] = None
 
 class FeasibilityResponse(BaseModel):
     items: List[FeasibilityLineItem]
@@ -98,6 +118,10 @@ class ShipmentCreate(BaseModel):
     origin_station: Optional[Station] = None
     destination_station: Station
     expedition_id: Optional[str] = None
+    # Hours from now until the crate is due. Defaults to the nominal sea leg.
+    # Negative values backdate the ETA, which is the only way to exercise the
+    # overdue-convoy path without waiting a fortnight for a real one to slip.
+    eta_hours: Optional[float] = Field(default=None, ge=-8760, le=8760)
 
     @field_validator('destination_station')
     @classmethod
@@ -296,7 +320,41 @@ class PersonnelStatusRequest(BaseModel):
 
 
 class IncidentUpdateRequest(BaseModel):
-    status: Literal['open', 'resolved']
+    """An incident is fluid. Severity and perimeter were frozen at declaration,
+    so a medium generator fire that became a station-threatening blaze, or a
+    fume leak that spread from 1 km to 3.5 km, could only be represented by
+    resolving the record and declaring a new one - which discards the running
+    accountability count and the audit trail that goes with it.
+
+    Every field is optional; send only what changed."""
+    status: Optional[Literal['open', 'resolved']] = None
+    severity: Optional[Severity] = None
+    affected_radius_m: Optional[float] = Field(default=None, gt=0, le=500_000)
+
+
+class IncidentTaskRequest(BaseModel):
+    """Tick or untick one step of an incident's response protocol."""
+    done: bool
+
+
+class AssetDeployRequest(BaseModel):
+    """Commit a search-and-rescue asset to an incident, or release it.
+
+    `incident_id` None releases the asset back to `available`."""
+    incident_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class InventoryPolicyRequest(BaseModel):
+    """This row's own supply floor.
+
+    `clear_*` exists because None means "leave unchanged" on a PATCH, so
+    removing a floor needs to be said explicitly rather than implied by
+    omission."""
+    minimum_threshold: Optional[float] = Field(default=None, ge=0, le=10_000_000)
+    safety_stock_days: Optional[float] = Field(default=None, gt=0, le=3650)
+    clear_minimum: bool = False
+    clear_safety_stock_days: bool = False
+    station: Optional[Station] = None
 
 
 class ExpeditionStatusRequest(BaseModel):

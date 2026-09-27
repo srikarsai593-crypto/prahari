@@ -10,8 +10,19 @@ line no matter what was authorised.
 
 import json
 
+from datetime import timedelta
+
+from .geo import bearing_deg, compass_point, haversine_distance, path_length_m
+from .timeutil import to_utc_iso
+
 # Number of GPS fixes emitted between two consecutive authorised waypoints.
-FIXES_PER_LEG = 2
+#
+# At 2, a four-segment route produced 9 fixes: a "6-hour traverse" was over in
+# ~13 ticks and the dot teleported across the map faster than an operator could
+# read a geofence boundary. At 8, the same route yields 33 fixes, and an
+# 8-segment authorised route yields 65 - a continuous 90-130 s playback at the
+# console's 1.5 s tick.
+FIXES_PER_LEG = 8
 
 
 def _interpolate(a: dict, b: dict, steps: int) -> list[dict]:
@@ -73,6 +84,73 @@ def get_next_position(personnel_id: str, db) -> dict | None:
                (step + 1, plan['id']))
     db.commit()
     return position
+
+
+def _utc_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso(value):
+    from datetime import datetime, timezone
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def get_telemetry(plan, db=None) -> dict | None:
+    """Heading, ground speed, distance remaining and ETA for the current fix.
+
+    Speed is derived from the authorised schedule rather than from wall-clock
+    time between ticks: the plan says the traverse takes N hours and the track
+    has M fixes, so each fix represents N/(M-1) hours of travel. Timing it
+    against the operator's 1.5 s tick would report a snowcat doing 12,000 km/h.
+    """
+    track = _plan_track(plan)
+    if len(track) < 2:
+        return None
+    step = min(plan['simulation_step'] or 0, len(track))
+    if step < 1:
+        return None
+    index = min(step - 1, len(track) - 1)      # the fix just emitted
+    current = track[index]
+    previous = track[max(0, index - 1)]
+
+    departure = _parse_iso(plan['departure_time'])
+    arrival = _parse_iso(plan['expected_arrival'])
+    total_hours = ((arrival - departure).total_seconds() / 3600
+                   if departure and arrival and arrival > departure else None)
+    hours_per_fix = total_hours / (len(track) - 1) if total_hours else None
+
+    leg_m = haversine_distance(previous['lat'], previous['lng'], current['lat'], current['lng'])
+    speed_kmh = round((leg_m / 1000) / hours_per_fix, 1) if hours_per_fix else None
+
+    remaining_m = path_length_m(track[index:])
+    eta_minutes = (round((len(track) - 1 - index) * hours_per_fix * 60)
+                   if hours_per_fix is not None else None)
+
+    if leg_m < 1:                               # degenerate leg carries no heading
+        heading = None
+    else:
+        heading = bearing_deg(previous['lat'], previous['lng'], current['lat'], current['lng'])
+
+    return {
+        'heading_deg': round(heading) if heading is not None else None,
+        'heading_compass': compass_point(heading) if heading is not None else None,
+        'speed_kmh': speed_kmh,
+        'distance_remaining_km': round(remaining_m / 1000, 2),
+        'eta_minutes': eta_minutes,
+        # Wall-clock arrival, so the card can render a real UTC time rather
+        # than only a countdown that resets whenever the operator reloads.
+        'eta_at': (to_utc_iso(_utc_now() + timedelta(minutes=eta_minutes))
+                   if eta_minutes is not None else None),
+    }
 
 
 def get_progress(personnel_id: str, db) -> dict | None:

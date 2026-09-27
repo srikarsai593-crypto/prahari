@@ -14,6 +14,7 @@ import { PolarCompass } from '@/components/PolarCompass';
 import { PrahariLogo } from '@/components/PrahariLogo';
 import BlizzardCanvasLoader from '@/components/BlizzardCanvasLoader';
 import { EventTimeline } from '@/components/EventTimeline';
+import { StandingAlerts } from '@/components/StandingAlerts';
 import { useToast } from '@/components/Toast';
 import type {
   Personnel, Shipment, InventoryItem, Expedition, Incident, MovementPlan,
@@ -118,6 +119,9 @@ export default function Dashboard() {
       'gps_update', 'alert', 'inventory_update', 'blizzard_update',
       'personnel_update', 'shipment_update', 'accountability_update', 'incident_update',
       'expedition_update', 'station_reset',
+      // The closed-loop monitor and the weather cascade both change figures
+      // this page reports, so it has to follow them too.
+      'inventory_alert', 'expedition_readiness', 'cascade_alert',
     ]);
     if (REFRESH_ON.has(lastMessage.type)) void load();
   }, [lastMessage, load]);
@@ -142,8 +146,13 @@ export default function Dashboard() {
       .map((i) => i.days_of_cover)
       .filter((d): d is number => typeof d === 'number' && d < 9999);
     const minCover = covers.length ? Math.min(...covers) : null;
+    // Criticality is the row's own policy band, computed by the backend
+    // against its class and any floor the station has set — not a flat "< 15
+    // days" that treats surgical consumables and spare bolts alike.
     const critical = inventory.filter(
-      (i) => typeof i.days_of_cover === 'number' && i.days_of_cover < 15).length;
+      (i) => (i.stock_state
+        ? i.stock_state === 'critical'
+        : typeof i.days_of_cover === 'number' && i.days_of_cover < 15)).length;
 
     const deployed = personnel.filter(
       (p) => ['in_transit', 'field', 'deviated'].includes(p.status)).length;
@@ -292,7 +301,8 @@ export default function Dashboard() {
         ['Stock levels & days remaining', '/inventory'],
         ['Count what is on the shelf', '/inventory'],
         ['Text stock adjustment', '/inventory'],
-        [m.critical > 0 ? `${m.critical} items below 15d` : 'Life-support spares', '/inventory'],
+        [m.critical > 0 ? `${m.critical} item(s) below their floor` : 'Life-support spares',
+          '/inventory'],
       ] as [string, string][],
     },
     {
@@ -389,6 +399,11 @@ export default function Dashboard() {
           </div>
         </div>
       </section>
+
+      {/* Standing alerts sit above the figures they explain: a stock alert
+          raised half an hour ago on another tab is otherwise invisible, and a
+          weather-to-cargo-to-expedition chain has no home module at all. */}
+      {ready && <StandingAlerts stationId={stationId} />}
 
       {/* ── Operational status ───────────────────────────────────────────── */}
       <section aria-labelledby="status-heading">

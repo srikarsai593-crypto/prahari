@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 import uuid, io, base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import qrcode
 from ..database import get_db
 from ..models import (ShipmentCreate, RiskUpdateRequest, StationWeatherRequest,
@@ -10,6 +10,7 @@ from ..ws_manager import manager
 from ..auth import require_key
 from ..conditions import set_delta_t, get_delta_t, all_delta_t
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
+from ..cascade import propagate_station_change, propagate_weather_change
 
 router = APIRouter(prefix='/shipments', tags=['shipments'])
 
@@ -44,11 +45,54 @@ def generate_qr_base64(payload: str) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _serialise(row) -> dict:
+# Statuses where the crate is still somewhere between the dock and the
+# station, so a passed ETA means something is wrong with the convoy.
+IN_FLIGHT_STATUSES = ('dispatched', 'in_transit', 'delayed')
+
+
+def _parse_iso(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None \
+        else parsed.astimezone(timezone.utc)
+
+
+def _overdue_fields(shipment: dict, now=None) -> dict:
+    """Has this consignment missed its ETA without being scanned in?
+
+    A sled convoy bogged in soft snow 40 km out does not announce itself. The
+    status stays placidly 'in_transit' for ever, because nothing was ever
+    comparing the clock against the ETA. This is that comparison; it is derived
+    on read rather than written by a background job, so it is always current
+    and needs no scheduler on a station that may be offline for days.
+    """
+    now = now or utc_now()
+    eta = _parse_iso(shipment.get('eta'))
+    if eta is None or shipment.get('status') not in IN_FLIGHT_STATUSES or now <= eta:
+        return {'is_overdue': False, 'hours_overdue': None, 'stalled_warning': None}
+
+    hours = round((now - eta).total_seconds() / 3600, 1)
+    scanned = _parse_iso(shipment.get('last_scanned_at'))
+    trace = (f'last barcode scan {round((now - scanned).total_seconds() / 3600, 1)} h ago'
+             if scanned else 'never scanned since dispatch')
+    return {
+        'is_overdue': True,
+        'hours_overdue': hours,
+        'stalled_warning': (f'Overdue by {hours:g} h - {trace}. '
+                            f'Request a beacon ping or check the route.'),
+    }
+
+
+def _serialise(row, now=None) -> dict:
     d = dict(row)
     for field in ('dispatch_date', 'eta', 'last_scanned_at', 'updated_at'):
         if field in d:
             d[field] = to_utc_iso(d[field])
+    d.update(_overdue_fields(d, now))
     return d
 
 
@@ -73,7 +117,12 @@ def list_shipments(station: Station = None, status: str = None, priority: str = 
         query += ' AND priority = ?'
         params.append(priority)
     query += ' ORDER BY updated_at DESC'
-    return [_serialise(r) for r in db.execute(query, params).fetchall()]
+    now = utc_now()
+    shipments = [_serialise(r, now) for r in db.execute(query, params).fetchall()]
+    # A stalled convoy is the most urgent row on the page, so it does not wait
+    # its turn behind whatever was edited most recently.
+    shipments.sort(key=lambda s: (not s['is_overdue'], -(s['hours_overdue'] or 0)))
+    return shipments
 
 
 @router.get('/delta-t/current')
@@ -181,7 +230,12 @@ async def create_shipment(data: ShipmentCreate):
     ship_id = 'shp-' + str(uuid.uuid4())[:8]
     barcode_id = generate_barcode_id()
     now = utc_now()
-    eta = to_utc_iso(now + timedelta(days=TRANSIT_DAYS))
+    # The nominal sea leg, unless the consignment states its own schedule. A
+    # negative eta_hours backdates it, which is how the overdue-convoy path is
+    # exercised without waiting a fortnight for a real ETA to slip.
+    eta_delta = (timedelta(hours=data.eta_hours) if data.eta_hours is not None
+                 else timedelta(days=TRANSIT_DAYS))
+    eta = to_utc_iso(now + eta_delta)
 
     capacity_warning = None
     if data.weight_kg > CAPACITY_KG:
@@ -328,6 +382,13 @@ async def _advance_shipment(shipment_id: str = None, barcode_id: str = None):
                             station=shipment['destination_station'])
             await manager.broadcast({'type': 'inventory_update',
                                      'data': {'item_id': inv_row['id'], 'new_quantity': new_qty}})
+            from ..routes.inventory import evaluate_stock_alerts
+            await evaluate_stock_alerts(shipment['destination_station'], db)
+
+    # An arrival is exactly the event that can lift an expedition back out of
+    # a shortfall, so the readiness figures are re-run either way.
+    await propagate_station_change(shipment['destination_station'],
+                                   f'shipment {shipment["barcode_id"]} {new_status}', db)
 
     await manager.broadcast({'type': 'shipment_update',
                              'data': {'shipment_id': shipment['id'], 'status': new_status}})
@@ -338,6 +399,47 @@ async def _advance_shipment(shipment_id: str = None, barcode_id: str = None):
 @router.post('/{shipment_id}/scan', dependencies=[Depends(require_key)])
 async def scan_shipment(shipment_id: str):
     return await _advance_shipment(shipment_id=shipment_id)
+
+
+@router.post('/{shipment_id}/beacon-ping', dependencies=[Depends(require_key)])
+async def request_beacon_ping(shipment_id: str):
+    """Log a satellite beacon interrogation for a consignment that has stalled.
+
+    Prahari has no satellite link, and this does not pretend otherwise: it
+    records that the station requested a position report and returns what the
+    station actually knows - the last scan and how far past its ETA the crate
+    is - so the request is in the audit trail where a convoy search would start.
+    """
+    db = get_db()
+    row = db.execute('SELECT * FROM shipments WHERE id = ? OR barcode_id = ?',
+                     (shipment_id, shipment_id)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Shipment not found')
+
+    shipment = _serialise(row)
+    if shipment['status'] not in IN_FLIGHT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f'{shipment["barcode_id"]} is {shipment["status"]} - it is not in transit.')
+
+    await log_event('cargo',
+                    f'Beacon ping requested for {shipment["barcode_id"]} '
+                    f'({shipment["item_name"]}) - '
+                    f'{shipment["stalled_warning"] or "not yet past its ETA"}',
+                    'commander', shipment['id'],
+                    {'requested': 'beacon_ping', 'is_overdue': shipment['is_overdue'],
+                     'hours_overdue': shipment['hours_overdue']},
+                    station=shipment['destination_station'])
+    await manager.broadcast({'type': 'shipment_update',
+                             'data': {'shipment_id': shipment['id'],
+                                      'status': shipment['status']}})
+    return {'shipment_id': shipment['id'], 'barcode_id': shipment['barcode_id'],
+            'requested_at': utc_now_iso(), 'is_overdue': shipment['is_overdue'],
+            'hours_overdue': shipment['hours_overdue'],
+            'last_scanned_at': shipment['last_scanned_at'],
+            'eta': shipment['eta'], 'status': shipment['status'],
+            'note': 'Interrogation logged. Prahari has no live satellite link - this records '
+                    'the request and the station\'s last known facts about the consignment.'}
 
 
 def _score_risk(delta_t: float, priority: str) -> int:
@@ -415,8 +517,18 @@ async def _apply_station_weather(station: str, delta_t: float) -> dict:
     await manager.broadcast({'type': 'blizzard_update',
                              'data': {'station': station, 'delta_t': applied_delta_t,
                                       'rescored': rescored, 'delayed': delayed}})
+
+    # The chain used to stop here. Weather changes the depletion curve and the
+    # cargo ETAs, and both of those are inputs to whether a traverse can still
+    # depart - so the module holding a booking on the delayed fuel has to be
+    # told, not left reading a readiness score from before the blizzard.
+    from ..routes.inventory import evaluate_stock_alerts
+    await evaluate_stock_alerts(station, db)
+    cascade = await propagate_weather_change(station, applied_delta_t, rescored, delayed, db)
+
     return {'station': station, 'delta_t': applied_delta_t, 'rescored': rescored,
-            'delayed': delayed, 'affected': len(rescored)}
+            'delayed': delayed, 'affected': len(rescored),
+            'degraded_expeditions': cascade['degraded_expeditions']}
 
 
 @router.post('/weather', dependencies=[Depends(require_key)])
