@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CloudSnow, Globe, Users, X } from 'lucide-react';
+import { CloudSnow, Users, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from './Toast';
 import { STATIONS } from '@/lib/stations';
@@ -294,5 +294,3 @@ export function CrossStationDialog({ itemName, homeStation, onClose }: CrossProp
     </div>
   );
 }
-
-export { Globe as CrossStationIcon };

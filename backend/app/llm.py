@@ -130,8 +130,12 @@ async def call_ollama(system_prompt: str, user_prompt: str) -> str | None:
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get('response', '')
-    except Exception:
-        pass
+            logger.debug('Ollama HTTP %s', resp.status_code)
+    except Exception as exc:
+        # Ollama is optional, so this is not an error - but swallowing it
+        # without a word makes a misconfigured local model indistinguishable
+        # from one that is simply not installed.
+        logger.debug('Ollama unavailable: %s', exc)
     return None
 
 

@@ -108,6 +108,11 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
     } finally { setSavingRadius(false); }
   };
 
+  // An incident declared wider than the slider's nominal ceiling must not be
+  // silently clamped down to it: dragging nothing and pressing Update would
+  // then shrink the perimeter and drop people out of the head-count.
+  const radiusCeiling = Math.max(10_000, incident.affected_radius_m);
+
   const currentIndex = SEVERITY_ORDER.indexOf(
     incident.severity as (typeof SEVERITY_ORDER)[number]);
   const higher = SEVERITY_ORDER.slice(currentIndex + 1);
@@ -224,7 +229,7 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
               id={`radius-${incident.id}`}
               type="range"
               min={500}
-              max={10000}
+              max={radiusCeiling}
               step={250}
               value={radius}
               onChange={(e) => setRadius(parseInt(e.target.value, 10))}

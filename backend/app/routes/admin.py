@@ -50,6 +50,10 @@ async def reset_station(body: ResetRequest):
 
     for table in OPERATIONAL_TABLES:
         db.execute(f'DELETE FROM {table}')
+    # Response-protocol rows belong to incidents that no longer exist. SQLite
+    # is not enforcing a foreign key here, so they would otherwise accumulate
+    # across every exercise and never be reachable again.
+    db.execute('DELETE FROM incident_tasks')
 
     # Crew go back to base, unassigned, at their seeded positions. The seed
     # uses INSERT OR IGNORE, so it will not touch rows that already exist —
@@ -62,7 +66,11 @@ async def reset_station(body: ResetRequest):
                    (origin_lat + dlat, origin_lng + dlng, pid))
     # Stock is rebuilt from seed, not adjusted, so quantities match the baseline.
     db.execute('DELETE FROM inventory_items')
-    db.execute("UPDATE emergency_assets SET status = 'available'")
+    # Clearing the status without clearing the commitment leaves an asset
+    # pinned to a deleted incident, and the dispatch route then refuses to task
+    # it for ever with "already committed to inc-xxxx".
+    db.execute("UPDATE emergency_assets SET status = 'available', "
+               'assigned_incident_id = NULL')
 
     if body.scope == 'all':
         db.execute('DELETE FROM events')

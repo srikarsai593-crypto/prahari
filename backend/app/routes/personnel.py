@@ -156,7 +156,7 @@ def list_personnel(station: Optional[Station] = None):
         # Carried on the list so a page reload mid-traverse restores the
         # progress meter instead of blanking it until the next tick.
         person['progress'] = get_progress(row['id'], db) if plan else None
-        person['telemetry'] = get_telemetry(plan, db) if plan else None
+        person['telemetry'] = get_telemetry(plan) if plan else None
         people.append(person)
     return people
 
@@ -262,7 +262,7 @@ def get_personnel(personnel_id: str):
     plan = get_latest_plan(personnel_id, db)
     result = _personnel_with_tracking_status(row, plan)
     result['progress'] = get_progress(personnel_id, db)
-    result['telemetry'] = get_telemetry(plan, db) if plan else None
+    result['telemetry'] = get_telemetry(plan) if plan else None
     return result
 
 
@@ -353,7 +353,7 @@ async def simulate_move(personnel_id: str):
     # schedule, and they are what makes this read as navigation rather than as
     # a database row.
     plan_now = get_latest_plan(personnel_id, db)
-    telemetry = get_telemetry(plan_now, db) if plan_now else None
+    telemetry = get_telemetry(plan_now) if plan_now else None
     progress = get_progress(personnel_id, db)
 
     await manager.broadcast({'type': 'gps_update',

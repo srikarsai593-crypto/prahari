@@ -11,13 +11,22 @@ from fastapi import Depends, HTTPException, status, Security
 from fastapi.security import APIKeyHeader
 
 _API_KEY_HEADER = APIKeyHeader(name='X-Commander-Key', auto_error=False)
-_DEMO_KEY = 'prahari-demo-2024'
+DEMO_KEY = 'prahari-demo-2024'
+
+# PRAHARI_API_KEY is the documented name. PRAHARI_COMMANDER_KEY is accepted
+# because the Render blueprint set that one, and a key that is configured but
+# read under a different name is worse than no key at all: the deployment looks
+# secured while every write is in fact still accepting the public demo key.
+_KEY_ENV_NAMES = ('PRAHARI_API_KEY', 'PRAHARI_COMMANDER_KEY')
 
 
 def get_expected_key() -> str | None:
-    expected = os.getenv('PRAHARI_API_KEY')
+    for name in _KEY_ENV_NAMES:
+        configured = (os.getenv(name) or '').strip()
+        if configured:
+            return configured
     allow_demo = os.getenv('PRAHARI_ALLOW_DEMO_KEY', 'true').lower() in {'1', 'true', 'yes'}
-    return expected or (_DEMO_KEY if allow_demo else None)
+    return DEMO_KEY if allow_demo else None
 
 
 async def require_key(key: str | None = Security(_API_KEY_HEADER)) -> str:

@@ -20,7 +20,15 @@ export type StationMessageType =
   | 'accountability_update'
   | 'incident_update'
   | 'expedition_update'
-  | 'station_reset';
+  | 'station_reset'
+  // Cross-module monitors. These are not variations on the updates above: they
+  // report a consequence the receiving module could not have worked out for
+  // itself, which is the whole reason they are broadcast rather than polled.
+  | 'inventory_alert'
+  | 'expedition_readiness'
+  | 'cascade_alert'
+  | 'asset_update'
+  | 'incident_sop_update';
 
 export interface StationMessage {
   type: StationMessageType;

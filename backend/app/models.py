@@ -290,18 +290,64 @@ class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class LLMExpeditionParse(BaseModel):
-    name: str
+    """What a model is allowed to have understood from a written request.
+
+    These bounds are the point of the class, not decoration. `_try_llm_parse`
+    treats a validation failure as "this provider did not answer" and moves on
+    to the next one, and finally to the deterministic regex fallback - so a
+    model that invents a station or a negative crew size degrades to rules
+    instead of feeding a nonsense figure into a readiness score.
+    """
+    name: str = Field(min_length=1, max_length=120)
     station: str
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    personnel_required: int
-    fuel_required_l: float
+    personnel_required: int = Field(ge=0, le=500)
+    fuel_required_l: float = Field(ge=0, le=1_000_000)
+
+    @field_validator('station')
+    @classmethod
+    def _known_station(cls, value):
+        match = {s.lower(): s for s in ('Maitri', 'Bharati', 'Himadri')}
+        resolved = match.get(str(value).strip().lower())
+        if resolved is None:
+            raise ValueError(f'unknown station {value!r}')
+        return resolved
+
+
+# Words a model may reasonably use for the two things that can happen to stock.
+_STOCK_ACTIONS = {
+    'increment': 'increment', 'increase': 'increment', 'add': 'increment',
+    'added': 'increment', 'restock': 'increment', 'restocked': 'increment',
+    'receive': 'increment', 'received': 'increment', 'in': 'increment',
+    'decrement': 'decrement', 'decrease': 'decrement', 'remove': 'decrement',
+    'removed': 'decrement', 'issue': 'decrement', 'issued': 'decrement',
+    'consume': 'decrement', 'consumed': 'decrement', 'out': 'decrement',
+}
+
 
 class LLMStockCommandParse(BaseModel):
+    """A parsed stock adjustment, bounded before it can touch a quantity.
+
+    `quantity` is non-negative and `action` carries the direction. Letting the
+    sign live in the quantity too means the two can disagree: a decrement of
+    -200 reads as "removed 200" and writes +200, inventing life-support stock
+    out of a malformed parse. The regex fallback cannot produce that, but a
+    model can, and this is the last place to catch it before the route
+    arithmetic runs.
+    """
     action: str
-    quantity: float
-    item: str
+    quantity: float = Field(ge=0, le=1_000_000)
+    item: str = Field(min_length=1, max_length=120)
     location: str
+
+    @field_validator('action')
+    @classmethod
+    def _known_action(cls, value):
+        resolved = _STOCK_ACTIONS.get(str(value).strip().lower())
+        if resolved is None:
+            raise ValueError(f'unknown stock action {value!r}')
+        return resolved
 
 
 class InventoryUpdateRequest(BaseModel):

@@ -8,9 +8,27 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+
+      # The key every write endpoint checks, under the name the code reads
+      # (app/auth.py). This was previously set as PRAHARI_COMMANDER_KEY, which
+      # nothing read - so the service looked configured while actually falling
+      # through to the public demo key below.
+      #
+      # sync: false means Render prompts for the value instead of committing it
+      # here. A key in a public repository is not a key.
+      - key: PRAHARI_API_KEY
+        sync: false
+
+      # Leave false. True admits the published demo key 'prahari-demo-2024',
+      # which anyone reading this repository can use to write to the station.
       - key: PRAHARI_ALLOW_DEMO_KEY
-        value: "true"
-      - key: PRAHARI_COMMANDER_KEY
-        value: prahari-demo-2024
+        value: "false"
+
+      # Exact origins allowed to call this API. Set this to the console's own
+      # hostname; without it the service falls back to a pattern that admits
+      # every *.vercel.app deployment, including ones that are not yours.
+      - key: PRAHARI_CORS_ORIGINS
+        sync: false
+
       - key: PRAHARI_LOG_LEVEL
         value: INFO

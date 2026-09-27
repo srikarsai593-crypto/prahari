@@ -12,6 +12,16 @@ import type { Geofence, StationCounts } from '@/lib/types';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Runaway guard for the GPS walkthrough step, not a tick budget.
+ *
+ * The number of fixes on a track is `segments x FIXES_PER_LEG + 1`, both of
+ * which live in the backend. The step walks until the geofence alarm fires or
+ * the party arrives; this only stops an unbounded loop if neither happens.
+ */
+const MAX_SCENARIO_FIXES = 120;
+const SCENARIO_FIX_DELAY_MS = 200;
+
 /** Fraction of the way from the station toward the destination. */
 function interpolate(
   from: { lat: number; lng: number }, to: { lat: number; lng: number }, segments = 5,
@@ -282,12 +292,20 @@ export default function ScenarioPage() {
         let violations = 0;
         for (const person of researchers.slice(0, 2)) {
           await api.resetSimulation(person.id);
-          // Walk the whole track; stop early once the person has arrived.
-          for (let i = 0; i < 12; i++) {
+          // Walk until the point of this step actually happens. A fixed tick
+          // budget is the wrong shape: the fix density per leg is a backend
+          // constant, so any hard-coded number silently stops covering the
+          // route the moment that constant changes — which is exactly how this
+          // step quietly stopped reaching the Crevasse Zone at ~64% of the way.
+          // The bound below is a runaway guard, not the expected exit.
+          for (let i = 0; i < MAX_SCENARIO_FIXES; i++) {
             const res = await api.simulateMove(person.id);
-            if (res?.alert?.type === 'geofence_violation') violations++;
+            if (res?.alert?.type === 'geofence_violation') {
+              violations++;
+              break;                    // the alarm fired; that was the point
+            }
             if (res?.status === 'arrived') break;
-            await delay(350);
+            await delay(SCENARIO_FIX_DELAY_MS);
           }
         }
         addToast(violations > 0

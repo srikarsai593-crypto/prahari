@@ -104,7 +104,7 @@ def _parse_iso(value):
     return parsed.astimezone(timezone.utc)
 
 
-def get_telemetry(plan, db=None) -> dict | None:
+def get_telemetry(plan) -> dict | None:
     """Heading, ground speed, distance remaining and ETA for the current fix.
 
     Speed is derived from the authorised schedule rather than from wall-clock

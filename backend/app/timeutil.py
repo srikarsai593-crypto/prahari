@@ -13,9 +13,18 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _format_iso(dt: datetime) -> str:
+    return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}Z'
+
+
 def utc_now_iso() -> str:
-    """e.g. '2026-09-26T08:54:23.417Z' — matches the SQLite column defaults."""
-    return utc_now().strftime('%Y-%m-%dT%H:%M:%S.') + f'{utc_now().microsecond // 1000:03d}Z'
+    """e.g. '2026-09-26T08:54:23.417Z' — matches the SQLite column defaults.
+
+    Formatted from a single reading of the clock. Reading it twice can take the
+    seconds from one instant and the milliseconds from the next, producing a
+    timestamp that never existed and that can order two events backwards.
+    """
+    return _format_iso(utc_now())
 
 
 def to_utc_iso(value) -> str | None:
@@ -34,5 +43,4 @@ def to_utc_iso(value) -> str | None:
             return text  # leave unparseable values untouched rather than guessing
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)  # legacy naive rows were UTC
-    dt = dt.astimezone(timezone.utc)
-    return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}Z'
+    return _format_iso(dt.astimezone(timezone.utc))

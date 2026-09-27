@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .seed import seed_data
 from .ws_manager import manager
-from .auth import get_expected_key
+from .auth import DEMO_KEY, get_expected_key
 from .llm import GEMINI_MODEL, get_gemini_api_key
 from .routes import (expeditions, shipments, inventory, personnel, incidents,
                      events_routes, geofences, admin)
@@ -36,6 +36,19 @@ def _cors_origins() -> list[str]:
     """
     raw = os.getenv('PRAHARI_CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
     return [o.strip() for o in raw.split(',') if o.strip()]
+
+
+# Preview deployments get a fresh hostname per branch, so the hosted console is
+# matched by pattern rather than by an exhaustive list. The default is broad on
+# purpose - it has to keep working for whoever deploys this - so the boot check
+# below says out loud what it is admitting.
+DEFAULT_CORS_ORIGIN_REGEX = r'^https://.*\.vercel\.app$'
+
+
+def _cors_origin_regex() -> str | None:
+    """Origin pattern for hosted consoles. Empty string disables it entirely."""
+    raw = os.getenv('PRAHARI_CORS_ORIGIN_REGEX', DEFAULT_CORS_ORIGIN_REGEX)
+    return raw.strip() or None
 
 
 @asynccontextmanager
@@ -56,6 +69,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning('LLM chain: no GEMINI_API_KEY set - Ollama -> regex fallback only')
 
+    # Two deployment postures that are fine locally and are not fine on the
+    # public internet. Both are stated at boot rather than left to be
+    # discovered, because neither one announces itself at runtime.
+    if get_expected_key() == DEMO_KEY:
+        logger.warning(
+            'Running on the PUBLIC demo commander key. Anyone who knows it can write to '
+            'this station. Set PRAHARI_API_KEY and PRAHARI_ALLOW_DEMO_KEY=false before '
+            'exposing this backend beyond a trusted LAN.')
+    if _cors_origin_regex() == DEFAULT_CORS_ORIGIN_REGEX:
+        logger.warning(
+            'CORS is admitting every *.vercel.app origin, which includes deployments that '
+            'are not yours. Set PRAHARI_CORS_ORIGIN_REGEX to your own hostname pattern, or '
+            'PRAHARI_CORS_ORIGINS to an exact list, for anything but a demo.')
+
     logger.info('Prahari backend started - database initialised and seeded.')
     yield
     logger.info('Prahari backend shutting down.')
@@ -71,10 +98,13 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
-    allow_origin_regex=os.getenv('PRAHARI_CORS_ORIGIN_REGEX', r'^https:\/\/.*\.vercel\.app$'),
+    allow_origin_regex=_cors_origin_regex(),
     allow_credentials=True,
+    # Explicit, not '*'. A wildcard here is not honoured by browsers once
+    # credentials are in play, and it invites any header a caller cares to
+    # invent; these two are the only ones the console actually sends.
     allow_methods=['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allow_headers=['*'],
+    allow_headers=['Content-Type', 'X-Commander-Key'],
 )
 
 for router in (expeditions, shipments, inventory, personnel, incidents,

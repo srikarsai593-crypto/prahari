@@ -423,7 +423,12 @@ async def process_stock_command(req: StockCommandRequest):
 
     item = dict(rows[0])
     old_qty = item['quantity']
-    delta = result['quantity']
+    # The parse layer already bounds this, but the direction of a stock
+    # movement must never be able to come from the sign of its magnitude: a
+    # decrement of -200 would read as "removed 200" and write +200. Belt and
+    # braces, because the thing on the other side of this line is how much
+    # diesel a station believes it has.
+    delta = abs(float(result['quantity'] or 0))
     if result['action'] == 'decrement':
         new_qty = max(0, old_qty - delta)
         shortfall = delta - (old_qty - new_qty)

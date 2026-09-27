@@ -169,6 +169,19 @@ This is a **single-trust-boundary station console**, not a multi-tenant service.
 - `PRAHARI_ALLOW_DEMO_KEY=true` enables the public key `prahari-demo-2024`. Use
   it only for throwaway local demos; the backend refuses to start with no key at all.
 
+### Settings that decide whether a hosted deployment is actually protected
+
+| Variable | What happens if you leave it | 
+|---|---|
+| `PRAHARI_API_KEY` | Unset, with `PRAHARI_ALLOW_DEMO_KEY=true`, every write endpoint accepts `prahari-demo-2024` — a key published in this README. Set it. (`PRAHARI_COMMANDER_KEY` is read as an alias, because the Render blueprint used that name and a key read under the wrong name protects nothing.) |
+| `PRAHARI_ALLOW_DEMO_KEY` | Defaults to `true`, which is right for `npm run dev` and wrong for anything with a public hostname. The blueprint sets it to `false`, so a hosted backend with no key **refuses to boot** rather than coming up unprotected. |
+| `PRAHARI_CORS_ORIGINS` | Falls back to an origin *pattern* (below) instead of an exact list. Set it to the console's own hostname. |
+| `PRAHARI_CORS_ORIGIN_REGEX` | Defaults to `^https://.*\.vercel\.app$` so preview deployments keep working. That admits **every** `vercel.app` origin, not only yours. Narrow it, or set an exact `PRAHARI_CORS_ORIGINS` list and set this to an empty string. |
+
+The backend logs a warning at boot for each of these that is still on its
+permissive default, so the posture is visible in the service log rather than
+something you have to remember to check.
+
 ---
 
 ## 🧪 Verifying a change
