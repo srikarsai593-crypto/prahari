@@ -1,0 +1,23 @@
+{
+  // Typechecks everything, tests included.
+  //
+  // `tsconfig.json` deliberately excludes test files, because `next build`
+  // typechecks whatever that file includes and the Vercel build should not
+  // depend on test tooling being installed. The cost of that exclusion is that
+  // `tsc --noEmit` stopped covering the tests at all - and a test file is
+  // still code that can be wrong. A helper that only throws, for instance,
+  // infers `void` and is not a valid JSX component; vitest runs it happily and
+  // says nothing, because vitest does not typecheck.
+  //
+  // So: the production config stays narrow, and `npm run typecheck` uses this
+  // one. Same compiler options, nothing excluded but dependencies.
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

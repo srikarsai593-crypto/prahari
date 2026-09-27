@@ -33,6 +33,11 @@ backend/prahari.db-shm
 sf-pro-display-cufonfonts/
 frontend/public/fonts/
 
+# Design export — a standalone snapshot of the console for design work.
+# Regenerate rather than version it; delete this line if you would rather
+# share it with a designer through the repository.
+design-export/
+
 # IDEs and OS files
 .vscode/
 .idea/
