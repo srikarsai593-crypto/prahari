@@ -5,22 +5,22 @@ import type {
   ParsedExpedition, FeasibilityResult, ShipmentStatusTransition, StationWeatherResult,
   ExactCount, StockCommandResult, StationConditions, MovementPlanInput,
   StationCounts, StationResetResult, Telemetry, IncidentSop, HeadcountBasis, StockAlert,
-  CrossStationStock,
+  CrossStationStock, SessionState,
 } from './types';
 
 const BASE = '/api';
 
 /**
- * Browser-visible by design: this is a single-operator station console, and the
- * key only gates writes against the station's own LAN backend. A multi-user
- * deployment must replace it with a real session — see README "Security model".
+ * The console holds no credential.
+ *
+ * The commander key used to ship in the bundle as NEXT_PUBLIC_COMMANDER_KEY,
+ * which meant anyone who opened devtools on the hosted console could read the
+ * secret that authorises every write. It is now exchanged once at /auth/login
+ * for an httpOnly cookie that page script cannot read, and every request
+ * simply carries credentials instead.
  */
-export const COMMANDER_KEY = process.env.NEXT_PUBLIC_COMMANDER_KEY || 'prahari-demo-2024';
-
-/** Header set on every mutation, including replays out of the offline queue. */
 export const authHeaders = (): Record<string, string> => ({
   'Content-Type': 'application/json',
-  ...(COMMANDER_KEY ? { 'X-Commander-Key': COMMANDER_KEY } : {}),
 });
 
 // Replays out of the offline queue must carry the same credentials as a live
@@ -80,7 +80,7 @@ async function request<T = unknown>(
 
   let response: Response;
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, { credentials: 'include', ...options });
   } catch (cause) {
     // A network failure on a mutation must not be lost: park it so it replays
     // when the link comes back, exactly like an explicit offline mutation.
@@ -99,13 +99,25 @@ async function request<T = unknown>(
     try { data = JSON.parse(text); } catch { data = text; }
   }
 
-  if (!response.ok) throw new ApiError(extractMessage(data, response.status), response.status, url);
+  if (!response.ok) {
+    const error = new ApiError(extractMessage(data, response.status), response.status, url);
+    // Announced rather than handled here: a session that expired mid-shift
+    // would otherwise surface as a dozen unrelated failures across modules
+    // that each read like an outage.
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('prahari:unauthorised', { detail: error }));
+    }
+    throw error;
+  }
   return data as T;
 }
 
 const jsonOptions = (method: string, data?: unknown): RequestInit => ({
   method,
   headers: authHeaders(),
+  // The session cookie rides on this. Without it the browser omits cookies on
+  // any request it considers cross-origin, which includes the dev proxy.
+  credentials: 'include',
   body: data === undefined ? undefined : JSON.stringify(data),
 });
 
@@ -118,6 +130,17 @@ const qs = (params?: Record<string, string | undefined>) => {
 };
 
 export const api = {
+  // ── Session ────────────────────────────────────────────────────────────────
+  /** Whether this browser currently holds a valid station session. */
+  session: () => request<SessionState>(`${BASE}/auth/session`),
+  /** Exchange the commander key for an httpOnly cookie. The key is used here
+   *  and then discarded; it is never stored by the console. */
+  login: (key: string) =>
+    request<{ authenticated: boolean; actor: string; expires_at: number }>(
+      `${BASE}/auth/login`, jsonOptions('POST', { key }), 'sign in'),
+  logout: () =>
+    request<{ authenticated: boolean }>(`${BASE}/auth/logout`, jsonOptions('POST'), 'sign out'),
+
   // ── Expeditions ────────────────────────────────────────────────────────────
   /** Filtering belongs on the server: every caller was fetching all three
    *  stations' records and throwing two thirds away. */

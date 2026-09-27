@@ -48,6 +48,11 @@ module reads the same truth.
 | **Alerts that outlive the tab** | A toast that vanishes in four seconds is not a record. Crossing a stock floor writes a standing `CRITICAL STOCK ALERT` to the audit log and clears it explicitly on recovery, so an operator who was on another page still finds it. |
 | **Readiness is continuous, not a stored claim** | A feasibility score saved at planning time describes a moment that has passed. Any write that moves station conditions re-scores every open traverse (`app/cascade.py`), and the card reports the live figure beside the one it was approved against. |
 | **Derived lateness, not a scheduler** | A consignment is overdue if the clock is past its ETA and nothing has been scanned in — computed on read. A station that is offline for days has no background job to catch up on, and the answer is never stale. |
+| **No credential in the bundle** | The commander key is exchanged once for an httpOnly session cookie. It used to ship as `NEXT_PUBLIC_COMMANDER_KEY`, readable by anyone who opened devtools on the hosted console. Sessions are signed rather than stored, so a restart does not sign everyone out and there is no session table to leak. |
+| **Enough fuel is not the same as sparable fuel** | Readiness asks both whether a traverse can be loaded *and* whether what is left behind outlasts it at the current burn rate. Weather does not take litres out of the tank — it raises the rate they leave it — so the first question alone is blind to the conditions a traverse would depart into. |
+| **Alert state is a column, the log is history** | Whether a row is in alert is stored on the row. Deriving it by scanning the audit log meant the dashboard banner got slower every time anything was logged anywhere in the station. |
+| **Station facts read once per scoring run** | The fuel row, the roster and the inbound cargo are identical for every traverse departing the same base, and re-scoring runs after every write that moves station conditions. |
+| **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
 
@@ -68,7 +73,9 @@ module reads the same truth.
    scoped to the console's active station. An ambiguous item comes back as
    clickable candidates rather than a dead-end error. `GET /inventory/cross-station`
    answers "does another base have this?" in one query.
-4. **📍 Personnel Routing** — Authorise a movement plan on a **map**: click to
+4. **📍 Personnel Routing** — Sign in first: the roster carries live positions
+   for everyone in the field and is not served anonymously. Authorise a
+   movement plan on a **map**: click to
    place waypoints and steer the corridor around a crevasse field, with a live
    verdict on how many restricted zones the path still crosses. Then replay GPS
    fixes along it with a progress meter and a telemetry read-out — heading,
@@ -94,6 +101,30 @@ consignment that would close the gap, with the hours to wait. The whole chain
 announces itself once as a `SUPPLY CHAIN CASCADE` event and a dashboard banner.
 `app/cascade.py` owns the fan-out; it is a separate module because the routers
 already import one another and putting it in any of them closes a cycle.
+
+---
+
+## 🚀 Deploying
+
+The backend is closed by default and will not start unprotected, so a first
+deploy needs four values. Render prompts for each on a blueprint sync.
+
+**Render** (backend):
+
+| Variable | Value |
+|---|---|
+| `PRAHARI_API_KEY` | Any long random string. `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `PRAHARI_CORS_ORIGINS` | The console's own URL, e.g. `https://prahari.vercel.app` |
+| `PRAHARI_CORS_PROJECT` | Your Vercel project name, e.g. `prahari` — only needed if preview deployments should work too |
+| `PRAHARI_ALLOW_DEMO_KEY` | `false` (already set in the blueprint) |
+
+**Vercel** (console): `NEXT_PUBLIC_COMMANDER_KEY` is **no longer used** — the
+console holds no credential. Nothing needs to be set there beyond the backend
+URL your `next.config.ts` rewrites point at.
+
+Check `/health` afterwards: it reports whether a real key is configured and
+whether reads are public, so the posture can be confirmed from outside rather
+than remembered.
 
 ---
 
@@ -156,31 +187,57 @@ real failure, and both are honest about what they are:
 
 ---
 
-## 🔐 Security model — read before deploying
+## 🔐 Security model
 
-This is a **single-trust-boundary station console**, not a multi-tenant service.
+A **station console with one shared operator credential**, not a multi-tenant
+service. Within that shape, it is now closed by default.
 
-- Every write endpoint requires the `X-Commander-Key` header. Reads are open.
-- `NEXT_PUBLIC_COMMANDER_KEY` is **visible in the browser bundle**. That is
-  acceptable only because the backend is meant to sit on the station's own LAN.
-- Before any deployment reachable beyond that LAN you must add real
-  per-user authentication, rotate the key out of the client bundle, and put the
-  API behind TLS.
-- `PRAHARI_ALLOW_DEMO_KEY=true` enables the public key `prahari-demo-2024`. Use
-  it only for throwaway local demos; the backend refuses to start with no key at all.
+- The commander key is exchanged once at `POST /auth/login` for an **httpOnly
+  session cookie**. The key never enters the JavaScript bundle. It previously
+  shipped as `NEXT_PUBLIC_COMMANDER_KEY`, which meant anyone who opened
+  devtools on the hosted console could read the credential that authorises
+  every write.
+- **Reads are gated too.** The roster carries live positions for everyone on
+  the ice; that is not something to serve to whoever knows the URL. The
+  telemetry socket is gated the same way, since it carries the same data.
+  `PRAHARI_PUBLIC_READS=true` opens reads for a kiosk or a public demo.
+- **`X-Commander-Key` still works** for scripts, the barcode scanner and the
+  test suite. A machine caller has nowhere to keep a cookie and no sign-in
+  screen to fill in.
+- **Sign-in is rate limited** (5 failures/minute/IP). The key is a single
+  shared secret, so without a limit it is brute-forceable at network speed.
+  Writes are limited an order of magnitude higher, against a runaway client.
+  Reads are never throttled — an operator refreshing during an incident is the
+  behaviour this console exists to serve.
+- Sessions are **signed, not stored**: HMAC over a server secret, so a restart
+  does not sign everyone out and there is no session table to leak. With no
+  explicit `PRAHARI_SESSION_SECRET` the secret derives from the commander key,
+  so **rotating the key invalidates every live session** — which is what an
+  operator expects rotation to mean.
+- The console sets a **Content-Security-Policy**, `X-Frame-Options: DENY`,
+  `nosniff` and a `Permissions-Policy` denying geolocation, camera and
+  microphone. Authenticated API responses are `no-store, private`, so the next
+  operator through a shared proxy is not served the last one's roster.
+
+**What it is still not.** One credential means one identity: the audit log can
+say *what* a commander did and not *which* commander. Per-user accounts are the
+next step, and nothing above is a substitute for them.
 
 ### Settings that decide whether a hosted deployment is actually protected
 
-| Variable | What happens if you leave it | 
+| Variable | What happens if you leave it |
 |---|---|
-| `PRAHARI_API_KEY` | Unset, with `PRAHARI_ALLOW_DEMO_KEY=true`, every write endpoint accepts `prahari-demo-2024` — a key published in this README. Set it. (`PRAHARI_COMMANDER_KEY` is read as an alias, because the Render blueprint used that name and a key read under the wrong name protects nothing.) |
-| `PRAHARI_ALLOW_DEMO_KEY` | Defaults to `true`, which is right for `npm run dev` and wrong for anything with a public hostname. The blueprint sets it to `false`, so a hosted backend with no key **refuses to boot** rather than coming up unprotected. |
-| `PRAHARI_CORS_ORIGINS` | Falls back to an origin *pattern* (below) instead of an exact list. Set it to the console's own hostname. |
-| `PRAHARI_CORS_ORIGIN_REGEX` | Defaults to `^https://.*\.vercel\.app$` so preview deployments keep working. That admits **every** `vercel.app` origin, not only yours. Narrow it, or set an exact `PRAHARI_CORS_ORIGINS` list and set this to an empty string. |
+| `PRAHARI_API_KEY` | Unset, with `PRAHARI_ALLOW_DEMO_KEY=true`, every write accepts `prahari-demo-2024` — a key published in this README. Set it. (`PRAHARI_COMMANDER_KEY` is read as an alias, because the Render blueprint used that name and a key read under the wrong name protects nothing.) |
+| `PRAHARI_ALLOW_DEMO_KEY` | Defaults to `true`, right for `npm run dev` and wrong for anything with a public hostname. The blueprint sets `false`, so a hosted backend with no key **refuses to boot** rather than coming up open. |
+| `PRAHARI_PUBLIC_READS` | Defaults to `false`. Setting it serves the roster, with live field positions, to anyone who knows the URL. |
+| `PRAHARI_SESSION_SECRET` | Optional. Without it the secret derives from the commander key, which ties session lifetime to key rotation. Set it if you want sessions to survive a rotation. |
+| `PRAHARI_CORS_ORIGINS` | Defaults to localhost only, so a hosted console is refused by the browser until this names it. Set it to the console's own URL. |
+| `PRAHARI_CORS_PROJECT` | Your Vercel project name. Also admits that project's *preview* deployments, whose hostnames change per branch and so cannot be listed exactly. Scoped to your project alone. |
+| `PRAHARI_CORS_ORIGIN_REGEX` | Escape hatch for a console that is not on Vercel. Overrides the project pattern. |
 
-The backend logs a warning at boot for each of these that is still on its
-permissive default, so the posture is visible in the service log rather than
-something you have to remember to check.
+The backend logs a warning at boot for each of these still on its permissive
+default, and `/health` reports the posture, so it can be checked from outside
+rather than remembered.
 
 ---
 
@@ -192,11 +249,18 @@ pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 
-368 tests, ~30 s, no network and no shared state: each one gets its own
-throwaway SQLite file, and the LLM chain is stubbed so every parse falls
-through to the deterministic regex rules. A test that reached Gemini would be
-slow, cost money, need a key, and — worst of all — give a different answer on a
-different day.
+```bash
+cd frontend
+npm install
+npm test                 # 116 tests
+npm run test:coverage    # with the floor enforced
+```
+
+**435 backend tests (~30 s) and 116 frontend tests (~4 s).** No network and no
+shared state: each backend test gets its own throwaway SQLite file, and the LLM
+chain is stubbed so every parse falls through to the deterministic regex rules.
+A test that reached Gemini would be slow, cost money, need a key, and — worst of
+all — give a different answer on a different day.
 
 What they cover, and why these things in particular:
 
@@ -212,13 +276,30 @@ What they cover, and why these things in particular:
 | `test_cascade` | The cross-module chain — that a write anywhere reaches the module counting on it, and that the alarm announces a crossing rather than a state. |
 | `test_platform` | Credentials, CORS, audit-log ordering and reset hygiene. |
 | `test_models` | The bounds that make a malformed LLM parse degrade to rules instead of being believed. |
+| `test_session` | Signed sessions, the sign-in rate limit, the read gate and the security headers. |
+| `test_performance` | Queries per request, not wall-clock: the shapes that were linear in the data and invisible at seed size. |
+| `geo.test.ts` | The console's own hazard check, and that it agrees with the backend to the metre. |
+| `offlineQueue.test.ts` | Work recorded during an outage: that it survives, replays in order, and is not discarded when a session lapses. |
+| `SessionProvider.test.tsx` | The sign-in gate, and that the key is never retained after it is used. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count: eighteen known bugs — a flat criticality rule, bearing by the flat
-approximation, deviation measured to waypoints, an incident closable over a
-missing person, a stock delta that carries its sign — are reintroduced one at a
-time and the suite must fail on each. A mutation that survives is a test that
-does not really exist.
+line count. Twenty-seven known bugs — a flat criticality rule, bearing by the
+flat approximation, deviation measured to waypoints, an incident closable over
+a missing person, a stock delta that carries its sign, an unverified session
+signature, a roster that re-queries every plan — are reintroduced one at a time
+and the suite must fail on each:
+
+```bash
+cd backend
+python -m tests.mutations          # all of them
+python -m tests.mutations geo      # just the ones touching geo
+python -m tests.mutations --list
+```
+
+A mutation that survives is a test that does not really exist. Three survived
+the first run and all three were gaps in the tests rather than in the code.
+CI runs it weekly rather than per-commit: it runs the whole suite once per
+mutation, so it costs roughly twenty-seven times a normal run.
 
 ---
 

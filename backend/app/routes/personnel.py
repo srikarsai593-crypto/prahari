@@ -9,13 +9,18 @@ from ..events import log_event
 from ..ws_manager import manager
 from ..geo import haversine_distance, check_geofences, check_route_deviation
 from ..simulation import (get_next_position, reset_simulation, get_planned_route,
-                          get_latest_plan, get_progress, get_telemetry, build_track)
+                          get_latest_plan, get_progress, get_telemetry, playback_state,
+                          build_track)
 from .incidents import compute_accountability, VERIFIED_SAFE_STATUSES
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change
 
-router = APIRouter(prefix='/personnel', tags=['personnel'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/personnel', tags=['personnel'],
+                   dependencies=[Depends(require_reader)])
 
 DEFAULT_LOCATION_UPDATE_TIMEOUT_MINUTES = 10
 DESTINATION_REACHED_RADIUS_M = 250
@@ -155,8 +160,12 @@ def list_personnel(station: Optional[Station] = None):
         person = _personnel_with_tracking_status(row, plan, now)
         # Carried on the list so a page reload mid-traverse restores the
         # progress meter instead of blanking it until the next tick.
-        person['progress'] = get_progress(row['id'], db) if plan else None
-        person['telemetry'] = get_telemetry(plan) if plan else None
+        #
+        # From the plan already in hand, and from one parse of its route. Each
+        # of these used to re-query the plan and re-densify the route
+        # independently, so rendering a six-person roster did eighteen route
+        # builds and twelve queries that the loop above had already made.
+        person.update(playback_state(plan))
         people.append(person)
     return people
 
@@ -199,7 +208,7 @@ def check_accountability(lat: float = Query(ge=-90, le=90),
             'unaccounted': unaccounted, 'personnel': in_zone}
 
 
-@router.post('/movement-plans', dependencies=[Depends(require_key)])
+@router.post('/movement-plans', dependencies=[Depends(require_key), Depends(guard_write)])
 async def create_movement_plan(data: MovementPlanCreate):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (data.personnel_id,)).fetchone()
@@ -261,12 +270,11 @@ def get_personnel(personnel_id: str):
         raise HTTPException(status_code=404, detail='Personnel not found')
     plan = get_latest_plan(personnel_id, db)
     result = _personnel_with_tracking_status(row, plan)
-    result['progress'] = get_progress(personnel_id, db)
-    result['telemetry'] = get_telemetry(plan) if plan else None
+    result.update(playback_state(plan))
     return result
 
 
-@router.post('/{personnel_id}/simulate-move', dependencies=[Depends(require_key)])
+@router.post('/{personnel_id}/simulate-move', dependencies=[Depends(require_key), Depends(guard_write)])
 async def simulate_move(personnel_id: str):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
@@ -352,9 +360,8 @@ async def simulate_move(personnel_id: str):
     # remaining and ETA are all derivable from the track and the authorised
     # schedule, and they are what makes this read as navigation rather than as
     # a database row.
-    plan_now = get_latest_plan(personnel_id, db)
-    telemetry = get_telemetry(plan_now) if plan_now else None
-    progress = get_progress(personnel_id, db)
+    state = playback_state(get_latest_plan(personnel_id, db))
+    telemetry, progress = state['telemetry'], state['progress']
 
     await manager.broadcast({'type': 'gps_update',
                              'data': {'personnel_id': personnel_id, 'name': person['name'],
@@ -369,7 +376,7 @@ async def simulate_move(personnel_id: str):
             'telemetry': telemetry, 'progress': progress}
 
 
-@router.post('/{personnel_id}/reset-simulation', dependencies=[Depends(require_key)])
+@router.post('/{personnel_id}/reset-simulation', dependencies=[Depends(require_key), Depends(guard_write)])
 async def reset_sim(personnel_id: str):
     db = get_db()
     plan = get_latest_plan(personnel_id, db)
@@ -387,7 +394,7 @@ async def reset_sim(personnel_id: str):
             'position': {'lat': plan['origin_lat'], 'lng': plan['origin_lng']}}
 
 
-@router.post('/{personnel_id}/sos', dependencies=[Depends(require_key)])
+@router.post('/{personnel_id}/sos', dependencies=[Depends(require_key), Depends(guard_write)])
 async def trigger_sos(personnel_id: str):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()
@@ -423,7 +430,7 @@ async def trigger_sos(personnel_id: str):
             'expected': expected, 'confirmed_safe': safe, 'unaccounted': unaccounted}
 
 
-@router.patch('/{personnel_id}/status', dependencies=[Depends(require_key)])
+@router.patch('/{personnel_id}/status', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_status(personnel_id: str, body: PersonnelStatusRequest):
     db = get_db()
     person = db.execute('SELECT * FROM personnel WHERE id = ?', (personnel_id,)).fetchone()

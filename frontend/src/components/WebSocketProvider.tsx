@@ -1,47 +1,14 @@
 'use client';
 import { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import { isStationBroadcast, type StationBroadcast } from '@/lib/broadcasts';
+
+export type { StationBroadcast, StationMessageType, PayloadOf } from '@/lib/broadcasts';
+export { isType, isAnyOf } from '@/lib/broadcasts';
 
 /**
- * Every broadcast the backend fans out on `/ws`.
- *
- * `data` stays loose on purpose — each type carries a different shape and the
- * consumers narrow it themselves — but `type` is a closed set, so a listener
- * that checks for a message the backend never sends is a compile error rather
- * than a handler that silently never runs.
+ * The shapes live in `lib/broadcasts.ts` as a discriminated union, so a
+ * handler narrows on `type` and gets a known payload instead of `any`.
  */
-export type StationMessageType =
-  | 'event'
-  | 'alert'
-  | 'gps_update'
-  | 'inventory_update'
-  | 'shipment_update'
-  | 'blizzard_update'
-  | 'personnel_update'
-  | 'accountability_update'
-  | 'incident_update'
-  | 'expedition_update'
-  | 'station_reset'
-  // Cross-module monitors. These are not variations on the updates above: they
-  // report a consequence the receiving module could not have worked out for
-  // itself, which is the whole reason they are broadcast rather than polled.
-  | 'inventory_alert'
-  | 'expedition_readiness'
-  | 'cascade_alert'
-  | 'asset_update'
-  | 'incident_sop_update';
-
-export interface StationMessage {
-  type: StationMessageType;
-  data?: Record<string, never> | Record<string, unknown> | undefined;
-}
-
-/** What consumers actually read off a message, without asserting a shape. */
-export interface StationBroadcast {
-  type: StationMessageType | string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  data?: any;
-}
-
 type WebSocketContextType = {
   socket: WebSocket | null;
   lastMessage: StationBroadcast | null;
@@ -95,7 +62,13 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
 
     ws.onmessage = (event) => {
       try {
-        setLastMessage(JSON.parse(event.data));
+        const message: unknown = JSON.parse(event.data);
+        // A frame is data from the network, so the type is checked rather than
+        // asserted: a backend one version ahead can send something this build
+        // has never heard of, and the console should ignore it rather than
+        // hand an unknown shape to every module's handler.
+        if (isStationBroadcast(message)) setLastMessage(message);
+        else console.warn('[WS] Ignoring unrecognised broadcast', message);
       } catch (e) {
         console.error('[WS] Failed to parse message', e);
       }

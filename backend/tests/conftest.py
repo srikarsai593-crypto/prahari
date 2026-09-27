@@ -25,8 +25,19 @@ BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from app import database, llm  # noqa: E402
+from app import database, llm, ratelimit  # noqa: E402
 from app.auth import get_expected_key  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def clean_rate_limits():
+    """Rate-limit buckets are process-global, so one test's traffic would
+    otherwise count against the next one's."""
+    ratelimit.login_attempts.reset()
+    ratelimit.write_requests.reset()
+    yield
+    ratelimit.login_attempts.reset()
+    ratelimit.write_requests.reset()
 
 
 def _drop_cached_connections() -> None:
@@ -86,8 +97,10 @@ class Station:
         self.headers = {'X-Commander-Key': get_expected_key()}
 
     # ── HTTP ────────────────────────────────────────────────────────────────
+    # Reads are gated too, so the harness presents the key on every verb. A
+    # test that wants to see an *unauthenticated* response uses `client`.
     def get(self, url, **kw):
-        return self.client.get(url, **kw)
+        return self.client.get(url, headers=self.headers, **kw)
 
     def post(self, url, **kw):
         return self.client.post(url, headers=self.headers, **kw)

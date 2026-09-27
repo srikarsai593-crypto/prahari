@@ -72,6 +72,52 @@ class TestReadinessScoring:
         assert next(i for i in result['items'] if i['label'] == 'Crew')['ok'] is True
 
 
+class TestTraverseFuelSelection:
+    """Which row a traverse draws from, now that a station holds two fuels.
+
+    Snowcats and generators run on diesel; the helicopter runs on aviation
+    turbine fuel. They are not interchangeable, and the selection used to be
+    "whichever row named *fuel* holds the most".
+    """
+
+    def test_a_traverse_draws_diesel_not_whichever_fuel_there_is_more_of(self, station):
+        # Put aviation fuel well above diesel, which is exactly the condition
+        # that would have loaded a snowcat with jet fuel.
+        station.set_quantity('inv-avtur', 50_000)
+        diesel_before = station.item('Diesel Fuel')['quantity']
+        aviation_before = station.item('Aviation Turbine Fuel')['quantity']
+
+        crew = [p['id'] for p in station.personnel()[:2]]
+        expedition = station.plan_expedition(personnel_required=2, fuel_required_l=1000,
+                                             crew_ids=crew)
+        station.json('patch', f'/expeditions/{expedition["id"]}', json={'status': 'active'})
+
+        assert station.item('Diesel Fuel')['quantity'] == diesel_before - 1000
+        assert station.item('Aviation Turbine Fuel')['quantity'] == aviation_before
+
+    def test_readiness_is_measured_against_diesel_alone(self, station):
+        """Aviation fuel sitting in the next tank does not make a traverse
+        viable. Counting it would report a station as resourced for a journey
+        it cannot make."""
+        station.set_quantity('inv-fuel', 500)
+        station.set_quantity('inv-avtur', 50_000)
+        result = station.json('post', '/expeditions/feasibility', json={
+            'station': 'Maitri', 'personnel_required': 2, 'fuel_required_l': 5000})
+        fuel = next(i for i in result['items'] if i['label'].startswith('Fuel'))
+        assert fuel['available'] == 500
+        assert fuel['ok'] is False
+
+    def test_calling_a_traverse_off_returns_the_diesel(self, station):
+        station.set_quantity('inv-avtur', 50_000)
+        before = station.item('Diesel Fuel')['quantity']
+        crew = [p['id'] for p in station.personnel()[:2]]
+        expedition = station.plan_expedition(personnel_required=2, fuel_required_l=1000,
+                                             crew_ids=crew)
+        station.patch(f'/expeditions/{expedition["id"]}', json={'status': 'active'})
+        station.patch(f'/expeditions/{expedition["id"]}', json={'status': 'cancelled'})
+        assert station.item('Diesel Fuel')['quantity'] == before
+
+
 class TestResupplyRecommender:
     def test_a_shortfall_names_the_inbound_consignment(self, station):
         """Telling a commander they are short and stopping there sends them to

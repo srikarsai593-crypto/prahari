@@ -47,7 +47,7 @@ async def reevaluate_expeditions(station: str, trigger: str, db=None) -> list[di
     expired hours ago.
     """
     from .models import FeasibilityRequest
-    from .routes.expeditions import score_feasibility
+    from .routes.expeditions import score_feasibility, station_snapshot
 
     db = db or get_db()
     placeholders = ','.join('?' * len(MONITORED_STATUSES))
@@ -55,6 +55,16 @@ async def reevaluate_expeditions(station: str, trigger: str, db=None) -> list[di
         f'SELECT * FROM expeditions WHERE station = ? AND status IN ({placeholders})',
         (station, *MONITORED_STATUSES)
     ).fetchall()
+    if not rows:
+        return []
+
+    # Everything the score depends on that is a property of the *station* -
+    # the fuel row, who is at base, what cargo is inbound, how many berths -
+    # is identical for every traverse departing from it. Reading it once and
+    # passing it in turns an N x 5-query fan-out into 5 queries plus N cheap
+    # comparisons, which matters because this runs after every write that
+    # moves station conditions.
+    snapshot = station_snapshot(db, station)
 
     degraded = []
     for row in rows:
@@ -64,8 +74,9 @@ async def reevaluate_expeditions(station: str, trigger: str, db=None) -> list[di
                 station=station,
                 personnel_required=expedition['personnel_required'] or 0,
                 fuel_required_l=expedition['fuel_required_l'] or 0,
+                start_date=expedition['start_date'], end_date=expedition['end_date'],
                 expedition_id=expedition['id'],
-            ), log=False)
+            ), log=False, snapshot=snapshot)
         except Exception:  # a scoring failure must not break the write that triggered it
             logger.exception('Readiness re-scoring failed for %s', expedition['id'])
             continue

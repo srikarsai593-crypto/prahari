@@ -7,12 +7,16 @@ from ..models import (ShipmentCreate, RiskUpdateRequest, StationWeatherRequest,
                       BarcodeScanRequest, Station)
 from ..events import log_event
 from ..ws_manager import manager
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..conditions import set_delta_t, get_delta_t, all_delta_t
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change, propagate_weather_change
 
-router = APIRouter(prefix='/shipments', tags=['shipments'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/shipments', tags=['shipments'],
+                   dependencies=[Depends(require_reader)])
 
 STATUS_ORDER = ['dispatched', 'in_transit', 'arrived', 'unloaded']
 CAPACITY_KG = 10000          # vessel capacity per shipment
@@ -133,7 +137,7 @@ def get_current_delta_t(station: Station = None):
     return {'stations': all_delta_t()}
 
 
-@router.post('/scan-barcode', dependencies=[Depends(require_key)])
+@router.post('/scan-barcode', dependencies=[Depends(require_key), Depends(guard_write)])
 async def scan_by_barcode(body: BarcodeScanRequest):
     return await _advance_shipment(barcode_id=body.barcode_id)
 
@@ -158,7 +162,7 @@ def get_shipment(shipment_id: str):
     return _serialise(row)
 
 
-@router.post('', dependencies=[Depends(require_key)])
+@router.post('', dependencies=[Depends(require_key), Depends(guard_write)])
 async def create_shipment(data: ShipmentCreate):
     """Register a consignment.
 
@@ -396,12 +400,12 @@ async def _advance_shipment(shipment_id: str = None, barcode_id: str = None):
             'old_status': current_status, 'new_status': new_status}
 
 
-@router.post('/{shipment_id}/scan', dependencies=[Depends(require_key)])
+@router.post('/{shipment_id}/scan', dependencies=[Depends(require_key), Depends(guard_write)])
 async def scan_shipment(shipment_id: str):
     return await _advance_shipment(shipment_id=shipment_id)
 
 
-@router.post('/{shipment_id}/beacon-ping', dependencies=[Depends(require_key)])
+@router.post('/{shipment_id}/beacon-ping', dependencies=[Depends(require_key), Depends(guard_write)])
 async def request_beacon_ping(shipment_id: str):
     """Log a satellite beacon interrogation for a consignment that has stalled.
 
@@ -531,7 +535,7 @@ async def _apply_station_weather(station: str, delta_t: float) -> dict:
             'degraded_expeditions': cascade['degraded_expeditions']}
 
 
-@router.post('/weather', dependencies=[Depends(require_key)])
+@router.post('/weather', dependencies=[Depends(require_key), Depends(guard_write)])
 async def apply_station_weather(req: StationWeatherRequest):
     """Set a station's blizzard load. Every active consignment to that station
     is re-scored, and Inventory re-runs its depletion curves against the same
@@ -539,7 +543,7 @@ async def apply_station_weather(req: StationWeatherRequest):
     return await _apply_station_weather(req.station, req.delta_t)
 
 
-@router.post('/{shipment_id}/risk', dependencies=[Depends(require_key)])
+@router.post('/{shipment_id}/risk', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_risk(shipment_id: str, req: RiskUpdateRequest):
     """Kept for the barcode/API path: applies the weather to the shipment's own
     destination station, which necessarily re-scores this shipment too."""

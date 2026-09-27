@@ -43,3 +43,4 @@ frontend/public/fonts/
 *.sw?
 .DS_Store
 Thumbs.db
+coverage/

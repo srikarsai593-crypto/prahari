@@ -41,6 +41,26 @@ export interface Telemetry {
   eta_at: string | null;
 }
 
+/** Who this browser is, as far as the station is concerned.
+ *
+ *  The console never holds the commander key - only whether it currently has a
+ *  valid session. The key is exchanged once at sign-in for an httpOnly cookie
+ *  that page script cannot read. */
+export interface SessionState {
+  authenticated: boolean;
+  actor: string | null;
+  via: 'session' | 'api_key' | null;
+  /** True on a kiosk deployment where reads are served anonymously. */
+  public_reads: boolean;
+  /** So the sign-in screen can offer the demo key where it is in use. */
+  demo_key_enabled: boolean;
+  /** The demo key itself, present only when it is the active key - in which
+   *  case it is public by definition. Sourced from the station rather than
+   *  hardcoded, so no credential-shaped literal ships in the bundle. */
+  demo_key: string | null;
+  server_time: string;
+}
+
 export type IncidentStatus = 'open' | 'resolved';
 
 export interface Incident {

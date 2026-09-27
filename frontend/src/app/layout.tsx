@@ -4,6 +4,8 @@ import './globals.css';
 import 'leaflet/dist/leaflet.css';
 
 import { WebSocketProvider } from '@/components/WebSocketProvider';
+import { SessionProvider } from '@/components/SessionProvider';
+import { LoginGate } from '@/components/LoginGate';
 import { StationProvider } from '@/components/StationProvider';
 import { ToastProvider } from '@/components/Toast';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -60,6 +62,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en"
           className={`${inter.variable} ${jetbrains.variable} ${plexMono.variable}`}>
       <body>
+        {/* Session first: the socket and every module below it are gated, so
+            there is nothing for them to do until the operator is signed in. */}
+        <SessionProvider>
+          <LoginGate>
         <WebSocketProvider>
           <StationProvider>
             <ToastProvider>
@@ -89,6 +95,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </ToastProvider>
           </StationProvider>
         </WebSocketProvider>
+          </LoginGate>
+        </SessionProvider>
       </body>
     </html>
   );

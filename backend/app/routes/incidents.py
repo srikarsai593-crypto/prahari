@@ -9,10 +9,14 @@ from ..seed import STATION_ORIGINS
 from ..events import log_event
 from ..ws_manager import manager
 from ..geo import haversine_distance
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..timeutil import utc_now_iso, to_utc_iso
 
-router = APIRouter(prefix='/incidents', tags=['incidents'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/incidents', tags=['incidents'],
+                   dependencies=[Depends(require_reader)])
 
 # In an emergency, only these statuses mean a person has been physically
 # verified at a known safe location. Everyone else is UNACCOUNTED until
@@ -178,7 +182,7 @@ def list_incidents(status: str = None,
 
 # NOTE: static sub-routes MUST be declared before /{incident_id}, otherwise
 # FastAPI matches the literal segment as a path parameter.
-@router.post('/power-failure', dependencies=[Depends(require_key)])
+@router.post('/power-failure', dependencies=[Depends(require_key), Depends(guard_write)])
 async def simulate_power_failure(body: PowerFailureRequest = PowerFailureRequest()):
     """Declare a station-wide power failure.
 
@@ -244,7 +248,7 @@ def list_assets(station: Optional[Station] = None):
     return [{**dict(r), 'updated_at': to_utc_iso(r['updated_at'])} for r in rows]
 
 
-@router.patch('/assets/{asset_id}', dependencies=[Depends(require_key)])
+@router.patch('/assets/{asset_id}', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_asset(asset_id: str, body: AssetUpdateRequest):
     """Update an asset's position or status when a snowcat or helicopter relocates."""
     db = get_db()
@@ -263,7 +267,7 @@ async def update_asset(asset_id: str, body: AssetUpdateRequest):
     return {**dict(row), 'lat': lat, 'lng': lng, 'status': status, 'updated_at': now}
 
 
-@router.patch('/assets/{asset_id}/dispatch', dependencies=[Depends(require_key)])
+@router.patch('/assets/{asset_id}/dispatch', dependencies=[Depends(require_key), Depends(guard_write)])
 async def dispatch_asset(asset_id: str, body: AssetDeployRequest):
     """Commit a search-and-rescue asset to an incident, or release it.
 
@@ -337,7 +341,7 @@ def get_incident_sop(incident_id: str):
             'completed': sum(1 for t in tasks if t['done']), 'total': len(tasks)}
 
 
-@router.patch('/{incident_id}/sop/{task_key}', dependencies=[Depends(require_key)])
+@router.patch('/{incident_id}/sop/{task_key}', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_incident_sop(incident_id: str, task_key: str, body: IncidentTaskRequest):
     """Tick or untick one protocol step, and put it in the audit timeline."""
     db = get_db()
@@ -387,7 +391,7 @@ def get_incident(incident_id: str):
     return d
 
 
-@router.post('', dependencies=[Depends(require_key)])
+@router.post('', dependencies=[Depends(require_key), Depends(guard_write)])
 async def create_incident(data: IncidentCreate):
     db = get_db()
     inc_id = 'inc-' + str(uuid.uuid4())[:8]
@@ -423,7 +427,7 @@ async def create_incident(data: IncidentCreate):
             'personnel_in_zone': personnel_list, **data.model_dump()}
 
 
-@router.patch('/{incident_id}', dependencies=[Depends(require_key)])
+@router.patch('/{incident_id}', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_incident(incident_id: str, body: IncidentUpdateRequest):
     db = get_db()
     row = db.execute('SELECT * FROM incidents WHERE id = ?', (incident_id,)).fetchone()

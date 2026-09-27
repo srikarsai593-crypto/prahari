@@ -17,6 +17,16 @@ const MAX_QUEUE_LENGTH = 200;
 /** Give up on a request that the server keeps rejecting. */
 const MAX_ATTEMPTS = 5;
 
+/**
+ * Client-error statuses that are about the *moment*, not the request.
+ *
+ * 401 means the session lapsed while the console was offline; 403 that the
+ * active station changed under it; 429 that the station is throttling. None of
+ * them are a judgement on the queued work, and all of them clear without the
+ * operator rewriting anything — so the work waits rather than being discarded.
+ */
+const RETRYABLE_STATUSES = new Set([401, 403, 408, 429]);
+
 type QueueListener = () => void;
 
 export interface FlushResult {
@@ -33,8 +43,10 @@ const NOTHING_TO_FLUSH: FlushResult = { flushed: 0, failed: 0, dropped: 0 };
 /**
  * Durable queue for mutations made while the station link is down.
  *
- * Headers are NOT persisted. They are rebuilt at flush time from the current
- * credentials — a stored key would both go stale and sit in localStorage.
+ * Nothing about the operator's identity is persisted. A replay carries the
+ * session cookie the browser already holds, so a queue drained after the
+ * session expired fails cleanly with a 401 rather than replaying under a stale
+ * credential that was sitting in localStorage.
  */
 class OfflineQueue {
   private queue: QueuedRequest[] = [];
@@ -149,12 +161,23 @@ class OfflineQueue {
           const response = await fetch(req.url, {
             method: req.method,
             headers,
+            // The session cookie rides on this. Without it every replay is
+            // anonymous, and a 401 in the branch below would discard the
+            // operator's offline work as "permanently rejected".
+            credentials: 'include',
             body: req.body,
           });
 
           if (response.ok) {
             this.queue.shift();
             flushed++;
+          } else if (RETRYABLE_STATUSES.has(response.status)) {
+            // Not a verdict on the request: the console is signed out, or the
+            // station is throttling. Both clear on their own, and dropping
+            // queued work over either one loses what an operator did offline.
+            req.attempts++;
+            req.lastError = `HTTP ${response.status}`;
+            break;
           } else if (response.status >= 400 && response.status < 500) {
             // Permanent: replaying will never succeed. Drop it, but keep the
             // reason so the operator can see what was lost.
@@ -195,6 +218,7 @@ class OfflineQueue {
         await fetch('/api/events/sync-report', {
           method: 'POST',
           headers,
+          credentials: 'include',
           body: JSON.stringify({
             flushed,
             dropped,

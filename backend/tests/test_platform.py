@@ -73,8 +73,26 @@ class TestWriteProtection:
 
     @pytest.mark.parametrize('url', ['/inventory', '/personnel', '/incidents',
                                      '/shipments', '/expeditions', '/events', '/geofences'])
-    def test_reads_are_open(self, station, url):
+    def test_reads_are_gated_too(self, station, url):
+        """The roster carries live positions for people in the field. Serving
+        that to anyone who knows the URL is not a defensible default."""
+        assert station.client.get(url).status_code == 401
+        assert station.get(url).status_code == 200
+
+    @pytest.mark.parametrize('url', ['/health', '/', '/auth/session'])
+    def test_the_service_surface_stays_open(self, station, url):
+        """A health check that needs a credential cannot be used by the thing
+        that is meant to notice the service is down."""
         assert station.client.get(url).status_code == 200
+
+    def test_reads_can_be_opened_for_a_kiosk(self, db_path, monkeypatch, offline_llm):
+        monkeypatch.setenv('PRAHARI_PUBLIC_READS', 'true')
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as client:
+            assert client.get('/inventory').status_code == 200
+            # Writes are not part of that bargain.
+            assert client.patch('/inventory/inv-fuel', json={'quantity': 1}).status_code == 401
 
 
 class TestCors:
@@ -106,6 +124,86 @@ class TestCors:
     def test_an_unlisted_origin_gets_no_grant(self, station):
         response = station.client.get('/inventory', headers={'Origin': 'http://evil.example'})
         assert 'access-control-allow-origin' not in response.headers
+
+
+class TestCorsScope:
+    """Which origins are allowed to call this API.
+
+    The default used to be a pattern admitting every `*.vercel.app` origin -
+    which is every project anyone has ever deployed there, not only this one.
+    """
+
+    def project_pattern(self, project='prahari'):
+        import re as _re
+        from app.main import _project_origin_regex
+        return _re.compile(_project_origin_regex(project))
+
+    @pytest.mark.parametrize('url', [
+        'https://prahari.vercel.app',                    # production
+        'https://prahari-abc123.vercel.app',             # a preview build
+        'https://prahari-git-main-someone.vercel.app',   # a branch preview
+    ])
+    def test_admits_this_projects_own_deployments(self, url):
+        assert self.project_pattern().match(url)
+
+    @pytest.mark.parametrize('url', [
+        'https://evil.vercel.app',           # somebody else entirely
+        'https://notprahari.vercel.app',     # not this project
+        'https://prahari.evil.com',          # not even Vercel
+        'http://prahari.vercel.app',         # not over TLS
+        'https://prahari.vercel.app.evil.com',
+    ])
+    def test_refuses_everything_else(self, url):
+        assert not self.project_pattern().match(url)
+
+    def test_there_is_no_pattern_unless_one_is_asked_for(self, monkeypatch):
+        """Closed by default. An origin list is the primary mechanism; the
+        pattern exists only because preview hostnames change per branch."""
+        from app.main import _cors_origin_regex
+        monkeypatch.delenv('PRAHARI_CORS_ORIGIN_REGEX', raising=False)
+        monkeypatch.delenv('PRAHARI_CORS_PROJECT', raising=False)
+        assert _cors_origin_regex() is None
+
+    def test_a_project_name_produces_a_scoped_pattern(self, monkeypatch):
+        from app.main import _cors_origin_regex
+        monkeypatch.delenv('PRAHARI_CORS_ORIGIN_REGEX', raising=False)
+        monkeypatch.setenv('PRAHARI_CORS_PROJECT', 'prahari')
+        pattern = _cors_origin_regex()
+        assert pattern and '.*' not in pattern
+
+    def test_an_explicit_regex_still_wins(self, monkeypatch):
+        """The escape hatch, for a deployment that is not on Vercel at all."""
+        from app.main import _cors_origin_regex
+        monkeypatch.setenv('PRAHARI_CORS_ORIGIN_REGEX', r'^https://console\.ncpor\.res\.in$')
+        monkeypatch.setenv('PRAHARI_CORS_PROJECT', 'prahari')
+        assert 'ncpor' in _cors_origin_regex()
+
+    def test_a_project_name_is_escaped_before_it_becomes_a_pattern(self):
+        """A slug is configuration, not a regex. Left unescaped, a dot in it
+        would match any character."""
+        assert not self.project_pattern('pra.ari').match('https://prahari.vercel.app')
+
+
+class TestStationFuels:
+    def test_each_station_holds_two_fuels(self, station):
+        """As a real base does: diesel for the snowcats and the generators,
+        aviation turbine fuel for the helicopter."""
+        for base in ('Maitri', 'Bharati', 'Himadri'):
+            names = {i['name'] for i in station.inventory(base)}
+            assert {'Diesel Fuel', 'Aviation Turbine Fuel'} <= names, base
+
+    def test_they_are_classified_the_same_way(self, station):
+        for item in station.inventory():
+            if 'Fuel' in item['name']:
+                assert item['risk_class'] == 'fuel', item['name']
+
+    def test_this_makes_the_word_fuel_genuinely_ambiguous(self, station):
+        """Which is the case the console's disambiguation chips exist for, and
+        which one fuel row per station made unreachable."""
+        result = station.json('post', '/inventory/command', json={
+            'transcript': 'Removed 200 litres of fuel', 'station': 'Maitri',
+            'dry_run': True})
+        assert len(result['ambiguous_matches']) == 2
 
 
 class TestAuditLog:
@@ -213,6 +311,68 @@ class TestStationReset:
         assert station.json('get', '/admin/counts')['open_incidents'] == 1
 
 
+class TestReferentialIntegrity:
+    """The database enforces what every caller would otherwise have to remember.
+
+    Protocol rows outliving the incident they belonged to was a real bug on
+    this branch, found only because a reset left them behind.
+    """
+
+    def test_protocol_rows_go_with_their_incident(self, station):
+        incident = station.declare_incident(type='fire')
+        station.patch(f'/incidents/{incident["id"]}/sop/klaxon', json={'done': True})
+        assert station.scalar('SELECT COUNT(*) FROM incident_tasks WHERE incident_id = ?',
+                              (incident['id'],)) > 0
+
+        station.db.execute('DELETE FROM incidents WHERE id = ?', (incident['id'],))
+        station.db.commit()
+
+        assert station.scalar('SELECT COUNT(*) FROM incident_tasks WHERE incident_id = ?',
+                              (incident['id'],)) == 0
+
+    def test_a_protocol_row_cannot_name_an_incident_that_does_not_exist(self, station):
+        import sqlite3
+        with pytest.raises(sqlite3.IntegrityError):
+            station.db.execute(
+                'INSERT INTO incident_tasks (incident_id, task_key, label) '
+                "VALUES ('inc-nonexistent', 'klaxon', 'Sound the klaxon')")
+            station.db.commit()
+        station.db.rollback()
+
+    def test_foreign_keys_are_actually_switched_on(self, station):
+        """SQLite defaults them off, so the constraint above is decoration
+        unless every connection enables it."""
+        assert station.scalar('PRAGMA foreign_keys') == 1
+
+
+class TestStationProfile:
+    def test_every_station_has_one(self, station):
+        recorded = {row[0] for row in
+                    station.db.execute('SELECT station FROM station_profile').fetchall()}
+        assert recorded == {'Maitri', 'Bharati', 'Himadri'}
+
+    def test_the_baseline_matches_the_seeded_roster(self, station):
+        for base in ('Maitri', 'Bharati', 'Himadri'):
+            nominal = station.scalar(
+                'SELECT nominal_headcount FROM station_profile WHERE station = ?', (base,))
+            assert nominal == len(station.personnel(base)), base
+
+    def test_berths_differ_by_station(self, station):
+        """One number for every base overstated capacity at the smaller
+        outposts."""
+        berths = {row[0]: row[1] for row in station.db.execute(
+            'SELECT station, berths FROM station_profile').fetchall()}
+        assert berths['Himadri'] < berths['Maitri'] < berths['Bharati']
+
+    def test_readiness_uses_the_recorded_berths(self, station):
+        recorded = station.scalar(
+            "SELECT berths FROM station_profile WHERE station = 'Himadri'")
+        result = station.json('post', '/expeditions/feasibility', json={
+            'station': 'Himadri', 'personnel_required': 1, 'fuel_required_l': 1})
+        beds = next(i for i in result['items'] if i['label'] == 'Beds at Base')
+        assert str(recorded) in beds['detail']
+
+
 class TestServiceSurface:
     def test_health_states_the_ai_posture_and_client_count(self, station):
         """The two facts an operator needs before trusting a demo."""
@@ -234,4 +394,4 @@ class TestServiceSurface:
         for url in ('/inventory/alerts', '/inventory/cross-station?item_name=fuel',
                     '/incidents/assets', '/personnel/movement-plans',
                     '/shipments/delta-t/current'):
-            assert station.client.get(url).status_code == 200, url
+            assert station.get(url).status_code == 200, url

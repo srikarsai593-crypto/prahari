@@ -15,6 +15,7 @@ import { PrahariLogo } from '@/components/PrahariLogo';
 import BlizzardCanvasLoader from '@/components/BlizzardCanvasLoader';
 import { EventTimeline } from '@/components/EventTimeline';
 import { StandingAlerts } from '@/components/StandingAlerts';
+import { PanelBoundary } from '@/components/PanelBoundary';
 import { useToast } from '@/components/Toast';
 import type {
   Personnel, Shipment, InventoryItem, Expedition, Incident, MovementPlan,
@@ -403,7 +404,11 @@ export default function Dashboard() {
       {/* Standing alerts sit above the figures they explain: a stock alert
           raised half an hour ago on another tab is otherwise invisible, and a
           weather-to-cargo-to-expedition chain has no home module at all. */}
-      {ready && <StandingAlerts stationId={stationId} />}
+      {ready && (
+        <PanelBoundary label="Standing alerts" compact>
+          <StandingAlerts stationId={stationId} />
+        </PanelBoundary>
+      )}
 
       {/* ── Operational status ───────────────────────────────────────────── */}
       <section aria-labelledby="status-heading">

@@ -10,6 +10,7 @@ import { useStation } from '@/components/StationProvider';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { MapView } from '@/components/MapView';
+import { PanelBoundary } from '@/components/PanelBoundary';
 import { MovementPlanDialog } from '@/components/MovementPlanDialog';
 import { Coordinate } from '@/components/Coordinate';
 import { TraverseProgress, TelemetryHud } from '@/components/TraverseTelemetry';
@@ -448,7 +449,12 @@ export default function PersonnelPage() {
 
         <div className="lg:col-span-2 subview-card rounded-2xl p-2 overflow-hidden"
              style={{ minHeight: 480 }}>
-          <MapView personnel={personnel} routes={routes} />
+          {/* Leaflet touches the DOM directly, so a tile or projection error
+              throws during render. Without this the roster, the status
+              controls and the SOS button go down with the map. */}
+          <PanelBoundary label="The map">
+            <MapView personnel={personnel} routes={routes} />
+          </PanelBoundary>
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, Globe, Pencil, RotateCw, ShieldAlert, Terminal, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useWebSocket } from '@/components/WebSocketProvider';
@@ -7,12 +7,13 @@ import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
 import { useStationConditions } from '@/lib/useStationConditions';
+import { useInventory, useStockCommand } from '@/lib/useInventory';
 import {
   CrossStationDialog, HeadcountChip, ThermalLoadControl,
   STOCK_STATE_LABEL, STOCK_STATE_STYLE, STOCK_STATE_TEXT, stateOf,
 } from '@/components/InventoryControls';
 import type {
-  InventoryItem, StockCommandResult, ExactCount, HeadcountBasis,
+  InventoryItem, ExactCount,
 } from '@/lib/types';
 
 const CATEGORIES = ['All', 'consumable', 'reusable'] as const;
@@ -25,20 +26,16 @@ export default function InventoryPage() {
   // badge, and a stock command applied against the wrong base is invisible.
   const { station, stationId, ready } = useStation();
 
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const { items: inventory, headcount, loading, reload: loadInventory } =
+    useInventory(stationId, ready);
+  const command = useStockCommand(stationId, () => void loadInventory());
+
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('All');
-  const [loading, setLoading] = useState(true);
-  const [transcript, setTranscript] = useState('');
-  const [parsing, setParsing] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [preview, setPreview] = useState<StockCommandResult | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [exactCount, setExactCount] = useState<ExactCount | null>(null);
   const [loadingExact, setLoadingExact] = useState(false);
   const [editQty, setEditQty] = useState<string | null>(null);
   const [savingQty, setSavingQty] = useState(false);
-  /** What the station's consumable burn rates are currently scaled against. */
-  const [headcount, setHeadcount] = useState<HeadcountBasis | null>(null);
   /** The item whose three-station comparison is open, if any. */
   const [comparing, setComparing] = useState<InventoryItem | null>(null);
   /** Per-item supply floor being edited in the detail panel. */
@@ -46,33 +43,16 @@ export default function InventoryPage() {
   const [savingPolicy, setSavingPolicy] = useState(false);
   const { deltaT } = useStationConditions(stationId);
 
-  const loadInventory = useCallback(async () => {
-    setLoading(true);
-    try {
-      // The headcount basis is fetched alongside the rows because it is what
-      // makes the days-of-cover figure traceable: a runway that halved because
-      // eight people arrived reads very differently from one halved by weather.
-      const [data, basis] = await Promise.allSettled([
-        api.listInventory({ station: stationId }),
-        api.getHeadcountBasis(stationId),
-      ]);
-      const items = data.status === 'fulfilled' && Array.isArray(data.value) ? data.value : [];
-      setInventory(items);
-      setHeadcount(basis.status === 'fulfilled' ? basis.value : null);
-      setSelectedItem((prev) => (prev ? items.find((i) => i.id === prev.id) ?? null : null));
-    } catch (e) {
-      console.error('Failed to load inventory:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [stationId]);
+  // Switching station invalidates anything that named the old one. The stock
+  // command's own preview is cleared by its hook.
+  useEffect(() => { setEditQty(null); setPolicyDraft(null); setComparing(null); }, [stationId]);
 
-  useEffect(() => { if (ready) void loadInventory(); }, [loadInventory, ready]);
-
-  // Switching station invalidates anything that named the old one.
+  // The selected row is re-read from each refresh, so the detail panel shows
+  // the figures the table does rather than a copy taken when it was clicked.
   useEffect(() => {
-    setPreview(null); setEditQty(null); setPolicyDraft(null); setComparing(null);
-  }, [stationId]);
+    setSelectedItem((previous) =>
+      (previous ? inventory.find((i) => i.id === previous.id) ?? null : null));
+  }, [inventory]);
 
   useEffect(() => {
     if (lastMessage && ['inventory_update', 'blizzard_update', 'shipment_update',
@@ -86,75 +66,39 @@ export default function InventoryPage() {
     [inventory, category],
   );
 
-  // ── Stock command: parse, then confirm ──────────────────────────────────────
-  /** Dry run — shows what the parser understood; writes nothing. */
+  // ── Stock command: parse, then confirm ─────────────────────────────────────
   const handleParse = async () => {
-    if (!transcript.trim()) return addToast('Enter a stock command first', 'warning');
-    setParsing(true);
-    setPreview(null);
-    try {
-      const res = await api.stockCommand(transcript, stationId, true);
-      setPreview(res);
-      if (res.error) addToast(res.error, 'warning');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : 'Stock command failed', 'alert');
-    } finally { setParsing(false); }
+    const { error } = await command.parse();
+    if (error) addToast(error, 'warning');
+    else if (command.preview?.error) addToast(command.preview.error, 'warning');
   };
 
-  /**
-   * Resolve an ambiguous parse by naming the exact row.
-   *
-   * The backend already returns every candidate; the page used to print them
-   * as a dead-end sentence and leave the commander to re-type the whole
-   * command with more precise wording.
-   */
   const handleDisambiguate = async (itemName: string) => {
-    const parsed = preview?.parsed;
-    const rewritten = parsed
-      ? `${parsed.action === 'increment' ? 'Added' : 'Removed'} ${parsed.quantity} `
-        + `${itemName}`
-      : itemName;
-    setTranscript(rewritten);
-    setParsing(true);
-    setPreview(null);
-    try {
-      const res = await api.stockCommand(rewritten, stationId, true);
-      setPreview(res);
-      if (res.error) addToast(res.error, 'warning');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : 'Stock command failed', 'alert');
-    } finally { setParsing(false); }
+    const { error } = await command.disambiguate(itemName);
+    if (error) addToast(error, 'alert');
   };
 
-  /** Second pass against the same text — this one writes. */
   const handleApply = async () => {
-    if (!preview || !transcript.trim()) return;
-    setApplying(true);
-    try {
-      const res = await api.stockCommand(transcript, stationId, false);
-      if (res.applied) {
-        addToast(`${station.label} · ${res.item_name} → ${res.new_quantity} ${res.unit ?? ''}`
-          , 'success');
-        // A clamped decrement means the station was asked for stock it did not
-        // have — that must not pass silently.
-        if (res.warning) addToast(res.warning, 'warning');
-        setTranscript('');
-        setPreview(null);
-      } else {
-        addToast(res.error || 'Nothing here matches that item', 'warning');
-        setPreview(res);
-      }
-      void loadInventory();
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : 'Stock command failed', 'alert');
-    } finally { setApplying(false); }
+    const { error, result } = await command.apply();
+    if (error) return addToast(error, 'alert');
+    if (result?.applied) {
+      addToast(`${station.label} · ${result.item_name} → ${result.new_quantity} `
+        + `${result.unit ?? ''}`, 'success');
+      // A clamped decrement means the station was asked for stock it did not
+      // have; that must not pass silently.
+      if (result.warning) addToast(result.warning, 'warning');
+    } else {
+      addToast(result?.error || 'Nothing here matches that item', 'warning');
+    }
   };
 
   // ── Manual quantity correction ─────────────────────────────────────────────
   const saveQuantity = async () => {
     if (!selectedItem || editQty === null) return;
     const qty = Number(editQty);
-    if (!Number.isFinite(qty) || qty < 0) return addToast('Enter a quantity of 0 or more', 'warning');
+    if (!Number.isFinite(qty) || qty < 0) {
+      return addToast('Enter a quantity of 0 or more', 'warning');
+    }
     setSavingQty(true);
     try {
       // The active station goes with the write: the backend rejects an edit
@@ -226,6 +170,7 @@ export default function InventoryPage() {
    */
   const coverColour = (item: InventoryItem) => STOCK_STATE_TEXT[stateOf(item)];
 
+  const { preview } = command;
   const parsed = preview?.parsed;
 
   return (
@@ -266,15 +211,15 @@ export default function InventoryPage() {
           <input
             type="text"
             placeholder="e.g. Removed 4 thermal blankets from Shed 2"
-            value={transcript}
-            onChange={(e) => { setTranscript(e.target.value); setPreview(null); }}
+            value={command.transcript}
+            onChange={(e) => command.setTranscript(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleParse(); } }}
             aria-label={`Stock command for ${station.label}`}
             className="flex-1"
           />
           <button className="btn-primary text-xs whitespace-nowrap" onClick={handleParse}
-                  disabled={parsing || applying}>
-            {parsing ? 'Checking…' : 'Preview'}
+                  disabled={command.busy}>
+            {command.parsing ? 'Checking…' : 'Preview'}
           </button>
         </div>
 
@@ -303,7 +248,7 @@ export default function InventoryPage() {
                           key={name}
                           type="button"
                           data-compact
-                          disabled={parsing}
+                          disabled={command.busy}
                           onClick={() => void handleDisambiguate(name)}
                           className="btn-secondary !min-h-0 !px-2.5 !py-1 text-2xs"
                         >
@@ -315,7 +260,7 @@ export default function InventoryPage() {
                 )}
               </div>
               <button type="button" data-compact aria-label="Discard preview"
-                      onClick={() => setPreview(null)}
+                      onClick={command.discard}
                       className="text-frost-muted hover:text-arctic-900 px-2 py-1 rounded-md
                                  hover:bg-white transition-colors">
                 <X size={14} aria-hidden="true" />
@@ -350,12 +295,12 @@ export default function InventoryPage() {
 
             <div className="flex justify-end gap-2 mt-4">
               <button type="button" className="btn-secondary text-13"
-                      onClick={() => setPreview(null)}>
+                      onClick={command.discard}>
                 Discard
               </button>
               <button type="button" className="btn-primary text-13" onClick={handleApply}
-                      disabled={applying || !preview.item_id}>
-                {applying ? 'Applying…' : `Apply to ${station.label}`}
+                      disabled={command.busy || !preview.item_id}>
+                {command.applying ? 'Applying…' : `Apply to ${station.label}`}
               </button>
             </div>
           </div>

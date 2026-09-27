@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.routes.inventory import (NOMINAL_HEADCOUNT, RISK_CLASS_POLICY, UNBOUNDED_COVER_DAYS,
+from app.routes.inventory import (RISK_CLASS_POLICY, UNBOUNDED_COVER_DAYS,
                                   compute_depletion, policy_for, risk_class)
 
 
@@ -154,8 +154,25 @@ class TestInventoryEndpoint:
 
     def test_headcount_basis_is_reported(self, station):
         basis = station.json('get', '/inventory/headcount/Maitri')
-        assert basis['headcount'] == NOMINAL_HEADCOUNT['Maitri']
+        assert basis['headcount'] == len(station.personnel())
         assert basis['factor'] == 1.0
+
+    def test_the_baseline_comes_from_the_station_not_a_constant(self, station):
+        """It used to live in a Python dict that desynchronised from the
+        roster the moment anyone was posted: the live count moved, the baseline
+        did not, and every consumable read as burning faster than nominal for
+        ever."""
+        recorded = station.scalar(
+            'SELECT nominal_headcount FROM station_profile WHERE station = ?', ('Maitri',))
+        assert recorded == len(station.personnel())
+        assert station.json('get', '/inventory/headcount/Maitri')['nominal_headcount']             == recorded
+
+    def test_a_station_with_no_profile_falls_back_to_leaving_the_rate_alone(self, station):
+        """Scaling by 1.0 is the honest answer when the baseline is unknown -
+        better than inventing a ratio against a number nobody recorded."""
+        station.db.execute("DELETE FROM station_profile WHERE station = 'Maitri'")
+        station.db.commit()
+        assert station.json('get', '/inventory/headcount/Maitri')['factor'] == 1.0
 
     def test_crew_leaving_on_a_traverse_slows_consumable_burn(self, station):
         """The cross-module wire: the roster is what the stores are feeding."""
@@ -286,16 +303,20 @@ class TestStockCommand:
         assert station.item('Diesel Fuel')['quantity'] == before - 200
 
     def test_an_ambiguous_item_is_refused_with_its_candidates(self, station):
-        station.db.execute(
-            "INSERT INTO inventory_items (id, name, category, station, quantity, unit, "
-            "base_burn_rate, beta) VALUES ('t-av', 'Aviation Turbine Fuel', 'consumable', "
-            "'Maitri', 3200, 'L', 90, 0.15)")
-        station.db.commit()
+        """Every station holds diesel and aviation turbine fuel, so "fuel" is
+        genuinely ambiguous and applying it to either one loses stock."""
         result = station.json('post', '/inventory/command', json={
             'transcript': 'Removed 200 litres of fuel',
             'station': 'Maitri', 'dry_run': True})
         assert result['applied'] is False
         assert sorted(result['ambiguous_matches']) == ['Aviation Turbine Fuel', 'Diesel Fuel']
+
+    def test_naming_the_exact_fuel_resolves_it(self, station):
+        result = station.json('post', '/inventory/command', json={
+            'transcript': 'Removed 200 litres of diesel fuel',
+            'station': 'Maitri', 'dry_run': True})
+        assert result['item_name'] == 'Diesel Fuel'
+        assert result.get('ambiguous_matches') is None
 
     def test_issuing_more_than_is_held_says_so_rather_than_clamping_silently(self, station):
         result = station.json('post', '/inventory/command', json={

@@ -1,7 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from ..auth import require_reader
 from ..database import get_db
 
-router = APIRouter(prefix='/geofences', tags=['geofences'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/geofences', tags=['geofences'],
+                   dependencies=[Depends(require_reader)])
 
 @router.get('')
 def list_geofences():

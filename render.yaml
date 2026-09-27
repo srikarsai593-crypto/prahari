@@ -9,13 +9,17 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
 
+      # ── Credentials ──────────────────────────────────────────────────────
       # The key every write endpoint checks, under the name the code reads
       # (app/auth.py). This was previously set as PRAHARI_COMMANDER_KEY, which
       # nothing read - so the service looked configured while actually falling
       # through to the public demo key below.
       #
-      # sync: false means Render prompts for the value instead of committing it
-      # here. A key in a public repository is not a key.
+      # sync: false means Render prompts for the value instead of committing
+      # it here. A key in a public repository is not a key.
+      #
+      # SET THIS BEFORE DEPLOYING. With the demo key disabled and no key
+      # configured, the backend refuses to boot rather than coming up open.
       - key: PRAHARI_API_KEY
         sync: false
 
@@ -24,11 +28,34 @@ services:
       - key: PRAHARI_ALLOW_DEMO_KEY
         value: "false"
 
-      # Exact origins allowed to call this API. Set this to the console's own
-      # hostname; without it the service falls back to a pattern that admits
-      # every *.vercel.app deployment, including ones that are not yours.
+      # Optional. Without it, session tokens are signed with a secret derived
+      # from the commander key, so rotating the key signs everybody out - which
+      # is usually what rotation is meant to mean. Set this only if you want
+      # sessions to survive a key rotation.
+      # - key: PRAHARI_SESSION_SECRET
+      #   sync: false
+
+      # ── Who may call this API ────────────────────────────────────────────
+      # The console's own hostname, exactly. This is the primary mechanism;
+      # set it to the production URL Vercel gives you, e.g.
+      #   https://prahari.vercel.app
       - key: PRAHARI_CORS_ORIGINS
         sync: false
+
+      # The Vercel *project* name, which also admits that project's preview
+      # deployments - their hostnames change per branch, so an exact list
+      # cannot keep up with them. Scoped to this project only: the previous
+      # default admitted every deployment on vercel.app, including other
+      # people's. Leave unset if you do not need previews to work.
+      - key: PRAHARI_CORS_PROJECT
+        sync: false
+
+      # ── Data exposure ────────────────────────────────────────────────────
+      # Left unset, and therefore false: the roster carries live positions for
+      # everyone in the field, so it is not served to anyone who knows the
+      # URL. Set to "true" only for a kiosk or a deliberately public demo.
+      # - key: PRAHARI_PUBLIC_READS
+      #   value: "false"
 
       - key: PRAHARI_LOG_LEVEL
         value: INFO

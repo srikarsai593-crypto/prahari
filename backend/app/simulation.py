@@ -104,7 +104,7 @@ def _parse_iso(value):
     return parsed.astimezone(timezone.utc)
 
 
-def get_telemetry(plan) -> dict | None:
+def get_telemetry(plan, track=None) -> dict | None:
     """Heading, ground speed, distance remaining and ETA for the current fix.
 
     Speed is derived from the authorised schedule rather than from wall-clock
@@ -112,7 +112,7 @@ def get_telemetry(plan) -> dict | None:
     has M fixes, so each fix represents N/(M-1) hours of travel. Timing it
     against the operator's 1.5 s tick would report a snowcat doing 12,000 km/h.
     """
-    track = _plan_track(plan)
+    track = _plan_track(plan) if track is None else track
     if len(track) < 2:
         return None
     step = min(plan['simulation_step'] or 0, len(track))
@@ -153,15 +153,34 @@ def get_telemetry(plan) -> dict | None:
     }
 
 
-def get_progress(personnel_id: str, db) -> dict | None:
-    """How far along the authorised track this person is."""
-    plan = get_latest_plan(personnel_id, db)
-    if not plan:
+def progress_for(plan, track=None) -> dict | None:
+    """How far along the authorised track this person is.
+
+    Takes the plan row rather than an id, and optionally a track that has
+    already been built. The roster renders progress and telemetry for every
+    person, and each of those used to re-query the plan and re-parse and
+    re-densify its route - three times the work, N times over.
+    """
+    if plan is None:
         return None
-    track = _plan_track(plan)
+    track = _plan_track(plan) if track is None else track
     step = min(plan['simulation_step'] or 0, len(track))
     return {'step': step, 'total': len(track),
             'percent': round(100 * step / len(track)) if track else 0}
+
+
+def playback_state(plan) -> dict:
+    """Progress and telemetry from a single parse of the plan's route."""
+    if plan is None:
+        return {'progress': None, 'telemetry': None}
+    track = _plan_track(plan)
+    return {'progress': progress_for(plan, track),
+            'telemetry': get_telemetry(plan, track)}
+
+
+def get_progress(personnel_id: str, db) -> dict | None:
+    """Convenience for callers that hold an id rather than the plan row."""
+    return progress_for(get_latest_plan(personnel_id, db))
 
 
 def reset_simulation(personnel_id: str, db) -> bool:

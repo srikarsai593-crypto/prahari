@@ -5,12 +5,16 @@ from ..models import (StockCommandRequest, InventoryUpdateRequest,
 from ..events import log_event
 from ..llm import parse_stock_command
 from ..ws_manager import manager
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..conditions import get_delta_t
 from ..timeutil import utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change
 
-router = APIRouter(prefix='/inventory', tags=['inventory'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/inventory', tags=['inventory'],
+                   dependencies=[Depends(require_reader)])
 
 # Above this, "days of cover" stops being a meaningful number and the UI should
 # show it as effectively unlimited rather than a 5-digit figure.
@@ -34,9 +38,11 @@ RISK_CLASS_POLICY = {
     'consumable':  {'critical_days': 15, 'warning_days': 30},
 }
 
-# Crew each station is provisioned for. Burn rates in the seed are the rate at
-# this headcount, so the ratio against the live roster is the scaling factor.
-NOMINAL_HEADCOUNT = {'Maitri': 6, 'Bharati': 5, 'Himadri': 3}
+# Fallback for a station with no profile row - a database that predates the
+# table, or a station added at runtime. Scaling by 1.0 is the honest answer
+# when the baseline is unknown: it leaves the seeded burn rate alone rather
+# than inventing a ratio against a number nobody recorded.
+DEFAULT_NOMINAL_HEADCOUNT = 1
 
 # Statuses that mean a person is eating, drinking and being kept warm by THIS
 # station's stores. Someone out on a traverse is carrying their own load.
@@ -84,7 +90,12 @@ def station_headcount(station: str, db=None) -> dict:
         f'AND status IN ({placeholders})',
         (station, *ON_STATION_STATUSES)
     ).fetchone()[0]
-    nominal = NOMINAL_HEADCOUNT.get(station) or 1
+    # Read from the station's own profile rather than a constant in this file,
+    # which silently desynchronised from the roster whenever anyone was posted.
+    profile = db.execute('SELECT nominal_headcount FROM station_profile WHERE station = ?',
+                         (station,)).fetchone()
+    nominal = (profile['nominal_headcount'] if profile else None) or present \
+        or DEFAULT_NOMINAL_HEADCOUNT
     # Floored: an empty station still runs its heating and its freezers, so the
     # burn rate does not fall to zero and report infinite cover.
     factor = max(0.25, present / nominal)
@@ -178,16 +189,16 @@ STOCK_ALERT_ACTION_PREFIX = 'CRITICAL STOCK ALERT'
 STOCK_ALERT_CLEARED_PREFIX = 'STOCK ALERT CLEARED'
 
 
-def _latest_alert_state(db, item_id: str) -> str | None:
-    """'raised', 'cleared' or None - the last thing said about this row."""
-    row = db.execute(
-        "SELECT action FROM events WHERE module = 'inventory' AND related_id = ? "
-        "AND (action LIKE ? OR action LIKE ?) ORDER BY seq DESC LIMIT 1",
-        (item_id, f'{STOCK_ALERT_ACTION_PREFIX}%', f'{STOCK_ALERT_CLEARED_PREFIX}%')
-    ).fetchone()
-    if not row:
-        return None
-    return 'raised' if row['action'].startswith(STOCK_ALERT_ACTION_PREFIX) else 'cleared'
+def _set_alert_state(db, item_id: str, state: str) -> None:
+    """Record whether this row's alert is standing.
+
+    Kept on the row rather than inferred from the audit log. The log is the
+    history of what was announced; asking it "is this still true?" meant a
+    query per item on every read, and got slower every time anything was
+    logged anywhere in the station.
+    """
+    db.execute('UPDATE inventory_items SET stock_alert_state = ? WHERE id = ?',
+               (state, item_id))
 
 
 async def evaluate_stock_alerts(station: str, db=None) -> list[dict]:
@@ -208,7 +219,8 @@ async def evaluate_stock_alerts(station: str, db=None) -> list[dict]:
         item = dict(row)
         computed = compute_depletion(item, delta_t, factor)
         breached = computed['stock_state'] == 'critical' or computed['is_below_minimum']
-        state = _latest_alert_state(db, item['id'])
+        # Read off the row that was already selected, not searched for.
+        state = item.get('stock_alert_state')
 
         if breached and state != 'raised':
             reason = (f'below its {float(item["minimum_threshold"]):g} {item["unit"] or ""} floor'
@@ -217,6 +229,7 @@ async def evaluate_stock_alerts(station: str, db=None) -> list[dict]:
             action = (f'{STOCK_ALERT_ACTION_PREFIX}: {item["name"]} at {station} is {reason} '
                       f'({computed["days_of_cover"]:g} days of cover, '
                       f'{item["quantity"]:g} {item["unit"] or ""} on hand)')
+            _set_alert_state(db, item['id'], 'raised')
             await log_event('inventory', action, 'stock_monitor', item['id'],
                             {'severity': 'critical', 'alert': 'low_stock', **computed},
                             station=station)
@@ -224,6 +237,7 @@ async def evaluate_stock_alerts(station: str, db=None) -> list[dict]:
                             'state': 'raised', 'days_of_cover': computed['days_of_cover'],
                             'unit': item['unit'], 'quantity': item['quantity']})
         elif not breached and state == 'raised':
+            _set_alert_state(db, item['id'], 'cleared')
             await log_event('inventory',
                             f'{STOCK_ALERT_CLEARED_PREFIX}: {item["name"]} at {station} is back '
                             f'above its buffer ({computed["days_of_cover"]:g} days of cover)',
@@ -235,25 +249,29 @@ async def evaluate_stock_alerts(station: str, db=None) -> list[dict]:
                             'unit': item['unit'], 'quantity': item['quantity']})
 
     if changed:
+        db.commit()
         await manager.broadcast({'type': 'inventory_alert',
                                  'data': {'station': station, 'changes': changed}})
     return changed
 
 
 def active_stock_alerts(station: str = None, db=None) -> list[dict]:
-    """Rows whose standing alert is currently raised, as the banner shows them."""
+    """Rows whose standing alert is currently raised, as the banner shows them.
+
+    One indexed query. This used to select every row and then scan the audit
+    log once per row to decide whether its alert still stood, so the dashboard
+    banner got slower every time anything was logged anywhere in the station.
+    """
     db = db or get_db()
-    query = 'SELECT * FROM inventory_items'
+    query = "SELECT * FROM inventory_items WHERE stock_alert_state = 'raised'"
     params: list = []
     if station:
-        query += ' WHERE station = ?'
+        query += ' AND station = ?'
         params.append(station)
     factor = _factor_cache(db)
     alerts = []
     for row in db.execute(query, params).fetchall():
         item = dict(row)
-        if _latest_alert_state(db, item['id']) != 'raised':
-            continue
         computed = compute_depletion(item, get_delta_t(item['station']), factor(item['station']))
         alerts.append({'item_id': item['id'], 'name': item['name'], 'station': item['station'],
                        'quantity': item['quantity'], 'unit': item['unit'],
@@ -299,7 +317,7 @@ def list_stock_alerts(station: Station = None):
     return active_stock_alerts(station)
 
 
-@router.post('/alerts/evaluate', dependencies=[Depends(require_key)])
+@router.post('/alerts/evaluate', dependencies=[Depends(require_key), Depends(guard_write)])
 async def run_stock_alert_evaluation(station: Station):
     """Re-run the threshold check for one station and return what changed."""
     changes = await evaluate_stock_alerts(station)
@@ -389,7 +407,7 @@ def exact_count(station: Station, item: str = None):
             'matched_rows': rows['n'], 'station': station, 'method': 'direct_sql_aggregate'}
 
 
-@router.post('/command', dependencies=[Depends(require_key)])
+@router.post('/command', dependencies=[Depends(require_key), Depends(guard_write)])
 async def process_stock_command(req: StockCommandRequest):
     """Apply a typed stock adjustment to ONE station's stock.
 
@@ -470,7 +488,7 @@ async def process_stock_command(req: StockCommandRequest):
     return response
 
 
-@router.patch('/{item_id}', dependencies=[Depends(require_key)])
+@router.patch('/{item_id}', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_item(item_id: str, body: InventoryUpdateRequest, station: Station = None):
     """Manual quantity correction, scoped to the console's active station.
 
@@ -506,7 +524,7 @@ async def update_item(item_id: str, body: InventoryUpdateRequest, station: Stati
                                       (item_id,)).fetchone())
 
 
-@router.patch('/{item_id}/policy', dependencies=[Depends(require_key)])
+@router.patch('/{item_id}/policy', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_item_policy(item_id: str, body: InventoryPolicyRequest):
     """Set this row's own supply floor.
 

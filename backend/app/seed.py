@@ -45,21 +45,32 @@ PERSONNEL = [
 # ── Stock ────────────────────────────────────────────────────────────────────
 # id, name, category, station, quantity, unit, base_burn_rate, beta
 #
-# Maitri's fuel is deliberately below the seeded expedition's requirement
+# Maitri's diesel is deliberately below the seeded expedition's requirement
 # (6500 L on hand vs 8000 L required) so the feasibility check has something
 # real to fail on.
+#
+# Every station holds two fuels, as a real base does: diesel for the snowcats
+# and the generators, and aviation turbine fuel for the helicopter. They are
+# not interchangeable, which is why traverses draw diesel *by name* rather
+# than by whichever fuel row happens to hold more. It also means "remove 200
+# litres of fuel" is genuinely ambiguous, which is the case the console's
+# disambiguation chips exist for and which one fuel row per station made
+# unreachable.
 INVENTORY = [
     ('inv-fuel',      'Diesel Fuel',        'consumable', 'Maitri',  6500, 'L',     350,  0.15),
+    ('inv-avtur',     'Aviation Turbine Fuel', 'consumable', 'Maitri', 4200, 'L',      60,  0.12),
     ('inv-med',       'Medical Supplies',   'consumable', 'Maitri',   120, 'units',   4,  0.05),
     ('inv-blankets',  'Thermal Blankets',   'reusable',   'Maitri',    45, 'units',   0.5, 0.02),
     ('inv-rations',   'Emergency Rations',  'consumable', 'Maitri',   800, 'kg',     25,  0.08),
 
     ('inv-bha-fuel',  'Diesel Fuel',        'consumable', 'Bharati', 9200, 'L',     280,  0.15),
+    ('inv-bha-avtur', 'Aviation Turbine Fuel', 'consumable', 'Bharati', 5100, 'L',     45,  0.12),
     ('inv-bha-med',   'Medical Supplies',   'consumable', 'Bharati',  180, 'units',   3,  0.05),
     ('inv-bha-rat',   'Emergency Rations',  'consumable', 'Bharati',  950, 'kg',     22,  0.08),
     ('inv-bha-parts', 'Generator Spares',   'reusable',   'Bharati',   30, 'units',   0.4, 0.02),
 
     ('inv-him-fuel',  'Diesel Fuel',        'consumable', 'Himadri', 3100, 'L',     140,  0.18),
+    ('inv-him-avtur', 'Aviation Turbine Fuel', 'consumable', 'Himadri', 1800, 'L',     30,  0.18),
     ('inv-him-med',   'Medical Supplies',   'consumable', 'Himadri',   75, 'units',   2,  0.05),
     ('inv-him-rat',   'Emergency Rations',  'consumable', 'Himadri',  420, 'kg',     12,  0.08),
 ]

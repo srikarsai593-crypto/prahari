@@ -54,6 +54,11 @@ class FeasibilityRequest(BaseModel):
     station: Station
     personnel_required: int = Field(ge=0, le=500)
     fuel_required_l: float = Field(ge=0, le=1_000_000)
+    # How long the station has to cover without the fuel this traverse takes
+    # with it. Optional: a planner sketching numbers has not picked dates yet,
+    # and the check falls back to a nominal duration rather than refusing.
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     # Scoring an existing expedition counts the crew already on it as
     # available — otherwise assigning people to a traverse made that same
     # traverse read as short-staffed.
@@ -439,6 +444,14 @@ class PowerFailureRequest(BaseModel):
 
 class ParseNLRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+class LoginRequest(BaseModel):
+    """The commander key, exchanged for a session cookie.
+
+    Bounded so a sign-in attempt cannot be used to push a megabyte through the
+    constant-time comparison."""
+    key: str = Field(min_length=1, max_length=256)
 
 
 class BarcodeScanRequest(BaseModel):

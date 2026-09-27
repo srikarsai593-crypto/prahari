@@ -146,6 +146,17 @@ def init_db():
         delta_t REAL NOT NULL DEFAULT 0,
         updated_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS station_profile (
+        -- Per-station facts that are configuration rather than telemetry.
+        -- nominal_headcount is the crew the station is provisioned for, and
+        -- the figure consumable burn rates are quoted against: it lived in a
+        -- Python dict that desynchronised from the roster the moment anyone
+        -- was added to it.
+        station TEXT PRIMARY KEY,
+        nominal_headcount INTEGER NOT NULL,
+        berths INTEGER NOT NULL,
+        updated_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS incident_tasks (
         -- One row per Standard Operating Procedure step an incident's response
         -- requires. The catalogue lives in code (routes/incidents.py) because
@@ -158,7 +169,11 @@ def init_db():
         done INTEGER NOT NULL DEFAULT 0,
         done_at TEXT,
         done_by TEXT,
-        PRIMARY KEY (incident_id, task_key)
+        PRIMARY KEY (incident_id, task_key),
+        -- The database enforces this rather than every future caller
+        -- remembering to: protocol rows outliving their incident was a real
+        -- bug on this branch, and foreign_keys=ON is already set.
+        FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS emergency_assets (
         id TEXT PRIMARY KEY,
@@ -172,6 +187,7 @@ def init_db():
     );
     ''')
     _run_migrations(conn)
+    _seed_station_profile(conn)
     _seed_emergency_assets(conn)
     conn.commit()
 
@@ -224,6 +240,27 @@ def _run_migrations(conn) -> None:
     _add_column(conn, 'inventory_items', 'minimum_threshold', 'REAL')
     _add_column(conn, 'inventory_items', 'safety_stock_days', 'REAL')
 
+    # Whether this row currently has a standing low-stock alert against it.
+    # The state used to be derived by scanning the audit log for the most
+    # recent alert row per item — one query per item on every read, growing
+    # with the log rather than with the stock. The log remains the history;
+    # this column is the current answer.
+    _add_column(conn, 'inventory_items', 'stock_alert_state', 'TEXT')
+    # Backfilled from the log, so an alert raised before this column existed
+    # is neither re-announced nor forgotten.
+    conn.execute(
+        "UPDATE inventory_items SET stock_alert_state = COALESCE(("
+        "  SELECT CASE WHEN e.action LIKE 'CRITICAL STOCK ALERT%' THEN 'raised'"
+        "              ELSE 'cleared' END"
+        "  FROM events e"
+        "  WHERE e.module = 'inventory' AND e.related_id = inventory_items.id"
+        "    AND (e.action LIKE 'CRITICAL STOCK ALERT%'"
+        "         OR e.action LIKE 'STOCK ALERT CLEARED%')"
+        "  ORDER BY e.seq DESC LIMIT 1"
+        "), 'cleared') WHERE stock_alert_state IS NULL")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_alert_state '
+                 'ON inventory_items(stock_alert_state, station)')
+
     # Which incident an asset is committed to. Without it "deployed" said that
     # a snowcat was out but not what it was out for, so releasing it was a
     # guess and two incidents could each believe they had it.
@@ -242,6 +279,28 @@ def _run_migrations(conn) -> None:
     conn.execute('UPDATE expeditions SET baseline_readiness_score = readiness_score '
                  'WHERE baseline_readiness_score IS NULL AND readiness_score IS NOT NULL')
 
+    # incident_tasks predates its foreign key on databases created earlier on
+    # this branch. SQLite cannot add one to an existing table, so the table is
+    # rebuilt; the rows are response-protocol ticks for incidents that are
+    # almost certainly closed, and they are re-materialised on next read.
+    has_fk = conn.execute(
+        "SELECT COUNT(*) FROM pragma_foreign_key_list('incident_tasks')").fetchone()[0]
+    if not has_fk:
+        conn.execute('DROP TABLE IF EXISTS incident_tasks')
+        conn.execute('''
+            CREATE TABLE incident_tasks (
+                incident_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                done INTEGER NOT NULL DEFAULT 0,
+                done_at TEXT,
+                done_by TEXT,
+                PRIMARY KEY (incident_id, task_key),
+                FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+            )
+        ''')
+
     # Legacy rows seeded before personnel had distinct coordinates stacked on a
     # single point, which rendered as one map marker for the whole roster.
     for lat, lng, pid in (
@@ -257,6 +316,26 @@ def _run_migrations(conn) -> None:
             'AND (current_lat IS NULL OR current_lng IS NULL OR current_lat = current_lng)',
             (lat, lng, pid)
         )
+    conn.commit()
+
+
+def _seed_station_profile(conn) -> None:
+    """The crew each station is provisioned for, and its berths.
+
+    Seeded from the roster itself rather than from a hand-maintained constant,
+    so the baseline a station's burn rates are quoted against cannot drift away
+    from the people actually posted there.
+    """
+    from .seed import PERSONNEL, STATION_ORIGINS
+
+    berths = {'Maitri': 40, 'Bharati': 47, 'Himadri': 25}
+    for station in STATION_ORIGINS:
+        roster = sum(1 for row in PERSONNEL if row[3] == station)
+        conn.execute(
+            'INSERT INTO station_profile (station, nominal_headcount, berths, updated_at) '
+            "VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+            'ON CONFLICT(station) DO UPDATE SET berths = excluded.berths',
+            (station, max(1, roster), berths.get(station, 25)))
     conn.commit()
 
 

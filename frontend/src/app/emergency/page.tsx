@@ -8,6 +8,7 @@ import { Coordinate } from '@/components/Coordinate';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { MapView } from '@/components/MapView';
+import { PanelBoundary } from '@/components/PanelBoundary';
 import { EventTimeline } from '@/components/EventTimeline';
 import { IncidentResponsePanel } from '@/components/IncidentResponsePanel';
 import type { Incident, Accountability, NearbyAsset } from '@/lib/types';
@@ -413,11 +414,13 @@ export default function EmergencyPage() {
               checklist, severity escalation, the perimeter, and dispatching
               the assets that used to be a read-only distance list. */}
           {focusIncident && (
-            <IncidentResponsePanel
+            <PanelBoundary label="The response panel" compact>
+              <IncidentResponsePanel
               incident={focusIncident}
-              assets={nearbyAssets}
-              onChanged={refreshResponse}
-            />
+                assets={nearbyAssets}
+                onChanged={refreshResponse}
+              />
+            </PanelBoundary>
           )}
 
           {/* Accountability — always says which incident it is counting. */}
@@ -466,13 +469,20 @@ export default function EmergencyPage() {
               <span className="text-frost-muted text-xs">Loading map data…</span>
             </div>
           ) : (
-            <MapView incidents={openIncidents} />
+            // During an incident the head-count and the resolve control are
+            // what an operator needs. Losing them because a map tile failed is
+            // the worst possible trade.
+            <PanelBoundary label="The incident map">
+              <MapView incidents={openIncidents} />
+            </PanelBoundary>
           )}
         </div>
 
         {/* ── Timeline ────────────────────────────────────────────────────── */}
         <div className="lg:col-span-1 overflow-hidden" style={{ maxHeight: 'calc(100vh - 200px)' }}>
-          <EventTimeline />
+          <PanelBoundary label="The audit timeline">
+            <EventTimeline />
+          </PanelBoundary>
         </div>
       </div>
     </div>

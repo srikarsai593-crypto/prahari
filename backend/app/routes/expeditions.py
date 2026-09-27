@@ -9,15 +9,29 @@ from ..ws_manager import manager
 from typing import Optional
 from ..events import log_event
 from ..llm import parse_expedition_nl
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change
 
-router = APIRouter(prefix='/expeditions', tags=['expeditions'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/expeditions', tags=['expeditions'],
+                   dependencies=[Depends(require_reader)])
 
-# Berths per station. Hard-coding one number for every station overstated
-# capacity at the smaller outposts.
+# Berths per station, with the same fallback as the rest of the profile. The
+# numbers live in station_profile so capacity and the burn-rate baseline are
+# maintained in one place rather than two files that can disagree.
+DEFAULT_BERTHS = 25
 STATION_CAPACITY = {'Maitri': 40, 'Bharati': 47, 'Himadri': 25}
+
+
+def station_berths(db, station: str) -> int:
+    row = db.execute('SELECT berths FROM station_profile WHERE station = ?',
+                     (station,)).fetchone()
+    if row and row['berths']:
+        return row['berths']
+    return STATION_CAPACITY.get(station, DEFAULT_BERTHS)
 
 # Weights for the composite readiness score. They sum to 1.0 and are returned
 # with the result so the number is auditable rather than a magic average.
@@ -40,6 +54,14 @@ CREW_EDITABLE_STATUSES = ('draft',)
 # What an expedition burns. Fuel leaves station stock when the traverse is
 # authorised (it is loaded onto the vehicles) and is returned if the traverse
 # is called off before it completes.
+#
+# Snowcats and generators run on diesel. A station also holds aviation turbine
+# fuel for the helicopter, and matching on "fuel" alone picked whichever row
+# happened to hold more - so the moment aviation stock exceeded diesel, a
+# traverse would have been loaded with jet fuel and the diesel reading would
+# not have moved.
+TRAVERSE_FUEL_MATCH = '%diesel%'
+# Fallback for a station whose diesel row is named something else entirely.
 FUEL_ITEM_MATCH = '%fuel%'
 
 
@@ -128,6 +150,97 @@ def _find_resupply(db, station: str, shortfall: float, unit: str,
     )
 
 
+# How long a traverse is assumed to be away when it does not say. Short enough
+# not to condemn an unplanned traverse on a technicality, long enough that the
+# reserve check is asking a real question.
+DEFAULT_TRAVERSE_DAYS = 7
+
+
+def _duration_days(req: FeasibilityRequest) -> float | None:
+    """How long the station has to cover without this fuel."""
+    if req.start_date and req.end_date:
+        try:
+            start = datetime.fromisoformat(req.start_date)
+            end = datetime.fromisoformat(req.end_date)
+            days = (end - start).days
+            if days > 0:
+                return float(days)
+        except (TypeError, ValueError):
+            pass
+    return float(DEFAULT_TRAVERSE_DAYS)
+
+
+def _reserve_detail(reserve_days, trip_days, ok: bool, burn, fuel_ok: bool) -> str:
+    if not fuel_ok:
+        return 'Not assessed - the traverse cannot be loaded yet'
+    if reserve_days is None or burn is None:
+        return 'No fuel burn recorded at this station'
+    weather = f' at the current burn rate ({burn["depletion_rate"]:,.0f} L/day)'
+    if ok:
+        return (f'{reserve_days:g} days of cover left after loading, against a '
+                f'{trip_days:g}-day traverse{weather}')
+    return (f'Only {reserve_days:g} days of cover left after loading, and the traverse is '
+            f'away {trip_days:g}{weather} - the station runs dry before it returns')
+
+
+def station_snapshot(db, station: str) -> dict:
+    """Everything a readiness score depends on that belongs to the station.
+
+    Read once per scoring run rather than once per traverse. The figures are
+    identical for every expedition departing the same base, and this runs after
+    every write that moves station conditions, so the difference between five
+    queries and five-times-N is the difference between a cascade that is free
+    and one an operator notices.
+    """
+    unassigned = db.execute(
+        "SELECT COUNT(*) FROM personnel WHERE status IN ('at_station', 'returned') "
+        'AND station = ? AND expedition_id IS NULL', (station,)
+    ).fetchone()[0]
+
+    # How many available people each traverse has already committed, so a
+    # traverse can count its own crew without a query of its own.
+    committed = {
+        row['expedition_id']: row['n'] for row in db.execute(
+            "SELECT expedition_id, COUNT(*) AS n FROM personnel "
+            "WHERE status IN ('at_station', 'returned') AND station = ? "
+            'AND expedition_id IS NOT NULL GROUP BY expedition_id', (station,)
+        ).fetchall()
+    }
+
+    occupied = db.execute(
+        "SELECT COUNT(*) FROM personnel WHERE status IN ('at_station', 'field', 'in_transit') "
+        'AND station = ?', (station,)
+    ).fetchone()[0]
+
+    pending = db.execute(
+        'SELECT eta, status, delay_reason FROM shipments '
+        "WHERE destination_station = ? AND status NOT IN ('arrived', 'unloaded') "
+        'ORDER BY eta', (station,)
+    ).fetchall()
+
+    # What the station is burning right now, so a traverse can be judged
+    # against the conditions it would actually depart into rather than against
+    # a tank reading taken in calm weather.
+    from ..conditions import get_delta_t
+    from .inventory import compute_depletion, station_headcount
+
+    fuel_row = _station_fuel_row(db, station)
+    burn = compute_depletion(dict(fuel_row), get_delta_t(station),
+                             station_headcount(station, db)['factor']) if fuel_row else None
+
+    return {
+        'station': station,
+        'unassigned_crew': unassigned,
+        'committed_crew': committed,
+        'occupied_berths': occupied,
+        'berths': station_berths(db, station),
+        'fuel_row': fuel_row,
+        'fuel_burn': burn,
+        'pending_cargo': pending,
+        'delayed_cargo': [s for s in pending if s['status'] == 'delayed'],
+    }
+
+
 def _crew_for(db, expedition_id: str) -> list[dict]:
     rows = db.execute(
         'SELECT id, name, role, status, station FROM personnel WHERE expedition_id = ? '
@@ -162,13 +275,20 @@ def _with_crew(db, row) -> dict:
 
 
 def _station_fuel_row(db, station: str):
-    """The station's fuel stock row. Expeditions are costed in litres, so a
-    row counted in anything else is not the one to draw from."""
-    return db.execute(
-        "SELECT * FROM inventory_items WHERE station = ? AND LOWER(name) LIKE ? "
-        "AND LOWER(COALESCE(unit, '')) = 'l' ORDER BY quantity DESC LIMIT 1",
-        (station, FUEL_ITEM_MATCH)
-    ).fetchone()
+    """The row a traverse actually draws from.
+
+    Diesel by name, not "whichever fuel row holds the most". Expeditions are
+    costed in litres, so a row counted in anything else is not the one to draw
+    from either.
+    """
+    def _match(pattern):
+        return db.execute(
+            "SELECT * FROM inventory_items WHERE station = ? AND LOWER(name) LIKE ? "
+            "AND LOWER(COALESCE(unit, '')) = 'l' ORDER BY quantity DESC LIMIT 1",
+            (station, pattern)
+        ).fetchone()
+
+    return _match(TRAVERSE_FUEL_MATCH) or _match(FUEL_ITEM_MATCH)
 
 
 def _validate_crew(db, crew_ids: list[str], station: str, expedition_id: str | None):
@@ -251,7 +371,7 @@ def get_expedition(expedition_id: str):
     return _with_crew(db, row)
 
 
-@router.post('', dependencies=[Depends(require_key)])
+@router.post('', dependencies=[Depends(require_key), Depends(guard_write)])
 async def create_expedition(data: ExpeditionCreate):
     if data.start_date and data.end_date and data.end_date < data.start_date:
         raise HTTPException(status_code=422, detail='end_date cannot be before start_date')
@@ -283,7 +403,7 @@ async def create_expedition(data: ExpeditionCreate):
                                      (exp_id,)).fetchone())
 
 
-@router.patch('/{expedition_id}/crew', dependencies=[Depends(require_key)])
+@router.patch('/{expedition_id}/crew', dependencies=[Depends(require_key), Depends(guard_write)])
 async def set_expedition_crew(expedition_id: str, body: ExpeditionCrewRequest):
     """Set the named roster for a traverse that has not departed."""
     db = get_db()
@@ -319,7 +439,7 @@ async def set_expedition_crew(expedition_id: str, body: ExpeditionCrewRequest):
                                      (expedition_id,)).fetchone())
 
 
-@router.post('/parse-nl', dependencies=[Depends(require_key)])
+@router.post('/parse-nl', dependencies=[Depends(require_key), Depends(guard_write)])
 async def parse_natural_language(body: ParseNLRequest):
     result = await parse_expedition_nl(body.text)
     # parse_source is the honest signal: 'gemini'/'ollama' means a model ran,
@@ -333,7 +453,8 @@ async def check_feasibility(req: FeasibilityRequest) -> FeasibilityResponse:
     return await score_feasibility(req, log=True)
 
 
-async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> FeasibilityResponse:
+async def score_feasibility(req: FeasibilityRequest, log: bool = True,
+                            snapshot: dict = None) -> FeasibilityResponse:
     """The scoring itself, separated from the route.
 
     `log` is False when the cascade re-scores in the background: a continuous
@@ -342,36 +463,51 @@ async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> Feasib
     function rather than of the endpoint because FastAPI would otherwise expose
     it as a query parameter and let any caller silently suppress the audit
     trail for a readiness check.
+
+    `snapshot` is the station-level state this score depends on, read once by
+    a caller that is about to score several traverses from the same base. It
+    is identical for all of them, so re-reading it per traverse turned a
+    routine re-scoring into an N x 5-query fan-out.
     """
     db = get_db()
+    state = snapshot if snapshot is not None else station_snapshot(db, req.station)
 
     # ── Personnel: who is actually available to be assigned ──────────────────
     # Scoped to the departure station. Counting all three stations' crew let an
     # under-staffed outpost read as fully resourced on another station's people.
     # People already named on THIS traverse still count as available to it —
     # otherwise assigning crew made the same traverse read as short-staffed.
-    available_personnel = db.execute(
-        "SELECT COUNT(*) FROM personnel WHERE status IN ('at_station', 'returned') "
-        'AND station = ? AND (expedition_id IS NULL OR expedition_id = ?)',
-        (req.station, req.expedition_id)
-    ).fetchone()[0]
+    # Crew already named on THIS traverse still count as available to it -
+    # otherwise assigning people made the same traverse read as short-staffed.
+    available_personnel = (state['unassigned_crew']
+                           + state['committed_crew'].get(req.expedition_id, 0))
     personnel_ok = available_personnel >= req.personnel_required
 
-    # ── Fuel: on-hand stock at the departure station ─────────────────────────
-    fuel_row = _station_fuel_row(db, req.station)
+    # ── Fuel: enough to load, and enough left behind to outlast the trip ─────
+    # The second half is what makes a blizzard reach an expedition. Weather
+    # does not take litres out of the tank, it raises the rate they leave it,
+    # so a check that only asks "is there enough right now" is blind to the
+    # conditions the traverse would depart into.
+    fuel_row = state['fuel_row']
     available_fuel = fuel_row['quantity'] if fuel_row else 0
     fuel_ok = available_fuel >= req.fuel_required_l
+
+    burn = state.get('fuel_burn')
+    trip_days = _duration_days(req)
+    reserve_days = None
+    reserve_ok = True
+    if fuel_ok and burn and trip_days and burn['depletion_rate'] > 0:
+        # What the station is left holding once the traverse has loaded.
+        remaining = available_fuel - req.fuel_required_l
+        reserve_days = round(remaining / burn['depletion_rate'], 1)
+        reserve_ok = reserve_days >= trip_days
 
     # ── Cargo: inbound resupply is a POSITIVE, not a blocker ─────────────────
     # The previous rule was `ok = (there are no pending shipments)`, which marked
     # an expedition *less* feasible precisely because resupply was on its way.
     # What actually matters is whether any inbound cargo is stuck.
-    pending = db.execute(
-        "SELECT eta, status, delay_reason FROM shipments "
-        "WHERE destination_station = ? AND status NOT IN ('arrived', 'unloaded') "
-        "ORDER BY eta", (req.station,)
-    ).fetchall()
-    delayed = [s for s in pending if s['status'] == 'delayed']
+    pending = state['pending_cargo']
+    delayed = state['delayed_cargo']
     cargo_ok = not delayed
     if not pending:
         cargo_detail = 'No inbound shipments - operating on stock in hand'
@@ -382,12 +518,8 @@ async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> Feasib
         cargo_detail = f'{len(pending)} inbound, earliest ETA {to_utc_iso(pending[0]["eta"])}'
 
     # ── Station capacity: berths at the destination ──────────────────────────
-    station_capacity = STATION_CAPACITY.get(req.station, 25)
-    current_at_station = db.execute(
-        "SELECT COUNT(*) FROM personnel WHERE status IN ('at_station', 'field', 'in_transit') "
-        "AND station = ?", (req.station,)
-    ).fetchone()[0]
-    remaining_berths = station_capacity - current_at_station
+    station_capacity = state['berths']
+    remaining_berths = station_capacity - state['occupied_berths']
     station_ok = req.personnel_required <= remaining_berths
 
     items = [
@@ -405,6 +537,11 @@ async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> Feasib
                             resupply=None if fuel_ok else _find_resupply(
                                 db, req.station, req.fuel_required_l - available_fuel, 'L',
                                 fuel_row['id'] if fuel_row else None, 'fuel')),
+        FeasibilityLineItem(label='Station Reserve', required=trip_days or 0,
+                            available=reserve_days if reserve_days is not None else 0,
+                            ok=reserve_ok,
+                            detail=_reserve_detail(reserve_days, trip_days, reserve_ok,
+                                                   burn, fuel_ok)),
         FeasibilityLineItem(label='Inbound Supplies', required=0, available=len(pending),
                             ok=cargo_ok, detail=cargo_detail),
         FeasibilityLineItem(label='Beds at Base', required=req.personnel_required,
@@ -415,6 +552,11 @@ async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> Feasib
     # Sub-scores are ratios clamped to 0..100.
     p_score = min(100, int((available_personnel / max(req.personnel_required, 1)) * 100))
     i_score = min(100, int((available_fuel / max(req.fuel_required_l, 1)) * 100))
+    if not reserve_ok and reserve_days is not None and trip_days:
+        # Having the fuel and not being able to spare it is a real constraint,
+        # so it moves the score rather than only flipping a line item. Scaled
+        # by how far short the reserve falls, not a flat penalty.
+        i_score = min(i_score, max(0, int((reserve_days / trip_days) * 100)))
     m_score = 100 if cargo_ok else 60
     l_score = min(100, int((max(0, remaining_berths) / max(req.personnel_required, 1)) * 100))
     breakdown = {'personnel': p_score, 'inventory': i_score,
@@ -432,7 +574,7 @@ async def score_feasibility(req: FeasibilityRequest, log: bool = True) -> Feasib
                                readiness_breakdown=breakdown)
 
 
-@router.post('/{expedition_id}/rescore', dependencies=[Depends(require_key)])
+@router.post('/{expedition_id}/rescore', dependencies=[Depends(require_key), Depends(guard_write)])
 async def rescore_expedition(expedition_id: str):
     """Re-run readiness for one traverse and adopt the result as its new baseline.
 
@@ -449,6 +591,7 @@ async def rescore_expedition(expedition_id: str):
         station=row['station'],
         personnel_required=row['personnel_required'] or 0,
         fuel_required_l=row['fuel_required_l'] or 0,
+        start_date=row['start_date'], end_date=row['end_date'],
         expedition_id=expedition_id,
     ), log=False)
 
@@ -478,7 +621,7 @@ async def rescore_expedition(expedition_id: str):
     return updated
 
 
-@router.patch('/{expedition_id}', dependencies=[Depends(require_key)])
+@router.patch('/{expedition_id}', dependencies=[Depends(require_key), Depends(guard_write)])
 async def update_expedition_status(expedition_id: str, body: ExpeditionStatusRequest):
     """Move an expedition through its lifecycle, and move what it consumes.
 
@@ -522,6 +665,7 @@ async def update_expedition_status(expedition_id: str, body: ExpeditionStatusReq
             station=station,
             personnel_required=required,
             fuel_required_l=fuel_needed,
+            start_date=row['start_date'], end_date=row['end_date'],
             expedition_id=expedition_id,
         ))
         short = [i.label for i in feasibility.items if not i.ok]

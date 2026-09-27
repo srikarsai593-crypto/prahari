@@ -1,0 +1,95 @@
+name: CI
+
+# Tests nobody runs are documentation. This runs them on every push and on
+# every pull request into main, so a regression is caught by the repository
+# rather than by an operator during a demo.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'        # Mondays, 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  # A new push supersedes the run in flight for the same ref.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend · pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install
+        working-directory: backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Test
+        working-directory: backend
+        # No key and no network: the suite stubs the LLM chain and each test
+        # gets its own throwaway database, so nothing here depends on secrets.
+        env:
+          PRAHARI_ALLOW_DEMO_KEY: 'true'
+        run: pytest
+
+  frontend:
+    name: Frontend · types, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: frontend
+        run: npm run test
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  mutations:
+    name: Backend · mutation check
+    runs-on: ubuntu-latest
+    # Deliberately not on every push. It reintroduces known bugs one at a time
+    # and runs the whole suite against each, so it costs roughly N times a
+    # normal run. Weekly, and on demand, is the right cadence for asking
+    # "do these tests still have teeth?".
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install
+        working-directory: backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Reintroduce known bugs and require the suite to catch each
+        working-directory: backend
+        env:
+          PRAHARI_ALLOW_DEMO_KEY: 'true'
+        run: python -m tests.mutations

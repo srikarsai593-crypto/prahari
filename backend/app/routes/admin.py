@@ -13,11 +13,15 @@ from ..database import get_db
 from ..models import ResetRequest
 from ..events import log_event
 from ..ws_manager import manager
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..seed import seed_data, PERSONNEL, STATION_ORIGINS
 from ..conditions import set_delta_t
 
-router = APIRouter(prefix='/admin', tags=['admin'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/admin', tags=['admin'],
+                   dependencies=[Depends(require_reader)])
 
 # Operational state — everything an exercise creates. The reference tables
 # (personnel, inventory, geofences, emergency assets) are re-seeded rather than
@@ -37,7 +41,7 @@ def operational_counts():
     return counts
 
 
-@router.post('/reset', dependencies=[Depends(require_key)])
+@router.post('/reset', dependencies=[Depends(require_key), Depends(guard_write)])
 async def reset_station(body: ResetRequest):
     """Clear operational records and restore the seeded baseline.
 

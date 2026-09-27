@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { LogOut } from 'lucide-react';
 import { offlineQueue } from '@/lib/offlineQueue';
 import { useEffect, useState } from 'react';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
 import { useWebSocket } from '@/components/WebSocketProvider';
+import { useSession } from '@/components/SessionProvider';
 
 /**
  * Tier 3 — the primary module navigation band.
@@ -17,6 +19,7 @@ import { useWebSocket } from '@/components/WebSocketProvider';
 export function PortalNav() {
   const pathname = usePathname();
   const { connected } = useWebSocket();
+  const { authenticated, signOut } = useSession();
   const [pending, setPending] = useState(0);
   const [offline, setOffline] = useState(false);
 
@@ -67,13 +70,32 @@ export function PortalNav() {
           })}
         </div>
 
-        <div className={`flex items-center gap-2 font-mono text-xs font-bold
-                         tracking-caps shrink-0 ${link.text}`}
-             title={link.label}>
-          <span className={`w-2 h-2 rounded-full shrink-0 ${link.dot}`} aria-hidden="true" />
-          <span className="hidden xl:inline">{link.label}</span>
-          <span className="xl:hidden">{link.short}</span>
-          <span className="sr-only">Station link status: {link.label}</span>
+        <div className="flex items-center gap-3 shrink-0">
+          <div className={`flex items-center gap-2 font-mono text-xs font-bold
+                           tracking-caps ${link.text}`}
+               title={link.label}>
+            <span className={`w-2 h-2 rounded-full shrink-0 ${link.dot}`} aria-hidden="true" />
+            <span className="hidden xl:inline">{link.label}</span>
+            <span className="xl:hidden">{link.short}</span>
+            <span className="sr-only">Station link status: {link.label}</span>
+          </div>
+
+          {/* A console left signed in on a shared terminal is the other half
+              of taking the key out of the bundle. */}
+          {authenticated && (
+            <button
+              type="button"
+              data-compact
+              onClick={() => void signOut()}
+              title="End this station session"
+              className="flex items-center gap-1.5 font-mono text-2xs font-bold tracking-caps
+                         uppercase text-frost-muted hover:text-emergency transition-colors
+                         border-l border-frost-border pl-3"
+            >
+              <LogOut size={12} aria-hidden="true" />
+              <span className="hidden lg:inline">Sign out</span>
+            </button>
+          )}
         </div>
       </div>
     </nav>

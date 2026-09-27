@@ -2,12 +2,16 @@ from fastapi import APIRouter, Depends, Query
 from typing import Optional
 from ..database import get_db
 from ..events import log_event
-from ..auth import require_key
+from ..ratelimit import guard_write
+from ..auth import require_key, require_reader
 from ..models import Station, SyncReportRequest
 from ..timeutil import to_utc_iso
 import json
 
-router = APIRouter(prefix='/events', tags=['events'])
+# Reads are gated at the router, so a route added later inherits the gate
+# instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
+router = APIRouter(prefix='/events', tags=['events'],
+                   dependencies=[Depends(require_reader)])
 
 
 @router.get('')
@@ -63,7 +67,7 @@ def list_events(module: str = None,
 # so that gets a narrow endpoint with a fixed shape instead.
 
 
-@router.post('/sync-report', dependencies=[Depends(require_key)])
+@router.post('/sync-report', dependencies=[Depends(require_key), Depends(guard_write)])
 async def report_queue_sync(body: SyncReportRequest):
     """Record that a console drained its offline queue.
 
