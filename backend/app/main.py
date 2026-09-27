@@ -71,9 +71,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
+    allow_origin_regex=os.getenv('PRAHARI_CORS_ORIGIN_REGEX', r'^https:\/\/.*\.vercel\.app$'),
     allow_credentials=True,
     allow_methods=['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allow_headers=['Content-Type', 'X-Commander-Key'],
+    allow_headers=['*'],
 )
 
 for router in (expeditions, shipments, inventory, personnel, incidents,
