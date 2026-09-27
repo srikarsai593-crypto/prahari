@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, JetBrains_Mono, IBM_Plex_Mono } from 'next/font/google';
+import { Outfit, JetBrains_Mono, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 import 'leaflet/dist/leaflet.css';
 
@@ -18,10 +18,10 @@ import { PortalFooter } from '@/components/PortalFooter';
 
 // Self-hosted by next/font at build time — no runtime CDN call, which matters
 // for a console that is expected to run on a station link that drops.
-const inter = Inter({
+const outfit = Outfit({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
-  variable: '--font-inter',
+  weight: ['300', '400', '500', '600', '700', '800'],
+  variable: '--font-outfit',
   display: 'swap',
 });
 
@@ -60,7 +60,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en"
-          className={`${inter.variable} ${jetbrains.variable} ${plexMono.variable}`}>
+          className={`${outfit.variable} ${jetbrains.variable} ${plexMono.variable}`}>
       <body>
         {/* Session first: the socket and every module below it are gated, so
             there is nothing for them to do until the operator is signed in. */}
