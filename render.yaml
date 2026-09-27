@@ -23,7 +23,7 @@ services:
       - key: PRAHARI_API_KEY
         sync: false
 
-      # Leave false. True admits the published demo key 'prahari-demo-2024',
+      # Leave false. True admits the published demo key 'prahari-demo-2026',
       # which anyone reading this repository can use to write to the station.
       - key: PRAHARI_ALLOW_DEMO_KEY
         value: "false"

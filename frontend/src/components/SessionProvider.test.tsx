@@ -14,7 +14,7 @@ import type { SessionState } from '@/lib/types';
 
 const signedOut: SessionState = {
   authenticated: false, actor: null, via: null,
-  public_reads: false, demo_key_enabled: true, demo_key: 'prahari-demo-2024',
+  public_reads: false, demo_key_enabled: true, demo_key: 'prahari-demo-2026',
   server_time: '2026-09-27T10:00:00.000Z',
 };
 const signedIn: SessionState = { ...signedOut, authenticated: true, actor: 'commander',
@@ -79,11 +79,11 @@ describe('signing in', () => {
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
-    await userEvent.type(screen.getByLabelText(/commander key/i), 'prahari-demo-2024');
+    await userEvent.type(screen.getByLabelText(/commander key/i), 'prahari-demo-2026');
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
     await waitFor(() => expect(screen.getByText('console for commander')).toBeInTheDocument());
-    expect(api.login).toHaveBeenCalledWith('prahari-demo-2024');
+    expect(api.login).toHaveBeenCalledWith('prahari-demo-2026');
     expect(session).toHaveBeenCalledTimes(2);
   });
 
@@ -93,12 +93,12 @@ describe('signing in', () => {
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
     const field = screen.getByLabelText(/commander key/i) as HTMLInputElement;
 
-    await userEvent.type(field, 'prahari-demo-2024');
+    await userEvent.type(field, 'prahari-demo-2026');
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
     await waitFor(() => expect(screen.getByText('console for commander')).toBeInTheDocument());
     expect(window.localStorage.getItem('prahari_commander_key')).toBeNull();
-    expect(JSON.stringify(window.localStorage)).not.toContain('prahari-demo-2024');
+    expect(JSON.stringify(window.localStorage)).not.toContain('prahari-demo-2026');
   });
 
   it('masks the field so the key is not shoulder-read', async () => {
@@ -134,8 +134,8 @@ describe('signing in', () => {
   it('offers the demo key only where the station says it is in use', async () => {
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
-    await userEvent.click(screen.getByRole('button', { name: 'prahari-demo-2024' }));
-    expect(screen.getByLabelText(/commander key/i)).toHaveValue('prahari-demo-2024');
+    await userEvent.click(screen.getByRole('button', { name: 'prahari-demo-2026' }));
+    expect(screen.getByLabelText(/commander key/i)).toHaveValue('prahari-demo-2026');
   });
 
   it('offers nothing when a real key is configured', async () => {

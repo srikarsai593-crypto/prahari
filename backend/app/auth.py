@@ -34,7 +34,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 
 _API_KEY_HEADER = APIKeyHeader(name='X-Commander-Key', auto_error=False)
-DEMO_KEY = 'prahari-demo-2024'
+DEMO_KEY = 'prahari-demo-2026'
 
 SESSION_COOKIE = 'prahari_session'
 SESSION_TTL_SECONDS = int(os.getenv('PRAHARI_SESSION_TTL_SECONDS', str(12 * 3600)))
