@@ -395,3 +395,34 @@ class TestExactCount:
 
     def test_an_unknown_item_is_a_404(self, station):
         assert station.get('/inventory/Maitri/count?item=unobtanium').status_code == 404
+
+
+class TestEndpointsNothingInTheConsoleCalls:
+    """Two endpoints the browser never uses.
+
+    They are reachable, and `X-Commander-Key` is documented as working for
+    scripts, so they are part of the surface whether or not the console
+    exercises them. Untested reachable surface is how an endpoint rots
+    quietly until the one person who scripts against it finds out.
+    """
+
+    def test_a_single_item_can_be_fetched_by_id(self, station):
+        item = station.json('get', '/inventory/item/inv-fuel')
+        assert item['name'] == 'Diesel Fuel'
+        # The derived figures come with it, as they do everywhere else.
+        assert 'days_of_cover' in item and 'observed_burn' in item
+
+    def test_an_unknown_item_is_a_404_not_an_empty_row(self, station):
+        assert station.get('/inventory/item/inv-nope').status_code == 404
+
+    def test_the_alert_evaluation_can_be_triggered_by_hand(self, station):
+        """Every write path runs this automatically; the endpoint exists for
+        a script that changed the database underneath the console."""
+        station.set_weather(40)
+        result = station.json('post', '/inventory/alerts/evaluate?station=Maitri')
+        assert result['station'] == 'Maitri'
+        assert 'changes' in result and 'active' in result
+
+    def test_evaluating_alerts_is_a_write_and_needs_the_key(self, station):
+        assert station.client.post(
+            '/inventory/alerts/evaluate?station=Maitri').status_code == 401
