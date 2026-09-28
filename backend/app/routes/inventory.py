@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from ..database import get_db
 from ..models import (StockCommandRequest, InventoryUpdateRequest,
-                      InventoryPolicyRequest, Station)
+                      InventoryPolicyRequest, Station, WhatIfScenario)
 from ..events import log_event
 from ..llm import parse_stock_command
 from ..ws_manager import manager
@@ -326,6 +326,84 @@ def list_inventory(station: Station = None, category: str = None):
     observed = _observed_cache(db)
     return [_with_depletion(r, factor(r['station']), observed)
             for r in db.execute(query, params).fetchall()]
+
+
+@router.post('/what-if')
+async def what_if(scenario: WhatIfScenario, station: Station):
+    """Score the station as it is, and as this scenario would leave it.
+
+    A POST because the scenario is a body, not because it changes anything —
+    it is gated as a *read* and writes nothing, not even an audit entry. A
+    question is not an event, and a console that logged every hypothetical
+    would bury the operator's real actions under their own thinking aloud.
+
+    The figures come from the same functions the live console uses, handed a
+    modified copy of the station's state. There is no second model to drift.
+    """
+    from ..projection import project
+
+    return await project(get_db(), station, scenario)
+
+
+@router.get('/stockout-risk')
+def stockout_risk(station: Station, until_days: float = Query(default=None, gt=0, le=365)):
+    """When each row runs out, as a spread rather than a single date.
+
+    `days_of_cover` answers "at today's rate". This answers "given how this
+    station has actually consumed it", by resampling the daily totals in its
+    own audit log. Rows without enough recorded history say so rather than
+    producing a confident-looking figure from three numbers.
+
+    `until_days` asks the question an operator actually has: not "when does
+    it run out" but "does it reach the next tanker window".
+    """
+    from ..forecast import probability_lasts, stockout_forecast
+    from ..stock_ledger import consumption_by_day
+
+    db = get_db()
+    series = consumption_by_day(db, station)
+    factor = station_headcount(station, db)['factor']
+    delta_t = get_delta_t(station)
+
+    rows = db.execute('SELECT * FROM inventory_items WHERE station = ? ORDER BY name',
+                      (station,)).fetchall()
+    results = []
+    for row in rows:
+        item = dict(row)
+        daily = series.get(item['id'], {})
+        # The history was recorded under whatever conditions held then; the
+        # forecast is asked about now. Scale the samples by the ratio of the
+        # two multipliers so a blizzard raises the projected burn without
+        # pretending it was already in the observations.
+        depletion = compute_depletion(item, delta_t, factor)
+        base = compute_depletion(item, 0, 1.0)['depletion_rate'] or 1
+        multiplier = (depletion['depletion_rate'] / base) if base else 1.0
+
+        forecast = stockout_forecast(
+            quantity=float(item['quantity'] or 0), daily_consumption=daily,
+            multiplier=multiplier)
+        entry = {'id': item['id'], 'name': item['name'], 'unit': item['unit'],
+                 'quantity': item['quantity'],
+                 'days_of_cover': depletion['days_of_cover'],
+                 'forecast': forecast}
+        if until_days and forecast and forecast.get('available'):
+            entry['probability_lasts_pct'] = probability_lasts(
+                {'quantity': float(item['quantity'] or 0), 'daily_consumption': daily,
+                 'multiplier': multiplier}, until_days=until_days)
+            entry['until_days'] = until_days
+        results.append(entry)
+
+    return {
+        'station': station,
+        'delta_t': delta_t,
+        'headcount_factor': factor,
+        'items': results,
+        # Named, because a percentile with no method behind it is a number
+        # people over-read.
+        'method': 'bootstrap resample of this station\'s own recorded daily '
+                  'consumption; no distribution is assumed and nothing is '
+                  'learned from another station or season',
+    }
 
 
 @router.get('/headcount/{station}')

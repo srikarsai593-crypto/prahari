@@ -460,6 +460,28 @@ class TemperatureReading(BaseModel):
     note: Optional[str] = Field(default=None, max_length=200)
 
 
+class WhatIfScenario(BaseModel):
+    """A question about a station that does not exist yet.
+
+    Every field is a *change*, not an absolute — except the blizzard load,
+    which is the one an operator thinks about as a value ("what if it hits
+    +25?") rather than as a delta. Nothing here is written anywhere: the
+    scenario is scored against a modified copy of the station and discarded.
+    """
+    # People arriving or leaving. Negative is a party departing.
+    extra_crew: int = Field(default=0, ge=-200, le=200)
+    # Absolute, because that is how weather is discussed. None leaves the
+    # station's current reading alone.
+    delta_t: Optional[float] = Field(default=None, ge=0, le=60)
+    # Slip every inbound consignment by this much. The question behind it is
+    # always "does the traverse still go if the ship is late".
+    cargo_delay_hours: float = Field(default=0, ge=0, le=8760)
+    # Fast-forward: burn this many days of stock at the projected rate first,
+    # so "in a fortnight, with six more people" is one question rather than
+    # two.
+    advance_days: float = Field(default=0, ge=0, le=365)
+
+
 class ResetRequest(BaseModel):
     """Demo reset. `confirm` must be the literal string so an accidental POST
     cannot wipe a station's operational record."""

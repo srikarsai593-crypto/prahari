@@ -5,6 +5,8 @@ import { api } from '@/lib/api';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
+import { WhatIfPanel } from '@/components/WhatIfPanel';
+import { StockoutBand } from '@/components/StockoutBand';
 import { useStation } from '@/components/StationProvider';
 import { useStationConditions } from '@/lib/useStationConditions';
 import { useInventory, useStockCommand } from '@/lib/useInventory';
@@ -194,6 +196,10 @@ export default function InventoryPage() {
         deltaT={deltaT}
         onApplied={loadInventory}
       />
+
+      {/* Sits above the store: a projection is a question about the figures
+          below it, and reading the answer means looking at both. */}
+      <WhatIfPanel stationId={stationId} stationLabel={station.label} />
 
       {/* ── Stock command ─────────────────────────────────────────────────── */}
       <div className="subview-card rounded-2xl p-6">
@@ -582,6 +588,10 @@ export default function InventoryPage() {
                     </>
                   )}
                 </p>
+                {/* The straight line above, and how much room it has. Renders
+                    nothing until the station has consumed this row often
+                    enough for a spread to mean anything. */}
+                <StockoutBand stationId={stationId} itemId={selectedItem.id} />
               </div>
 
               {/* ── Configurable floor ───────────────────────────────────── */}

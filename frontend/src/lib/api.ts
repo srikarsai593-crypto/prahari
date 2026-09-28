@@ -6,7 +6,8 @@ import type {
   ExactCount, StockCommandResult, StationConditions, MovementPlanInput, TemperatureResult,
   StationCounts, StationResetResult, DemoSeasonResult, Telemetry, IncidentSop,
   HeadcountBasis, StockAlert,
-  CrossStationStock, SessionState, IncidentStatus,
+  CrossStationStock, SessionState, IncidentStatus, WhatIfScenario, WhatIfResult,
+  StockoutRisk,
 } from './types';
 
 const BASE = '/api';
@@ -373,6 +374,18 @@ export const api = {
   recordTemperature: (shipmentId: string, tempC: number, source: 'manual' | 'logger') =>
     request<TemperatureResult>(`${BASE}/shipments/${shipmentId}/temperature`,
       jsonOptions('POST', { temp_c: tempC, source }), 'record temperature'),
+
+  /** Score the station as it is, and as a scenario would leave it. A POST
+   *  because the scenario is a body — it writes nothing, not even an audit
+   *  entry, and is gated as a read. */
+  whatIf: (station: string, scenario: WhatIfScenario) =>
+    request<WhatIfResult>(`${BASE}/inventory/what-if${qs({ station })}`,
+      jsonOptions('POST', scenario), 'project a scenario'),
+  /** When each row runs out, as a spread over the station's own history. */
+  stockoutRisk: (station: string, untilDays?: number) =>
+    request<StockoutRisk>(`${BASE}/inventory/stockout-risk${qs({
+      station, until_days: untilDays ? String(untilDays) : undefined,
+    })}`),
 
   // ── Station housekeeping ───────────────────────────────────────────────────
   /** What a reset would clear — shown before the operator confirms. */

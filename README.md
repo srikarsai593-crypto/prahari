@@ -64,6 +64,9 @@ module reads the same truth.
 | **Assets ranked on capability, not just distance** | Distance alone sent the nearest snowcat to a casualty while a helicopter with a medic sat eight minutes further out. Range is judged on the *round trip*, because the asset has to come back. Fuel is scored as reserve rather than tank level: there is nothing to choose between 82% and 100% for a two-kilometre callout. Every component of the score is returned, because a commander overruling a ranking mid-emergency needs to see what it weighed. |
 | **Two roles, because there are two** | Commander/Logistics/Field would all currently resolve to "may write", and naming roles without enforcing them makes the console claim an access model it does not have. What genuinely differs is whether you can change the station's record, so that is what is modelled: an observer reads every module and writes nothing, and the role rides inside the signed session so it cannot be edited by its holder. |
 | **An empty hosted station seeds itself** | A container comes up bare after every deploy, and a page of zeroes is indistinguishable from a backend that is down. `PRAHARI_SEED_DEMO_ON_BOOT` plants the season *only* when the station holds nothing, so it can never overwrite an operator's records — and it is off by default, because a real station's console must never invent them. |
+| **A what-if is a question, not an event** | The console could not answer *if the ship slips ten days, does the traverse still go?* without making the change for real and undoing it — which puts a fiction in the audit log and in everyone else's console. `POST /inventory/what-if` scores the station twice, against the real snapshot and a modified copy, using `score_feasibility` and `compute_depletion` themselves. There is no second model to drift from the first, and it writes nothing: not the scenario, not the result, not an audit row. |
+| **A projection says that it is one** | Every figure it returns is labelled, and the response carries the assumptions in the operator's own words. A number with no statement of what it took as given is a number nobody should act on, and an unlabelled projection gets read as a reading. |
+| **Stockout risk resamples the station's own history** | Not a fitted curve and nothing learned from another station or season: the daily totals in this station's log, bootstrapped. Thirty days of cover at a steady rate and thirty at a rate that swings by four are different propositions, and `days_of_cover` cannot tell them apart. It refuses below five observed days rather than produce percentiles from three numbers, and the deterministic figure stays primary. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -252,6 +255,54 @@ the browser last did.
 
 ---
 
+## 🔮 Asking "what if"
+
+`POST /inventory/what-if?station=Maitri` scores the station as it stands and
+as a scenario would leave it, side by side. Four levers, all optional:
+
+| Field | Means |
+|---|---|
+| `extra_crew` | People arriving or leaving. Negative is a party departing. |
+| `delta_t` | Blizzard load, absolute — it is the one an operator thinks of as a value rather than a change. |
+| `cargo_delay_hours` | Slip every inbound consignment. A ship that is late is still inbound; it just arrives later. |
+| `advance_days` | Burn this many days of stock at the projected rate first, so "in a fortnight, with six more people" is one question. |
+
+```bash
+curl -X POST 'localhost:8000/inventory/what-if?station=Maitri' \
+  -H 'Content-Type: application/json' -H "X-Commander-Key: $KEY" \
+  -d '{"extra_crew": 6, "advance_days": 7}'
+```
+
+It writes nothing — not the scenario, not the result, not an audit row — and
+it is gated as a read, because thinking before committing should not need
+write credentials. The Inventory page carries it with three one-click
+presets.
+
+The figures come from `score_feasibility` and `compute_depletion`, the same
+functions the live console uses, handed a snapshot with the scenario applied.
+`test_projection` pins the consequence: a projected blizzard reaches the same
+days-of-cover figure as applying one for real. If those two ever disagree,
+there are two models and one of them is wrong.
+
+---
+
+## 🎲 Stockout risk
+
+`days_of_cover` answers "at today's rate". `GET /inventory/stockout-risk`
+answers "given how this station has actually consumed it" — the soonest
+realistic day it runs out and the most likely one, with
+`?until_days=30` answering the question an operator really has: *does it
+reach the next tanker window?*
+
+The distribution is the station's own daily totals, resampled. No curve is
+fitted, nothing is assumed about the shape, and nothing is learned from
+another station or another season. Below five observed days of consumption
+it reports nothing at all — percentiles from three numbers look exactly as
+authoritative as percentiles from thirty, which is the failure worth
+avoiding. The deterministic figure stays primary and is never replaced.
+
+---
+
 ## 🔍 What is measured, and what is not
 
 Prahari runs on a laptop with no sensor network attached. Everything below is
@@ -268,6 +319,8 @@ you which is which is one you cannot act on.
 | Stock quantities | What an operator recorded, plus what unloading a consignment added | **Real** — entered, not sensed |
 | Days of cover | `quantity / (burn rate × crew factor × weather factor)` | **Derived** |
 | Planned burn rate | A configured constant per item | **Assumption** — the console now says so by showing the measured rate beside it |
+| A what-if projection | The live formulas run against a modified copy of the station | **Derived, and labelled** — the response says `is_projection` and lists its assumptions; nothing is written |
+| Stockout range (P10–P50) | Bootstrap resample of this station's own recorded daily consumption | **Derived from real records**, withheld entirely below five observed days |
 | Measured burn rate | Derived from consumption movements in the audit log | **Derived from real records**, and withheld entirely until there is enough history to divide by |
 | Crew positions | Seeded, then advanced by the GPS playback | **Simulated** — no GPS hardware exists; the movement is a replay of an authorised route |
 | Blizzard ΔT | Typed by an operator on the slider | **Simulated input** — Prahari has no meteorological feed, and the header shows ΔT rather than inventing an air temperature |
@@ -390,11 +443,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 175 tests
+npm test                 # 186 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**638 backend tests (~5 s) and 175 frontend tests (~2 s).** No network, no
+**693 backend tests (~6 s) and 186 frontend tests (~3 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -425,6 +478,8 @@ What they cover, and why these things in particular:
 | `test_observer` | That a read-only session reads everything, writes nothing, cannot promote itself by editing its cookie, and can still sign out. |
 | `test_incident_lifecycle` | The stages, that a response cannot roll backwards, that dispatch advances it, and that the head-count rule survives having five stages instead of two. |
 | `test_asset_ranking` | Each factor in the score, the round-trip range check, and that the ranking follows the incident type. |
+| `test_projection` | That a what-if writes nothing, and that a projected blizzard reaches the same figure as applying one for real — the check that there is one set of formulas rather than two. |
+| `test_forecast` | What counts as a day of consumption, the refusal below five of them, and that the same station state forecasts the same way every time. |
 | `test_demo` | The demonstration season: that it reaches every station, is made of real records, does not stack on a second run, leaves the store at its seeded figures, and says it is synthetic. |
 | `test_models` | The bounds that make a malformed LLM parse degrade to rules instead of being believed. |
 | `test_session` | Signed sessions, the sign-in rate limit, the read gate and the security headers. |
@@ -433,12 +488,13 @@ What they cover, and why these things in particular:
 | `offlineQueue.test.ts` | Work recorded during an outage: that it survives, replays in order, and is not discarded when a session lapses. |
 | `SessionProvider.test.tsx` | The sign-in gate, and that the key is never retained after it is used. |
 | `DemoSeasonButton.test.tsx` | That the season cannot be loaded by accident, and reports what it planted. |
+| `WhatIfPanel.test.tsx` | That the result is labelled a projection, states its assumptions, hides rows the scenario did not move, and shows no stale answer when the link is down. |
 | `ColdChainCell.test.tsx` | That a recovered crate still shows its excursion, that a typed reading is recorded as manual, and that unmonitored cargo renders nothing. |
 | `serviceWorker.test.ts` | That the cache never installs in front of the dev server, and that a console whose cache will not install still boots. |
 | `useInventory.test.tsx` | The stock-command preview, including that a queued command is never offered as one to confirm. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count. Sixty known bugs — a flat criticality rule, bearing by the
+line count. Sixty-nine known bugs — a flat criticality rule, bearing by the
 flat approximation, deviation measured to waypoints, an incident closable over
 a missing person, an unverified session signature, a database back inside the
 container, an audit chain that no longer links, a stocktake counted as
@@ -459,7 +515,7 @@ three more surfaced when this batch was added, one of which was a genuine bug
 — a query listing the five stage names by hand, which counted an incident
 still holding the legacy `open` value as closed.
 CI runs it weekly rather than per-commit: it runs the whole suite once per
-mutation, so it costs roughly sixty times a normal run.
+mutation, so it costs roughly seventy times a normal run.
 
 ---
 

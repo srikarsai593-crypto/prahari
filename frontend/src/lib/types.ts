@@ -519,6 +519,82 @@ export interface FeasibilityResult {
   readiness_weights?: Record<string, number>;
 }
 
+// ── What-if projection ──────────────────────────────────────────────────────
+
+/** A question about a station that does not exist yet. Every field is a
+ *  change except delta_t, which is how weather is actually discussed. */
+export interface WhatIfScenario {
+  extra_crew?: number;
+  delta_t?: number | null;
+  cargo_delay_hours?: number;
+  advance_days?: number;
+}
+
+export interface ProjectedStock {
+  quantity: number;
+  days_of_cover: number;
+  depletion_rate: number;
+  stock_state: string;
+}
+
+export interface WhatIfResult {
+  station: string;
+  scenario: WhatIfScenario;
+  /** What the projection took as given, in the operator's own terms. */
+  assumptions: string[];
+  inventory: Array<{
+    id: string; name: string; unit: string | null;
+    before: ProjectedStock; after: ProjectedStock;
+    cover_change_days: number; newly_critical: boolean;
+  }>;
+  expeditions: Array<{
+    id: string; name: string; status: string;
+    before_readiness: number; after_readiness: number; readiness_change: number;
+    newly_short: string[]; resolved: string[]; blocked: boolean;
+  }>;
+  summary: {
+    items_newly_critical: number;
+    traverses_newly_blocked: number;
+    worst_cover_change_days: number;
+    worst_readiness_change: number;
+  };
+  /** Always true. A projection that does not announce itself is
+   *  indistinguishable from a reading. */
+  is_projection: boolean;
+  persisted: boolean;
+}
+
+// ── Stockout risk ───────────────────────────────────────────────────────────
+
+export interface StockoutForecast {
+  available: boolean;
+  observed_days: number;
+  reason: string | null;
+  trials?: number;
+  horizon_days?: number;
+  /** Day by which one trial in ten had run out — the planning figure. */
+  p10_days?: number | null;
+  p50_days?: number | null;
+  survived_horizon_pct?: number;
+  mean_daily?: number;
+  spread?: { low: number; median: number; high: number };
+}
+
+export interface StockoutRisk {
+  station: string;
+  delta_t: number;
+  headcount_factor: number;
+  /** Named, because a percentile with no method behind it is over-read. */
+  method: string;
+  items: Array<{
+    id: string; name: string; unit: string | null; quantity: number;
+    days_of_cover: number;
+    forecast: StockoutForecast;
+    probability_lasts_pct?: number;
+    until_days?: number;
+  }>;
+}
+
 export type ToastType = 'success' | 'warning' | 'alert' | 'info';
 
 /** Deterministic SQL stock count — deliberately not an LLM/RAG answer. */

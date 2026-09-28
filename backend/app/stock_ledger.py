@@ -20,6 +20,7 @@ the observed rate a record of paperwork.
 """
 
 import json
+from datetime import timedelta
 
 from .events import log_event
 from .timeutil import utc_now_iso
@@ -89,13 +90,76 @@ MIN_OBSERVATION_DAYS = 2.0
 MIN_MOVEMENTS = 2
 
 
+def _consumption_movements(db, station: str, *, now=None,
+                           window_days: int = OBSERVATION_WINDOW_DAYS):
+    """Every draw-down at this station inside the window, newest last.
+
+    The single reader behind both views below. They had identical filters,
+    cutoffs and guards, and two copies of "what counts as consumption" is
+    two places for it to drift — which is exactly the definition the
+    observed rate turns on.
+
+    The window is applied in SQL. Reading every inventory event the station
+    has ever logged and discarding the old ones in Python is a full scan
+    that grows for the life of the station, on the page an operator
+    refreshes most. `created_at` is ISO-8601 with a fixed-width UTC offset,
+    so it sorts lexicographically in the same order as chronologically and a
+    string comparison is a correct bound.
+    """
+    from .timeutil import utc_now
+
+    now = now or utc_now()
+    cutoff = (now - timedelta(days=window_days)).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    rows = db.execute(
+        "SELECT metadata, created_at FROM events "
+        "WHERE module = 'inventory' AND station = ? AND metadata IS NOT NULL "
+        'AND created_at >= ? ORDER BY seq ASC', (station, cutoff)).fetchall()
+
+    for row in rows:
+        try:
+            meta = json.loads(row['metadata'])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(meta, dict) or meta.get('reason') not in CONSUMING_REASONS:
+            continue
+        delta = meta.get('stock_delta')
+        item_id = meta.get('item_id')
+        # Only draw-downs. An increment recorded by command is a correction
+        # in the operator's own words, not negative consumption.
+        if item_id is None or not isinstance(delta, (int, float)) or delta >= 0:
+            continue
+        yield item_id, -float(delta), str(row['created_at'])
+
+
+def consumption_by_day(db, station: str, *, now=None,
+                       window_days: int = OBSERVATION_WINDOW_DAYS) -> dict:
+    """Per item, how much was consumed on each observed day of the window.
+
+    The aggregate rate says what the station averages. It cannot say how
+    *steady* that average is, and thirty days of cover at a steady rate is a
+    different proposition from thirty at a rate that swings by four. The
+    daily series is what the stockout forecast resamples.
+
+    Keyed by day rather than by movement: two draws an hour apart are one
+    day's consumption, and counting them as two observations would make the
+    station look twice as variable as it is.
+    """
+    per_item: dict[str, dict[str, float]] = {}
+    for item_id, amount, created_at in _consumption_movements(
+            db, station, now=now, window_days=window_days):
+        day = created_at[:10]
+        per_item.setdefault(item_id, {})
+        per_item[item_id][day] = per_item[item_id].get(day, 0.0) + amount
+    return per_item
+
+
 def observed_burn_rates(db, station: str, *, now=None,
                         window_days: int = OBSERVATION_WINDOW_DAYS) -> dict:
     """Per item, what the station actually consumed per day over the window.
 
-    Derived from the audit log rather than from a counter, because the log is
-    the record that already has to be right and a second counter would be a
-    second thing to keep in step.
+    Derived from the audit log rather than from a counter, because the log
+    is the record that already has to be right and a second counter would be
+    a second thing to keep in step.
 
     Returns `{item_id: {...}}`. An item with too little history is present
     with `rate: None` and a reason, not absent: "we have not observed this
@@ -103,46 +167,17 @@ def observed_burn_rates(db, station: str, *, now=None,
     """
     from .timeutil import utc_now
 
-    from datetime import timedelta
-
     now = now or utc_now()
-    since = now.timestamp() - window_days * 86400
-
-    # The window is applied in SQL, not after the fact. Reading every
-    # inventory event the station has ever logged and discarding the old ones
-    # in Python is a full scan that grows for the life of the station — on
-    # every listing of the store, which is the page an operator refreshes
-    # most. `created_at` is ISO-8601 with a fixed-width UTC offset, so it
-    # sorts lexicographically in the same order as it does chronologically
-    # and a string comparison is a correct bound.
-    cutoff = (now - timedelta(days=window_days)).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-    rows = db.execute(
-        "SELECT metadata, created_at FROM events "
-        "WHERE module = 'inventory' AND station = ? AND metadata IS NOT NULL "
-        'AND created_at >= ? ORDER BY seq ASC', (station, cutoff)).fetchall()
 
     observed: dict[str, dict] = {}
-    for row in rows:
-        try:
-            meta = json.loads(row['metadata'])
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(meta, dict):
-            continue
-        if meta.get('reason') not in CONSUMING_REASONS:
-            continue
-        delta = meta.get('stock_delta')
-        item_id = meta.get('item_id')
-        # Only draw-downs. An increment recorded by command is a correction in
-        # the operator's own words, not negative consumption.
-        if item_id is None or not isinstance(delta, (int, float)) or delta >= 0:
-            continue
-        stamp = _epoch(row['created_at'])
-        if stamp is None or stamp < since:
+    for item_id, amount, created_at in _consumption_movements(
+            db, station, now=now, window_days=window_days):
+        stamp = _epoch(created_at)
+        if stamp is None:
             continue
         entry = observed.setdefault(item_id, {'consumed': 0.0, 'movements': 0,
                                               'first': stamp, 'last': stamp})
-        entry['consumed'] += -float(delta)
+        entry['consumed'] += amount
         entry['movements'] += 1
         entry['first'] = min(entry['first'], stamp)
         entry['last'] = max(entry['last'], stamp)

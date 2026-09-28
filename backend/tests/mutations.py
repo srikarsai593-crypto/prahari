@@ -207,6 +207,47 @@ MUTATIONS: list[Mutation] = [
              'app/routes/auth_routes.py',
              '    client = guard_login(request)', "    client = 'unguarded'"),
 
+    # ── What-if and stockout risk ───────────────────────────────────────────
+    Mutation('a projection writes to the audit log',
+             'app/projection.py',
+             'before = await score_feasibility(request, log=False, snapshot=current)',
+             'before = await score_feasibility(request, snapshot=current)'),
+    Mutation('the projection scores both sides against the same station',
+             'app/projection.py',
+             'after = await score_feasibility(request, log=False, snapshot=modified)',
+             'after = await score_feasibility(request, log=False, snapshot=current)'),
+    Mutation('stock projects below empty',
+             'app/projection.py',
+             "        projected['quantity'] = max(0.0, float(projected['quantity'] or 0) "
+             '- rate * days)',
+             "        projected['quantity'] = float(projected['quantity'] or 0) - rate * days"),
+    Mutation('the crew delta never reaches the depletion formula',
+             'app/projection.py',
+             "    after_present = max(0, basis['headcount'] + scenario.extra_crew)",
+             "    after_present = basis['headcount']"),
+    Mutation('a forecast is produced from two days of history',
+             'app/forecast.py',
+             'MIN_OBSERVED_DAYS = 5', 'MIN_OBSERVED_DAYS = 1'),
+    Mutation('days with no consumption pad the observation count',
+             'app/forecast.py',
+             '    days = [amount for amount in daily_consumption.values() if amount > 0]',
+             '    days = list(daily_consumption.values())'),
+    Mutation('the forecast ignores the conditions it is asked about',
+             'app/forecast.py',
+             '            remaining -= rng.choice(days) * multiplier\n'
+             '            if remaining <= 0:\n'
+             '                exhausted_on.append(day)',
+             '            remaining -= rng.choice(days)\n'
+             '            if remaining <= 0:\n'
+             '                exhausted_on.append(day)'),
+    Mutation('the forecast is reseeded on every call',
+             'app/forecast.py',
+             '    rng = random.Random(seed if seed is not None else _stable_seed(quantity, days))',
+             '    rng = random.Random()'),
+    Mutation('two draws in one day count as two observations',
+             'app/stock_ledger.py',
+             '        day = created_at[:10]', '        day = created_at'),
+
     # ── Roles ───────────────────────────────────────────────────────────────
     Mutation('an observer can write after all',
              'app/auth.py',
@@ -294,7 +335,8 @@ MUTATIONS: list[Mutation] = [
              "        elapsed_days = (entry['last'] - entry['first']) / 86400"),
     Mutation('restocks count as negative burn',
              'app/stock_ledger.py',
-             'or delta >= 0:', 'or delta == 0:'),
+             'if item_id is None or not isinstance(delta, (int, float)) or delta >= 0:',
+             'if item_id is None or not isinstance(delta, (int, float)) or delta == 0:'),
 
     # ── Cold chain ──────────────────────────────────────────────────────────
     Mutation('only the threshold is checked, never the rate of change',
@@ -320,7 +362,7 @@ MUTATIONS: list[Mutation] = [
              'app/idempotency.py',
              "            or request.url.path.startswith(EXCLUDED_PREFIXES)):",
              '            or False):'),
-    Mutation('the observed rate scans the whole log again',
+    Mutation('the consumption reader scans the whole log again',
              'app/stock_ledger.py',
              "        'AND created_at >= ? ORDER BY seq ASC', (station, cutoff)).fetchall()",
              "        'ORDER BY seq ASC', (station,)).fetchall()"),
