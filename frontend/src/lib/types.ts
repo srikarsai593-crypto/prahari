@@ -6,6 +6,9 @@ export interface Personnel {
   id: string;
   name: string;
   role: string | null;
+  /** Home station. The backend has carried this since roster queries were
+   *  scoped per base; the type simply never caught up. */
+  station: string;
   expedition_id: string | null;
   status: 'at_station' | 'in_transit' | 'field' | 'returned' | 'deviated' | 'sos' | 'off_duty' | string;
   current_lat: number | null;
@@ -593,6 +596,33 @@ export interface StockoutRisk {
     probability_lasts_pct?: number;
     until_days?: number;
   }>;
+}
+
+// ── Procurement: the leg before the ship ────────────────────────────────────
+
+export type PurchaseOrderStatus = 'ordered' | 'confirmed' | 'shipped' | 'cancelled';
+
+export interface PurchaseOrder {
+  id: string;
+  reference: string;
+  vendor: string;
+  item_name: string;
+  category: CargoCategory | string;
+  quantity: number | null;
+  unit: string | null;
+  inventory_item_id: string | null;
+  destination_station: string;
+  status: PurchaseOrderStatus | string;
+  ordered_at: string;
+  /** What the vendor promised. Null means no date was given. */
+  promised_at: string | null;
+  /** Set when the order is dispatched and becomes a real consignment. */
+  shipment_id: string | null;
+  notes: string | null;
+  /** Derived on read from the promised date, as a shipment's is from its ETA. */
+  is_overdue: boolean;
+  days_overdue: number | null;
+  slip_warning: string | null;
 }
 
 export type ToastType = 'success' | 'warning' | 'alert' | 'info';

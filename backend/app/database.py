@@ -214,6 +214,37 @@ def init_db():
         -- bug on this branch, and foreign_keys=ON is already set.
         FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+        -- The leg before the ship. A consignment starts at the dock; a
+        -- station's exposure starts when someone orders the fuel, and the
+        -- weeks in between are where a season is won or lost. This is that
+        -- leg, and it is upstream of `shipments` rather than beside it:
+        -- dispatching an order CREATES the consignment and links the two,
+        -- so the chain is continuous instead of being two lists that happen
+        -- to mention the same cargo.
+        id TEXT PRIMARY KEY,
+        reference TEXT UNIQUE NOT NULL,
+        vendor TEXT NOT NULL,
+        item_name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        quantity REAL,
+        unit TEXT,
+        -- The stock row this order will eventually top up, carried through
+        -- to the consignment so the restock still lands on the right item.
+        inventory_item_id TEXT,
+        destination_station TEXT NOT NULL,
+        status TEXT DEFAULT 'ordered',
+        ordered_at TEXT NOT NULL,
+        -- What the vendor promised. Lateness is derived from this on read,
+        -- the same way a consignment's is from its ETA — no scheduler, and
+        -- never stale on a station that was offline for days.
+        promised_at TEXT,
+        -- Set when the order becomes a real consignment.
+        shipment_id TEXT,
+        notes TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_po_station ON purchase_orders(destination_station);
+
     CREATE TABLE IF NOT EXISTS idempotency_keys (
         -- Replay protection for the offline queue. See app/idempotency.py:
         -- the case this exists for is a write the station received and acted

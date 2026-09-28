@@ -84,6 +84,41 @@ CONSIGNMENTS = {
     ],
 }
 
+# Orders with vendors, upstream of the consignments above. One per station
+# is slipped on purpose: an order the vendor has missed is the row the
+# Procurement board exists to surface, and at a realistic lead time nothing
+# is ever late inside a demonstration.
+#
+# `promised_in_days` negative backdates the promise, the same drill the
+# overdue convoy uses.
+PURCHASE_ORDERS = {
+    'Maitri': [
+        {'vendor': 'Indian Oil Corporation', 'item_name': 'Aviation Turbine Fuel',
+         'category': 'fuel', 'quantity': 12000, 'unit': 'L',
+         'inventory_item_id': 'inv-avtur', 'promised_in_days': -9, 'confirm': True,
+         'notes': 'Second tranche of the season allocation.'},
+        {'vendor': 'HLL Lifecare', 'item_name': 'Medical Supplies',
+         'category': 'medical', 'quantity': 150, 'unit': 'units',
+         'inventory_item_id': 'inv-med', 'promised_in_days': 21, 'confirm': True},
+        {'vendor': 'Goa Shipyard Stores', 'item_name': 'Thermal Blankets',
+         'category': 'equipment', 'quantity': 60, 'unit': 'units',
+         'inventory_item_id': 'inv-blankets', 'promised_in_days': 40, 'confirm': False},
+    ],
+    'Bharati': [
+        {'vendor': 'Indian Oil Corporation', 'item_name': 'Diesel Fuel',
+         'category': 'fuel', 'quantity': 15000, 'unit': 'L',
+         'inventory_item_id': 'inv-bha-fuel', 'promised_in_days': 30, 'confirm': True},
+        {'vendor': 'NCPOR Central Stores', 'item_name': 'Emergency Rations',
+         'category': 'food', 'quantity': 900, 'unit': 'kg',
+         'inventory_item_id': 'inv-bha-rat', 'promised_in_days': -4, 'confirm': True},
+    ],
+    'Himadri': [
+        {'vendor': 'Svalbard Logistikk AS', 'item_name': 'Diesel Fuel',
+         'category': 'fuel', 'quantity': 6000, 'unit': 'L',
+         'inventory_item_id': 'inv-him-fuel', 'promised_in_days': 18, 'confirm': True},
+    ],
+}
+
 # Traverses in planning. Each is sized against what the station actually holds,
 # so the readiness figures the cards show are meaningful rather than uniformly
 # green or uniformly red. Maitri's is deliberately short on fuel — the seed
@@ -135,6 +170,24 @@ async def _plant_consignments(station: str) -> int:
         for temp_c in spec.get('temperatures', ()):
             await record_temperature(shipment['id'],
                                      TemperatureReading(temp_c=temp_c, source='logger'))
+        planted += 1
+    return planted
+
+
+async def _plant_orders(station: str) -> int:
+    """Orders with vendors, some confirmed, some already slipped."""
+    from .models import PurchaseOrderCreate, PurchaseOrderUpdate
+    from .routes.procurement import create_order, update_order
+
+    planted = 0
+    for spec in PURCHASE_ORDERS.get(station, []):
+        payload = {k: v for k, v in spec.items() if k != 'confirm'}
+        order = await create_order(PurchaseOrderCreate(
+            destination_station=station, **payload))
+        # A vendor acknowledgement is its own step, and only a confirmed
+        # order can be dispatched — so the board shows both states.
+        if spec.get('confirm'):
+            await update_order(order['id'], PurchaseOrderUpdate(status='confirmed'))
         planted += 1
     return planted
 
@@ -215,8 +268,9 @@ async def load_demo_season() -> dict:
     """
     from .conditions import set_delta_t
 
-    created = {'shipments': 0, 'expeditions': 0, 'incidents': 0}
+    created = {'shipments': 0, 'expeditions': 0, 'incidents': 0, 'purchase_orders': 0}
     for station in STATION_ORIGINS:
+        created['purchase_orders'] += await _plant_orders(station)
         created['shipments'] += await _plant_consignments(station)
         created['expeditions'] += await _plant_expedition(station)
         created['incidents'] += await _plant_past_incident(station)
@@ -226,8 +280,9 @@ async def load_demo_season() -> dict:
 
     await log_event(
         'system',
-        f'Demonstration season loaded - {created["shipments"]} consignment(s), '
-        f'{created["expeditions"]} traverse(s) and {created["incidents"]} closed '
-        f'incident(s) across all three stations. These records are synthetic.',
+        f'Demonstration season loaded - {created["purchase_orders"]} order(s), '
+        f'{created["shipments"]} consignment(s), {created["expeditions"]} traverse(s) '
+        f'and {created["incidents"]} closed incident(s) across all three stations. '
+        f'These records are synthetic.',
         'commander', None, {'demo': True, 'created': created})
     return created

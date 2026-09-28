@@ -23,7 +23,7 @@ from .ws_manager import manager
 from .auth import DEMO_KEY, SESSION_COOKIE, get_expected_key, identify, reads_are_public
 from .llm import GEMINI_MODEL, get_gemini_api_key
 from .routes import (expeditions, shipments, inventory, personnel, incidents,
-                     events_routes, geofences, admin, auth_routes)
+                     events_routes, geofences, admin, auth_routes, procurement)
 
 logging.basicConfig(level=os.getenv('PRAHARI_LOG_LEVEL', 'INFO'),
                     format='%(asctime)s %(levelname)-8s %(name)s: %(message)s')
@@ -189,7 +189,7 @@ async def security_headers(request, call_next):
 
 
 for router in (auth_routes, expeditions, shipments, inventory, personnel, incidents,
-               events_routes, geofences, admin):
+               events_routes, geofences, admin, procurement):
     app.include_router(router.router)
 
 

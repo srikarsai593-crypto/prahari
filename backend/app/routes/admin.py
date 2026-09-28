@@ -34,7 +34,8 @@ router = APIRouter(prefix='/admin', tags=['admin'],
 # Operational state — everything an exercise creates. The reference tables
 # (personnel, inventory, geofences, emergency assets) are re-seeded rather than
 # dropped, so a reset restores the baseline instead of emptying the console.
-OPERATIONAL_TABLES = ('movement_plans', 'incidents', 'shipments', 'expeditions')
+OPERATIONAL_TABLES = ('movement_plans', 'incidents', 'shipments', 'expeditions',
+                      'purchase_orders')
 
 
 @router.get('/counts')

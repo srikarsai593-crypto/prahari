@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, X } from 'lucide-react';
+import { Menu, Radio, SatelliteDish, X } from 'lucide-react';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
 import { offlineQueue } from '@/lib/offlineQueue';
+import { saveConsolePreference } from '@/lib/fieldOperator';
 import { useWebSocket } from '@/components/WebSocketProvider';
 
 /** Module navigation below the `md` breakpoint, where the tab band is hidden. */
@@ -25,6 +26,11 @@ export function MobileNav() {
   // The link state lives in the navigation band, which is hidden at this
   // width. Without it here, a phone or narrow window gave the operator no way
   // to tell a live console from one queueing every write locally.
+  const toggleBlackout = async () => {
+    if (offlineQueue.isBlackout) await offlineQueue.setBlackout(false);
+    else await offlineQueue.setBlackout(true);
+  };
+
   useEffect(() => {
     const sync = () => {
       setOffline(offlineQueue.isOffline);
@@ -82,6 +88,31 @@ export function MobileNav() {
               </Link>
             );
           })}
+
+          <Link
+            href="/field"
+            onClick={() => saveConsolePreference('field')}
+            className="flex items-center gap-3 px-3.5 py-3 rounded-md text-sm font-semibold
+                       transition-colors border-l-2 border-l-transparent
+                       text-arctic-900 hover:bg-frost-subtle"
+          >
+            <Radio size={18} aria-hidden="true" />
+            Field mode
+          </Link>
+
+          {/* The blackout drill lived only in the desktop navigation band,
+              so the one feature that is specifically about working away
+              from the link could not be reached from a handset. */}
+          <button
+            type="button"
+            onClick={() => void toggleBlackout()}
+            className={`flex items-center gap-3 px-3.5 py-3 rounded-md text-sm font-semibold
+                        transition-colors border-l-2 border-l-transparent text-left
+                        ${blackout ? 'text-alert' : 'text-arctic-900 hover:bg-frost-subtle'}`}
+          >
+            <SatelliteDish size={18} aria-hidden="true" />
+            {blackout ? 'Restore link' : 'Simulate blackout'}
+          </button>
 
           <p className="mt-1 pt-2 border-t border-frost-border px-3.5 pb-1 flex items-center
                         gap-2 text-2xs font-mono tracking-caps uppercase text-frost-muted">

@@ -7,6 +7,7 @@ import type {
   StationCounts, StationResetResult, DemoSeasonResult, Telemetry, IncidentSop,
   HeadcountBasis, StockAlert,
   CrossStationStock, SessionState, IncidentStatus, WhatIfScenario, WhatIfResult,
+  PurchaseOrder,
   StockoutRisk,
 } from './types';
 
@@ -386,6 +387,29 @@ export const api = {
     request<StockoutRisk>(`${BASE}/inventory/stockout-risk${qs({
       station, until_days: untilDays ? String(untilDays) : undefined,
     })}`),
+
+  // ── Procurement ────────────────────────────────────────────────────────────
+  /** What the station has on order, before anything is on a vessel. */
+  listPurchaseOrders: (station?: string, status?: string) =>
+    request<PurchaseOrder[]>(`${BASE}/procurement${qs({ station, status })}`),
+  createPurchaseOrder: (data: {
+    vendor: string; item_name: string; category: string; quantity?: number;
+    unit?: string; inventory_item_id?: string; destination_station: string;
+    promised_in_days?: number; notes?: string;
+  }) =>
+    request<PurchaseOrder>(`${BASE}/procurement`, jsonOptions('POST', data),
+      'raise a purchase order'),
+  updatePurchaseOrder: (id: string, body: {
+    status?: 'confirmed' | 'cancelled'; promised_in_days?: number; notes?: string;
+  }) =>
+    request<PurchaseOrder>(`${BASE}/procurement/${id}`, jsonOptions('PATCH', body),
+      'update a purchase order'),
+  /** Turn a confirmed order into a consignment on its way to the station. */
+  dispatchPurchaseOrder: (id: string, weightKg: number, etaHours?: number) =>
+    request<{ order: PurchaseOrder; shipment: Shipment }>(
+      `${BASE}/procurement/${id}/dispatch`,
+      jsonOptions('POST', { weight_kg: weightKg, eta_hours: etaHours }),
+      'dispatch a purchase order'),
 
   // ── Station housekeeping ───────────────────────────────────────────────────
   /** What a reset would clear — shown before the operator confirms. */

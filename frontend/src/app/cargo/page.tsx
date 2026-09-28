@@ -8,6 +8,7 @@ import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { ColdChainCell } from '@/components/ColdChainCell';
+import { ProcurementBoard } from '@/components/ProcurementBoard';
 import { useStation } from '@/components/StationProvider';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useStationConditions } from '@/lib/useStationConditions';
@@ -437,6 +438,11 @@ export default function CargoPage() {
               </button>
             </div>
           </div>
+
+          {/* Upstream of the board below, and literally so: dispatching an
+              order here is what creates the consignment. */}
+          <ProcurementBoard stationId={stationId} stationLabel={station.label}
+                            onDispatched={() => void load()} />
 
           {/* ── Table ────────────────────────────────────────────────────── */}
           <div className="subview-card rounded-2xl p-7">

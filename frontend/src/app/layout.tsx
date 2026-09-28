@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css';
 
 import { WebSocketProvider } from '@/components/WebSocketProvider';
 import { ConnectivityWatch } from '@/components/ConnectivityWatch';
+import { FieldModeGate } from '@/components/FieldModeGate';
 import { SessionProvider } from '@/components/SessionProvider';
 import { LoginGate } from '@/components/LoginGate';
 import { StationProvider } from '@/components/StationProvider';
@@ -73,6 +74,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             signed-out console during an outage should still get the sign-in
             page rather than a browser error. No UI. */}
         <ConnectivityWatch />
+
+        {/* A phone gets the three-button field view by default. Renders
+            nothing; see the component for why it is a default and not a
+            cage. */}
+        <FieldModeGate />
 
         {/* Session first: the socket and every module below it are gated, so
             there is nothing for them to do until the operator is signed in. */}

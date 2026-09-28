@@ -254,6 +254,47 @@ MUTATIONS: list[Mutation] = [
              'app/stock_ledger.py',
              '        day = created_at[:10]', '        day = created_at'),
 
+    # ── Procurement: the leg before the ship ────────────────────────────────
+    Mutation('an unconfirmed order can be put on the cargo board',
+             'app/routes/procurement.py',
+             "    if row['status'] not in DISPATCHABLE_STATUSES:",
+             '    if False:'),
+    Mutation('an order can be dispatched twice',
+             'app/routes/procurement.py',
+             "    if row['status'] not in DISPATCHABLE_STATUSES:",
+             '    if False:',
+             also=(('app/routes/procurement.py',
+                    "    if row['status'] == 'shipped':\n"
+                    "        raise HTTPException(status_code=409,\n"
+                    "                            detail=f'{row[\"reference\"]} has already "
+                    "been dispatched.')",
+                    '    if False:\n        pass'),)),
+    Mutation('the order and the crate are no longer linked',
+             'app/routes/procurement.py',
+             '    db.execute("UPDATE purchase_orders SET status = \'shipped\', '
+             'shipment_id = ? WHERE id = ?",\n               (shipment[\'id\'], order_id))',
+             "    db.execute(\"UPDATE purchase_orders SET status = 'shipped' WHERE id = ?\",\n"
+             '               (order_id,))'),
+    Mutation('the stock row an order names is dropped at the handover',
+             'app/routes/procurement.py',
+             "        inventory_item_id=row['inventory_item_id'],",
+             '        inventory_item_id=None,'),
+    Mutation('a vendor missing their date is never flagged',
+             'app/routes/procurement.py',
+             "    if promised is None or order.get('status') not in AWAITING_STATUSES "
+             'or now <= promised:',
+             '    if True:'),
+    Mutation('an order may restock another station',
+             'app/routes/procurement.py',
+             "        if target['station'] != data.destination_station:",
+             '        if False:'),
+    Mutation('orders survive a reset and double on the next season',
+             'app/routes/admin.py',
+             "OPERATIONAL_TABLES = ('movement_plans', 'incidents', 'shipments', "
+             "'expeditions',\n                      'purchase_orders')",
+             "OPERATIONAL_TABLES = ('movement_plans', 'incidents', 'shipments', "
+             "'expeditions')"),
+
     # ── Roles ───────────────────────────────────────────────────────────────
     Mutation('an observer can write after all',
              'app/auth.py',
@@ -305,7 +346,7 @@ MUTATIONS: list[Mutation] = [
              "        for _ in range(3):"),
     Mutation('the demo season stops declaring itself synthetic',
              'app/demo.py',
-             "        f'incident(s) across all three stations. These records are synthetic.',",
+             "        f'These records are synthetic.',",
              "        f'incident(s) across all three stations.',"),
     Mutation('nothing in the season is overdue, so the stalled path is unreachable',
              'app/demo.py',

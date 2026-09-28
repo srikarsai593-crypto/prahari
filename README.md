@@ -67,6 +67,9 @@ module reads the same truth.
 | **A what-if is a question, not an event** | The console could not answer *if the ship slips ten days, does the traverse still go?* without making the change for real and undoing it — which puts a fiction in the audit log and in everyone else's console. `POST /inventory/what-if` scores the station twice, against the real snapshot and a modified copy, using `score_feasibility` and `compute_depletion` themselves. There is no second model to drift from the first, and it writes nothing: not the scenario, not the result, not an audit row. |
 | **A projection says that it is one** | Every figure it returns is labelled, and the response carries the assumptions in the operator's own words. A number with no statement of what it took as given is a number nobody should act on, and an unlabelled projection gets read as a reading. |
 | **Stockout risk resamples the station's own history** | Not a fitted curve and nothing learned from another station or season: the daily totals in this station's log, bootstrapped. Thirty days of cover at a steady rate and thirty at a rate that swings by four are different propositions, and `days_of_cover` cannot tell them apart. It refuses below five observed days rather than produce percentiles from three numbers, and the deterministic figure stays primary. |
+| **Procurement is the first leg, not a second list** | The cargo board starts at the dock; a station's exposure starts weeks earlier when someone orders the fuel, so "not ordered yet" and "three days out" both read as absent. Dispatching an order *creates* the consignment through the real shipment path — barcode, risk score, cold-chain band, and the stock row the order named carried through. One chain, not two tables that mention the same cargo. |
+| **A phone gets three buttons, not a smaller dashboard** | Outside, in gloves, an operator does three things: records what they used, says they are back, or calls for help. Field mode is one action per screen with targets well past the 44px floor, and nothing destructive on a single tap — consumption is confirmed against what the station understood, and SOS needs a deliberate hold, because a knock against a parka must not declare a station-wide emergency. |
+| **Field mode is a default, not a cage** | A handset lands on the three-button view and can leave it, and the choice sticks. Trapping every narrow viewport would put the roster out of reach of someone who needs it on a phone, which is a worse failure than a desk user seeing one extra tap. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -255,6 +258,56 @@ the browser last did.
 
 ---
 
+## 📱 Field mode
+
+A handset opening the console lands on `/field`: three targets, one action
+per screen, sized for a gloved thumb.
+
+| Action | What it does |
+|---|---|
+| **Log consumption** | Pick the item, step the amount in units that suit it — 10 at a time for litres and kilograms, 1 for counted things — and confirm. It composes the same plain-language command the desk console uses, so a field entry lands in the ledger identically: same parser, same reason, same audit line, and it moves the measured burn rate like any other draw. |
+| **Check in** | Back at the station, or still out. Only the first counts as accounted for in a head-count, which is what lets an incident close. |
+| **SOS** | Declares a critical incident at your last known position and counts everyone nearby. Held, not tapped — a knock against a parka must not raise a station-wide emergency. |
+
+It asks once who is holding the handset, because all three actions are about
+a person and an anonymous SOS is a much worse artefact than one extra tap.
+That is remembered on the device and the UI says what it is: not a sign-in.
+
+The link state sits above the buttons throughout, because out there it is the
+difference between *the station knows* and *this handset knows* — and when a
+write is queued, the console says so rather than reporting success. The SOS
+screen is emphatic about it: no link means the station has **not** been told,
+and to raise the alarm by radio.
+
+It is a default, not a cage. `/field` carries a link to the full console and
+the choice sticks, because trapping every narrow viewport would put the
+roster out of reach of someone who needs it on a phone.
+
+---
+
+## 🚚 Inbound procurement
+
+The cargo board starts at the dock. `GET /procurement` covers the weeks
+before that — what the station has on order, from whom, and what the vendor
+promised. Lateness is derived from the promised date on read, exactly as a
+consignment's is from its ETA.
+
+The orders are not a parallel list. `POST /procurement/{id}/dispatch` calls
+the real shipment-creation path, so the crate that appears on the cargo board
+is an ordinary consignment with a barcode, a risk score, a cold-chain band
+where its category has one, and the stock row the order named already
+attached. The order becomes `shipped` and the two are linked both ways.
+
+Only a **confirmed** order can be dispatched: an order the vendor has not
+acknowledged is not cargo, and a crate on the board for one nobody agreed to
+supply is a lie the rest of the console would then plan around.
+
+This is not a vendor portal. Vendors do not log in, and nothing is sent to
+them. It is the station's own record of what it is owed, which is the part
+the station is answerable for.
+
+---
+
 ## 🔮 Asking "what if"
 
 `POST /inventory/what-if?station=Maitri` scores the station as it stands and
@@ -333,6 +386,7 @@ you which is which is one you cannot act on.
 | Head-counts and accountability | Personnel status, which an operator sets | **Real** — as accurate as the last check-in |
 | Audit chain | SHA-256 over each entry and the one before it | **Real, and tamper-*evident*** — a writer with database access could recompute the whole chain. Not tamper-proof, and `/events/verify` says so in its own response |
 | Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran | **Real**, and the UI never claims AI when a regex did the work |
+| Purchase orders and vendor names | Synthetic, planted by the demonstration season | **Synthetic** — no vendor system is contacted and nothing is sent to anyone; this is the station's own record of what it has on order |
 | The demonstration season | Synthetic records planted by `/admin/demo-season`, or on boot where `PRAHARI_SEED_DEMO_ON_BOOT` is set and the station is empty | **Synthetic**, and the audit log says so in the entry that creates it |
 
 What Prahari does **not** have, and does not pretend to: a satellite link, a
@@ -446,11 +500,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 186 tests
+npm test                 # 221 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**699 backend tests (~6 s) and 186 frontend tests (~3 s).** No network, no
+**732 backend tests (~6 s) and 221 frontend tests (~3 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -480,6 +534,7 @@ What they cover, and why these things in particular:
 | `test_idempotency` | That a replayed write lands once, that two identical writes without keys both land, and that a refusal is not remembered. |
 | `test_observer` | That a read-only session reads everything, writes nothing, cannot promote itself by editing its cookie, and can still sign out. |
 | `test_incident_lifecycle` | The stages, that a response cannot roll backwards, that dispatch advances it, and that the head-count rule survives having five stages instead of two. |
+| `test_procurement` | The leg before the ship: that an unconfirmed order cannot become a crate, that dispatching creates a real consignment, and that the stock row an order names survives the handover rather than falling back to the category default. |
 | `test_asset_ranking` | Each factor in the score, the round-trip range check, and that the ranking follows the incident type. |
 | `test_projection` | That a what-if writes nothing, and that a projected blizzard reaches the same figure as applying one for real — the check that there is one set of formulas rather than two. |
 | `test_forecast` | What counts as a day of consumption, the refusal below five of them, and that the same station state forecasts the same way every time. |
@@ -491,13 +546,15 @@ What they cover, and why these things in particular:
 | `offlineQueue.test.ts` | Work recorded during an outage: that it survives, replays in order, and is not discarded when a session lapses. |
 | `SessionProvider.test.tsx` | The sign-in gate, and that the key is never retained after it is used. |
 | `DemoSeasonButton.test.tsx` | That the season cannot be loaded by accident, and reports what it planted. |
+| `field/page.test.tsx` | That field mode asks who is holding the handset, that an SOS is not raised by a tap, and that a queued check-in is never reported as having reached the station. |
+| `ProcurementBoard.test.tsx` | That dispatch is offered only on a confirmed order, and that a weight which is not a number is refused rather than scored. |
 | `WhatIfPanel.test.tsx` | That the result is labelled a projection, states its assumptions, hides rows the scenario did not move, and shows no stale answer when the link is down. |
 | `ColdChainCell.test.tsx` | That a recovered crate still shows its excursion, that a typed reading is recorded as manual, and that unmonitored cargo renders nothing. |
 | `serviceWorker.test.ts` | That the cache never installs in front of the dev server, and that a console whose cache will not install still boots. |
 | `useInventory.test.tsx` | The stock-command preview, including that a queued command is never offered as one to confirm. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count. Seventy known bugs — a flat criticality rule, bearing by the
+line count. Seventy-seven known bugs — a flat criticality rule, bearing by the
 flat approximation, deviation measured to waypoints, an incident closable over
 a missing person, an unverified session signature, a database back inside the
 container, an audit chain that no longer links, a stocktake counted as
@@ -518,7 +575,7 @@ three more surfaced when this batch was added, one of which was a genuine bug
 — a query listing the five stage names by hand, which counted an incident
 still holding the legacy `open` value as closed.
 CI runs it weekly rather than per-commit: it runs the whole suite once per
-mutation, so it costs roughly seventy times a normal run.
+mutation, so it costs roughly eighty times a normal run.
 
 ---
 

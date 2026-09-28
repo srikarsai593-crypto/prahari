@@ -460,6 +460,44 @@ class TemperatureReading(BaseModel):
     note: Optional[str] = Field(default=None, max_length=200)
 
 
+# The leg before the ship. See app/routes/procurement.py.
+PurchaseOrderStatus = Literal['ordered', 'confirmed', 'shipped', 'cancelled']
+
+
+class PurchaseOrderCreate(BaseModel):
+    """An order placed with a vendor, before anything is on a vessel."""
+    vendor: str = Field(min_length=1, max_length=120)
+    item_name: str = Field(min_length=1, max_length=120)
+    category: CargoCategory
+    quantity: Optional[float] = Field(default=None, gt=0, le=1_000_000)
+    unit: Optional[str] = Field(default=None, max_length=24)
+    # The stock row this will top up, carried through to the consignment so
+    # the eventual restock lands on the right item.
+    inventory_item_id: Optional[str] = Field(default=None, max_length=64)
+    destination_station: Station
+    # Days from now that the vendor promised. Negative backdates it, which
+    # is the only way to see the overdue-order treatment without waiting
+    # weeks for a real order to slip.
+    promised_in_days: Optional[float] = Field(default=None, ge=-3650, le=3650)
+    notes: Optional[str] = Field(default=None, max_length=300)
+
+
+class PurchaseOrderUpdate(BaseModel):
+    """Confirm an order, or call it off. `shipped` is not settable here — an
+    order becomes shipped by being dispatched into a real consignment, which
+    is the whole point of the link."""
+    status: Optional[Literal['confirmed', 'cancelled']] = None
+    promised_in_days: Optional[float] = Field(default=None, ge=-3650, le=3650)
+    notes: Optional[str] = Field(default=None, max_length=300)
+
+
+class PurchaseOrderDispatch(BaseModel):
+    """Turn a confirmed order into a consignment on its way to the station."""
+    weight_kg: float = Field(gt=0, le=50_000)
+    # Hours until the crate is due, as ShipmentCreate means it.
+    eta_hours: Optional[float] = Field(default=None, ge=-8760, le=8760)
+
+
 class WhatIfScenario(BaseModel):
     """A question about a station that does not exist yet.
 
