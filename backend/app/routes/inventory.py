@@ -10,6 +10,9 @@ from ..auth import require_key, require_reader
 from ..conditions import get_delta_t
 from ..timeutil import utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change
+from ..stock_ledger import (record_movement, observed_burn_rates,
+                            compare_to_configured, REASON_COMMAND,
+                            REASON_CORRECTION)
 
 # Reads are gated at the router, so a route added later inherits the gate
 # instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
@@ -159,13 +162,37 @@ def compute_depletion(item: dict, delta_t: float, headcount_factor: float = 1.0)
     }
 
 
-def _with_depletion(row, headcount_factor: float = None) -> dict:
+def _observed_cache(db):
+    """Observed rates per station, read once per request rather than per row.
+
+    Deriving them walks that station's inventory events, so doing it inside
+    the row loop made listing the store O(rows x events).
+    """
+    cache: dict[str, dict] = {}
+
+    def for_station(station: str) -> dict:
+        if station not in cache:
+            cache[station] = observed_burn_rates(db, station)
+        return cache[station]
+    return for_station
+
+
+def _with_depletion(row, headcount_factor: float = None, observed_for=None) -> dict:
     d = dict(row)
     d['updated_at'] = to_utc_iso(d.get('updated_at'))
     if headcount_factor is None:
         headcount_factor = station_headcount(d['station'])['factor']
     # delta_T is a property of the item's own station, not a global.
     d.update(compute_depletion(d, get_delta_t(d['station']), headcount_factor))
+
+    # What the station actually consumed, beside what it was configured to.
+    # base_burn_rate is a provisioning assumption that nothing had ever
+    # checked; the gap between the two is the figure worth reading, because
+    # days_of_cover is built entirely on the configured one.
+    observed = (observed_for(d['station']) if observed_for
+                else observed_burn_rates(get_db(), d['station'])).get(d['id'])
+    d['observed_burn'] = observed
+    d['observed_vs_configured'] = compare_to_configured(d.get('base_burn_rate'), observed)
     return d
 
 
@@ -296,7 +323,8 @@ def list_inventory(station: Station = None, category: str = None):
         params.append(category)
     query += ' ORDER BY name'
     factor = _factor_cache(db)
-    return [_with_depletion(r, factor(r['station']))
+    observed = _observed_cache(db)
+    return [_with_depletion(r, factor(r['station']), observed)
             for r in db.execute(query, params).fetchall()]
 
 
@@ -339,7 +367,8 @@ def cross_station_availability(item_name: str = Query(min_length=1, max_length=1
         (f'%{item_name.lower()}%',)
     ).fetchall()
     factor = _factor_cache(db)
-    items = [_with_depletion(r, factor(r['station'])) for r in rows]
+    observed = _observed_cache(db)
+    items = [_with_depletion(r, factor(r['station']), observed) for r in rows]
 
     # Surplus is only meaningful between rows counted the same way, so the
     # comparison is grouped by unit rather than summing litres onto units.
@@ -464,16 +493,11 @@ async def process_stock_command(req: StockCommandRequest):
                                   f'stock - {shortfall} could not be issued')
         return preview
 
-    now = utc_now_iso()
-    db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?',
-               (new_qty, now, item['id']))
-    db.commit()
-
-    await log_event('inventory', f'Stock command at {station}: {result["action"]} {delta} '
-                    f'{item["name"]} (was {old_qty}, now {new_qty})', 'stock_command', item['id'],
-                    {'parsed': result, 'station': station}, station=station)
-    await manager.broadcast({'type': 'inventory_update',
-                             'data': {'item_id': item['id'], 'new_quantity': new_qty}})
+    await record_movement(
+        db, dict(item), new_qty, reason=REASON_COMMAND, actor='stock_command',
+        message=(f'Stock command at {station}: {result["action"]} {delta} '
+                 f'{item["name"]} (was {old_qty}, now {new_qty})'),
+        extra={'parsed': result})
     await evaluate_stock_alerts(station, db)
     await propagate_station_change(station, 'stock command', db)
 
@@ -508,16 +532,13 @@ async def update_item(item_id: str, body: InventoryUpdateRequest, station: Stati
             detail=f'{row["name"]} ({item_id}) belongs to {row["station"]}, not '
                    f'{requested_station} - switch the active station to edit it.')
 
-    now = utc_now_iso()
-    db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?',
-               (body.quantity, now, item_id))
-    db.commit()
-    await log_event('inventory',
-                    f'Inventory updated at {row["station"]}: {row["name"]} quantity '
-                    f'{row["quantity"]} -> {body.quantity}',
-                    'commander', item_id, station=row['station'])
-    await manager.broadcast({'type': 'inventory_update',
-                             'data': {'item_id': item_id, 'new_quantity': body.quantity}})
+    # A correction is a measurement being put right, not consumption — see
+    # CONSUMING_REASONS. Counting it would make the observed burn rate a
+    # record of how often someone recounted the shelf.
+    await record_movement(
+        db, dict(row), body.quantity, reason=REASON_CORRECTION, actor='commander',
+        message=(f'Inventory updated at {row["station"]}: {row["name"]} quantity '
+                 f'{row["quantity"]} -> {body.quantity}'))
     await evaluate_stock_alerts(row['station'], db)
     await propagate_station_change(row['station'], 'stock correction', db)
     return _with_depletion(db.execute('SELECT * FROM inventory_items WHERE id = ?',

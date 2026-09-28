@@ -21,7 +21,11 @@ const contentSecurityPolicy = [
   "img-src 'self' data: blob: https://*.tile.openstreetmap.org",
   "font-src 'self' data:",
   // The API and the telemetry socket are same-origin via the rewrites below.
-  `connect-src 'self'${isDev ? ' ws: http:' : ' wss: https:'}`,
+  // The service worker fetches map tiles itself, which the page's own
+  // connect-src governs.
+  `connect-src 'self' https://*.tile.openstreetmap.org${isDev ? ' ws: http:' : ' wss:'}`,
+  // The offline cache runs as a service worker from this origin.
+  "worker-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -44,7 +48,29 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: false,
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
+    return [
+      // The worker script is excluded from the page policy and given its own.
+      // A service worker runs in its own context, and the page's CSP
+      // delivered with the script governs that context rather than the page
+      // — so the page's directives are both wrong for it and, in some
+      // browsers, enough to refuse the registration outright.
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Security-Policy',
+            value: "default-src 'self'; connect-src 'self' "
+              + 'https://*.tile.openstreetmap.org' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          // The worker must not itself be cached, or a fix to the cache
+          // cannot be deployed.
+          { key: 'Cache-Control', value: 'no-cache' },
+        ],
+      },
+      // Everything except the worker, which is handled above. Next appends
+      // rather than replaces, so a catch-all of `/:path*` would put the
+      // page policy back onto /sw.js alongside its own.
+      { source: '/((?!sw\\.js$).*)', headers: securityHeaders },
+    ];
   },
   async rewrites() {
     return [

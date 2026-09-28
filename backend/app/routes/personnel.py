@@ -14,6 +14,7 @@ from ..simulation import (get_next_position, reset_simulation, get_planned_route
 from .incidents import compute_accountability, VERIFIED_SAFE_STATUSES
 from ..ratelimit import guard_write
 from ..auth import require_key, require_reader
+from .. import incident_lifecycle as lifecycle
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change
 
@@ -122,7 +123,10 @@ def _personnel_with_tracking_status(personnel, movement_plan, now=None):
 
 async def broadcast_open_incident_accountability(db):
     """Re-run the head-count for every open incident after anyone moves."""
-    open_incidents = db.execute("SELECT * FROM incidents WHERE status = 'open'").fetchall()
+    placeholders = ','.join('?' * len(lifecycle.ACTIVE_STATUSES_SQL))
+    open_incidents = db.execute(
+        f'SELECT * FROM incidents WHERE status IN ({placeholders})',
+        lifecycle.ACTIVE_STATUSES_SQL).fetchall()
     for incident in open_incidents:
         expected, safe, unaccounted, in_zone = compute_accountability(
             db, incident['location_lat'], incident['location_lng'], incident['affected_radius_m'])
@@ -412,7 +416,7 @@ async def trigger_sos(personnel_id: str):
         'INSERT INTO incidents (id, type, location_lat, location_lng, affected_radius_m, '
         'severity, status, expected_count, confirmed_safe_count, unaccounted_count, station, '
         'created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (incident_id, 'medical', lat, lng, radius, 'critical', 'open',
+        (incident_id, 'medical', lat, lng, radius, 'critical', lifecycle.DECLARED,
          expected, safe, unaccounted, person['station'], utc_now_iso())
     )
     # Someone who has raised an SOS is not "in transit" any more.

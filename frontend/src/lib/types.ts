@@ -61,7 +61,25 @@ export interface SessionState {
   server_time: string;
 }
 
-export type IncidentStatus = 'open' | 'resolved';
+/**
+ * Stages of an incident response. See backend/app/incident_lifecycle.py.
+ *
+ * `open` is the legacy word; the backend normalises it to `declared` and
+ * still accepts it as a filter meaning "anything not resolved".
+ */
+export type IncidentStatus =
+  'declared' | 'acknowledged' | 'responding' | 'contained' | 'resolved';
+
+export const INCIDENT_STAGES: IncidentStatus[] =
+  ['declared', 'acknowledged', 'responding', 'contained', 'resolved'];
+
+export const STAGE_LABEL: Record<IncidentStatus, string> = {
+  declared: 'Declared',
+  acknowledged: 'Acknowledged',
+  responding: 'Responding',
+  contained: 'Contained',
+  resolved: 'Resolved',
+};
 
 export interface Incident {
   id: string;
@@ -77,6 +95,17 @@ export interface Incident {
   confirmed_safe_count: number;
   unaccounted_count: number | null;
   created_at: string;
+  /** Anything that is not resolved. Derived by the backend so no console has
+   *  to keep its own copy of which stages are still live. */
+  is_active?: boolean;
+  stage_description?: string | null;
+  /** Stages this incident may legally move to next. */
+  next_stages?: IncidentStatus[];
+  /** When each stage was entered — the figures a debrief is built on. */
+  acknowledged_at?: string | null;
+  responding_at?: string | null;
+  contained_at?: string | null;
+  resolved_at?: string | null;
 }
 
 export interface Accountability {
@@ -109,6 +138,19 @@ export interface NearbyAsset {
   assigned_incident_id?: string | null;
   distance_m: number;
   updated_at?: string;
+  /** Capability, not just position. */
+  fuel_pct?: number | null;
+  range_km?: number | null;
+  speed_kmh?: number | null;
+  seats?: number | null;
+  medic_aboard?: number | null;
+  /** 0–1. Distance is the largest single factor but no longer the only one. */
+  suitability?: number;
+  eta_minutes?: number | null;
+  out_of_range?: boolean;
+  factors?: { proximity: number; fuel: number; reach: number; medic: number };
+  /** Why the ranking put it where it did, in words. */
+  notes?: string[];
 }
 
 /** One step of an incident's Standard Operating Procedure. */
@@ -164,6 +206,45 @@ export interface Shipment {
   is_overdue?: boolean;
   hours_overdue?: number | null;
   stalled_warning?: string | null;
+  /** The band this consignment must be kept in. Null on cargo that has none. */
+  temp_min?: number | null;
+  temp_max?: number | null;
+  cold_chain?: ColdChain;
+}
+
+/**
+ * Cold-chain state.
+ *
+ * `monitored: false` is most cargo — a crate of spares has no temperature it
+ * must be kept at. `awaiting_reading` and `within` are deliberately distinct:
+ * only one of them is reassuring.
+ */
+export interface ColdChain {
+  monitored: boolean;
+  state: 'unmonitored' | 'awaiting_reading' | 'within' | 'out_of_band';
+  last_temp_c: number | null;
+  last_temp_at?: string | null;
+  /** 'manual' (someone read a gauge) or 'logger'. Prahari has no sensors. */
+  last_temp_source?: 'manual' | 'logger' | null;
+  temp_min?: number | null;
+  temp_max?: number | null;
+  /** Excursions recorded in transit — carried so a recovered crate still
+   *  reports that it was out of band. */
+  excursion_count: number;
+  breach_summary: string | null;
+}
+
+export interface TemperatureResult {
+  temp_c: number;
+  band_state: 'within' | 'above' | 'below' | 'unmonitored';
+  deviation_c: number | null;
+  rate_c_per_h: number | null;
+  breached: boolean;
+  drifting: boolean;
+  excursion: boolean;
+  summary: string;
+  excursion_count: number;
+  cold_chain: ColdChain;
 }
 
 /** What the Cargo form sends. */
@@ -281,6 +362,22 @@ export interface InventoryItem {
   delta_t?: number;
   /** base_burn_rate scaled by live headcount, for what the crew consumes. */
   effective_base_rate?: number;
+  /**
+   * What the station actually consumed, derived from the audit log.
+   *
+   * `null` means nothing has been observed for this row. `rate: null` with a
+   * reason means there is history but not enough of it to divide by — the two
+   * are different states and the UI must not show either as a zero.
+   */
+  observed_burn?: {
+    rate: number | null;
+    movements: number;
+    observed_days: number;
+    consumed: number;
+    reason: string | null;
+  } | null;
+  /** How the observed rate stands against the configured one. */
+  observed_vs_configured?: { ratio: number | null; verdict: string } | null;
   headcount_factor?: number;
   risk_class?: RiskClass;
   /** Days of cover below which this row is critical / merely depleting. */

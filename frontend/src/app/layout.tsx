@@ -4,6 +4,7 @@ import './globals.css';
 import 'leaflet/dist/leaflet.css';
 
 import { WebSocketProvider } from '@/components/WebSocketProvider';
+import { ConnectivityWatch } from '@/components/ConnectivityWatch';
 import { SessionProvider } from '@/components/SessionProvider';
 import { LoginGate } from '@/components/LoginGate';
 import { StationProvider } from '@/components/StationProvider';
@@ -62,6 +63,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en"
           className={`${outfit.variable} ${jetbrains.variable} ${plexMono.variable}`}>
       <body>
+        {/* Outside the sign-in gate on purpose: the offline cache has to be
+            installed before it is needed, and an operator who reaches a
+            signed-out console during an outage should still get the sign-in
+            page rather than a browser error. No UI. */}
+        <ConnectivityWatch />
+
         {/* Session first: the socket and every module below it are gated, so
             there is nothing for them to do until the operator is signed in. */}
         <SessionProvider>

@@ -114,14 +114,20 @@ class Station:
     # ── HTTP ────────────────────────────────────────────────────────────────
     # Reads are gated too, so the harness presents the key on every verb. A
     # test that wants to see an *unauthenticated* response uses `client`.
+    def _with_key(self, kw: dict) -> dict:
+        """Merge the caller's headers over the credential rather than
+        colliding with it — a test that needs one more header (an
+        Idempotency-Key, say) should not have to re-supply the key."""
+        return {**kw, 'headers': {**self.headers, **(kw.get('headers') or {})}}
+
     def get(self, url, **kw):
-        return self.client.get(url, headers=self.headers, **kw)
+        return self.client.get(url, **self._with_key(kw))
 
     def post(self, url, **kw):
-        return self.client.post(url, headers=self.headers, **kw)
+        return self.client.post(url, **self._with_key(kw))
 
     def patch(self, url, **kw):
-        return self.client.patch(url, headers=self.headers, **kw)
+        return self.client.patch(url, **self._with_key(kw))
 
     def json(self, method, url, **kw):
         response = getattr(self, method)(url, **kw)

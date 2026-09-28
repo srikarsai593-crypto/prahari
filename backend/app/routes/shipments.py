@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import qrcode
 from ..database import get_db
 from ..models import (ShipmentCreate, RiskUpdateRequest, StationWeatherRequest,
-                      BarcodeScanRequest, Station)
+                      BarcodeScanRequest, Station, TemperatureReading)
 from ..events import log_event
 from ..ws_manager import manager
 from ..ratelimit import guard_write
@@ -12,6 +12,8 @@ from ..auth import require_key, require_reader
 from ..conditions import set_delta_t, get_delta_t, all_delta_t
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change, propagate_weather_change
+from ..stock_ledger import record_movement, REASON_UNLOAD, REASON_TRANSFER_OUT
+from .. import coldchain
 
 # Reads are gated at the router, so a route added later inherits the gate
 # instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
@@ -93,10 +95,11 @@ def _overdue_fields(shipment: dict, now=None) -> dict:
 
 def _serialise(row, now=None) -> dict:
     d = dict(row)
-    for field in ('dispatch_date', 'eta', 'last_scanned_at', 'updated_at'):
+    for field in ('dispatch_date', 'eta', 'last_scanned_at', 'updated_at', 'last_temp_at'):
         if field in d:
             d[field] = to_utc_iso(d[field])
     d.update(_overdue_fields(d, now))
+    d['cold_chain'] = coldchain.summarise(d)
     return d
 
 
@@ -245,22 +248,28 @@ async def create_shipment(data: ShipmentCreate):
     if data.weight_kg > CAPACITY_KG:
         capacity_warning = f'Weight {data.weight_kg}kg exceeds vessel capacity {CAPACITY_KG}kg'
 
+    # An explicit band wins; otherwise medical and food take their category
+    # default and everything else ships unmonitored. Giving a crate of
+    # generator spares a band would produce alerts nobody should act on.
+    band = coldchain.default_band(data.category) or (None, None)
+    temp_min = data.temp_min if data.temp_min is not None else band[0]
+    temp_max = data.temp_max if data.temp_max is not None else band[1]
+
     db.execute(
         'INSERT INTO shipments (id, barcode_id, expedition_id, item_name, category, '
         'weight_kg, quantity, unit, inventory_item_id, priority, origin_station, '
-        'destination_station, status, dispatch_date, eta, updated_at) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'destination_station, status, dispatch_date, eta, updated_at, '
+        'temp_min, temp_max, excursion_count) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
         (ship_id, barcode_id, data.expedition_id, data.item_name, data.category,
          data.weight_kg, quantity, unit,
          data.inventory_item_id or (target['id'] if target is not None else None),
          data.priority, data.origin_station, data.destination_station, 'dispatched',
-         utc_now_iso(), eta, utc_now_iso())
+         utc_now_iso(), eta, utc_now_iso(), temp_min, temp_max)
     )
 
     if origin_row is not None:
         new_origin_qty = origin_row['quantity'] - quantity
-        db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?',
-                   (new_origin_qty, utc_now_iso(), origin_row['id']))
         origin_note = (f' — {quantity} {origin_row["unit"]} drawn from '
                        f'{data.origin_station} stock')
     db.commit()
@@ -271,17 +280,26 @@ async def create_shipment(data: ShipmentCreate):
                     f'({data.category}, {route}){origin_note}',
                     'commander', ship_id, station=data.destination_station)
     if origin_row is not None:
-        await log_event('inventory', f'{quantity} {origin_row["unit"]} of {origin_row["name"]} '
-                        f'released to shipment {barcode_id} for {data.destination_station}',
-                        'cargo_system', origin_row['id'], station=data.origin_station)
-        await manager.broadcast({'type': 'inventory_update',
-                                 'data': {'item_id': origin_row['id'],
-                                          'new_quantity': new_origin_qty}})
+        # A transfer is stock moving house, not stock being consumed — see
+        # CONSUMING_REASONS. The origin's cover drops either way; its observed
+        # burn rate should not.
+        await record_movement(
+            db, dict(origin_row), new_origin_qty, reason=REASON_TRANSFER_OUT,
+            actor='cargo_system',
+            message=(f'{quantity} {origin_row["unit"]} of {origin_row["name"]} released to '
+                     f'shipment {barcode_id} for {data.destination_station}'),
+            extra={'shipment_id': ship_id, 'barcode_id': barcode_id,
+                   'destination_station': data.destination_station})
     await manager.broadcast({'type': 'shipment_update',
                              'data': {'shipment_id': ship_id, 'status': 'dispatched'}})
 
-    result = {'id': ship_id, 'barcode_id': barcode_id, 'eta': eta, 'status': 'dispatched',
-              **data.model_dump(), 'quantity': quantity, 'unit': unit}
+    # Serialised from the stored row rather than echoed from the request, so
+    # the create response carries the same derived fields (cold chain,
+    # overdue) as every other view of a consignment. Echoing the input meant
+    # a caller had to re-fetch to learn what the station had actually
+    # recorded — including the band it assigned.
+    result = _serialise(db.execute('SELECT * FROM shipments WHERE id = ?',
+                                   (ship_id,)).fetchone())
     if capacity_warning:
         result['capacity_warning'] = capacity_warning
     if not quantity:
@@ -376,16 +394,12 @@ async def _advance_shipment(shipment_id: str = None, barcode_id: str = None):
                             station=shipment['destination_station'])
         else:
             new_qty = inv_row['quantity'] + payload
-            db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?',
-                       (new_qty, now, inv_row['id']))
-            db.commit()
-            await log_event('inventory', f'{inv_row["name"]} restocked from unloaded shipment '
-                            f'{shipment["barcode_id"]}: {inv_row["quantity"]} -> {new_qty} '
-                            f'{inv_row["unit"]} (+{payload})',
-                            'cargo_system', inv_row['id'],
-                            station=shipment['destination_station'])
-            await manager.broadcast({'type': 'inventory_update',
-                                     'data': {'item_id': inv_row['id'], 'new_quantity': new_qty}})
+            await record_movement(
+                db, dict(inv_row), new_qty, reason=REASON_UNLOAD, actor='cargo_system',
+                message=(f'{inv_row["name"]} restocked from unloaded shipment '
+                         f'{shipment["barcode_id"]}: {inv_row["quantity"]} -> {new_qty} '
+                         f'{inv_row["unit"]} (+{payload})'),
+                extra={'shipment_id': shipment['id'], 'barcode_id': shipment['barcode_id']})
             from ..routes.inventory import evaluate_stock_alerts
             await evaluate_stock_alerts(shipment['destination_station'], db)
 
@@ -403,6 +417,91 @@ async def _advance_shipment(shipment_id: str = None, barcode_id: str = None):
 @router.post('/{shipment_id}/scan', dependencies=[Depends(require_key), Depends(guard_write)])
 async def scan_shipment(shipment_id: str):
     return await _advance_shipment(shipment_id=shipment_id)
+
+
+@router.post('/{shipment_id}/temperature',
+             dependencies=[Depends(require_key), Depends(guard_write)])
+async def record_temperature(shipment_id: str, body: TemperatureReading):
+    """Record a temperature reading against a consignment.
+
+    Two things make a reading worth keeping. The first is whether it is
+    outside the band — a vaccine that spent six hours above 8 °C arrives
+    useless, and the crate looks identical either way. The second is how fast
+    it is moving: a reefer whose compressor has stopped is still inside its
+    band for the first hour, and the rate of change is the only thing that
+    says so while there is still time to act.
+
+    An excursion counts up on the row rather than only being logged, because
+    the question on arrival is "was it ever out of band", and a crate that
+    recovered reads as fine otherwise.
+    """
+    db = get_db()
+    row = db.execute('SELECT * FROM shipments WHERE id = ? OR barcode_id = ?',
+                     (shipment_id, shipment_id)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Shipment not found')
+
+    shipment = dict(row)
+    if shipment.get('temp_min') is None and shipment.get('temp_max') is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f'{shipment["barcode_id"]} ({shipment["item_name"]}) is not a '
+                   f'temperature-controlled consignment. Set a band on it first if it '
+                   f'should be.')
+
+    verdict = coldchain.assess(shipment, body.temp_c)
+    now = utc_now_iso()
+    excursions = int(shipment.get('excursion_count') or 0) + (1 if verdict['excursion'] else 0)
+
+    db.execute('UPDATE shipments SET last_temp_c = ?, last_temp_at = ?, '
+               'last_temp_source = ?, excursion_count = ?, updated_at = ? WHERE id = ?',
+               (body.temp_c, now, body.source, excursions, now, shipment['id']))
+    db.commit()
+
+    station = shipment['destination_station']
+    # The source is named in the entry, every time. Prahari has no sensor
+    # network, and a record that did not distinguish a typed figure from a
+    # logger read-out would be asserting one.
+    detail = f'{body.temp_c:g} °C ({body.source})'
+    if verdict['excursion']:
+        await log_event(
+            'cargo',
+            f'COLD CHAIN EXCURSION: {shipment["barcode_id"]} ({shipment["item_name"]}) '
+            f'{detail} — {verdict["summary"]}',
+            'cold_chain_monitor', shipment['id'],
+            {'severity': 'high', **verdict, 'source': body.source,
+             'excursion_count': excursions, 'note': body.note},
+            station=station)
+        await manager.broadcast({
+            'type': 'alert',
+            'data': {'type': 'cold_chain', 'severity': 'high', 'station': station,
+                     'shipment_id': shipment['id'], 'barcode_id': shipment['barcode_id'],
+                     'message': f'Cold chain excursion on {shipment["barcode_id"]} '
+                                f'({shipment["item_name"]}) — {verdict["summary"]}'}})
+    else:
+        await log_event(
+            'cargo',
+            f'Temperature logged for {shipment["barcode_id"]}: {detail} — within band',
+            'cold_chain_monitor', shipment['id'],
+            {**verdict, 'source': body.source, 'note': body.note}, station=station)
+
+    await manager.broadcast({'type': 'shipment_update',
+                             'data': {'shipment_id': shipment['id'],
+                                      'cold_chain': True}})
+
+    # A consignment that can no longer be relied on is a consignment the
+    # readiness score was counting on arriving. The cascade already knows how
+    # to re-score a station against what it actually has; this is one more
+    # thing that changes the answer.
+    if verdict['excursion']:
+        await propagate_station_change(
+            station, f'cold chain excursion on {shipment["barcode_id"]}', db)
+
+    updated = db.execute('SELECT * FROM shipments WHERE id = ?', (shipment['id'],)).fetchone()
+    return {**verdict, 'shipment_id': shipment['id'],
+            'barcode_id': shipment['barcode_id'],
+            'excursion_count': excursions,
+            'cold_chain': coldchain.summarise(dict(updated))}
 
 
 @router.post('/{shipment_id}/beacon-ping', dependencies=[Depends(require_key), Depends(guard_write)])

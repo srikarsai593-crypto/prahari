@@ -57,7 +57,13 @@ CONSIGNMENTS = {
          'priority': 'critical', 'eta_hours': 132, 'scans': 1},
         {'item_name': 'Medical Supplies', 'category': 'medical', 'weight_kg': 310,
          'quantity': 90, 'unit': 'units', 'inventory_item_id': 'inv-med',
-         'priority': 'high', 'eta_hours': 38, 'scans': 2},
+         'priority': 'high', 'eta_hours': 38, 'scans': 2,
+         # Takes the 2-8C medical band by default. The readings walk it out
+         # of band and back, so the board shows a crate that recovered and
+         # still carries the excursion on its record - which is the case an
+         # operator most needs to see, and the one a current-reading-only
+         # display would report as fine.
+         'temperatures': [4.2, 11.6, 5.1]},
         {'item_name': 'Thermal Blankets', 'category': 'equipment', 'weight_kg': 260,
          'quantity': 40, 'unit': 'units', 'inventory_item_id': 'inv-blankets',
          'priority': 'normal', 'eta_hours': -26, 'scans': 1},
@@ -65,7 +71,8 @@ CONSIGNMENTS = {
     'Bharati': [
         {'item_name': 'Emergency Rations', 'category': 'food', 'weight_kg': 1200,
          'quantity': 1100, 'unit': 'kg', 'inventory_item_id': 'inv-bha-rat',
-         'priority': 'high', 'eta_hours': 76, 'scans': 1},
+         'priority': 'high', 'eta_hours': 76, 'scans': 1,
+         'temperatures': [-19.4]},
         {'item_name': 'Generator Spares', 'category': 'equipment', 'weight_kg': 480,
          'quantity': 18, 'unit': 'units', 'inventory_item_id': 'inv-bha-parts',
          'priority': 'normal', 'eta_hours': 210, 'scans': 0},
@@ -109,16 +116,25 @@ PAST_INCIDENTS = {
 STANDING_DELTA_T = {'Maitri': 6.0}
 
 
+# Keys on a consignment spec that steer the planting rather than describing
+# the crate. Everything else is passed straight to ShipmentCreate, so a field
+# added to the model needs no change here.
+_PLANTING_KEYS = ('scans', 'temperatures')
+
+
 async def _plant_consignments(station: str) -> int:
-    from .models import ShipmentCreate
-    from .routes.shipments import create_shipment, scan_shipment
+    from .models import ShipmentCreate, TemperatureReading
+    from .routes.shipments import create_shipment, record_temperature, scan_shipment
 
     planted = 0
     for spec in CONSIGNMENTS.get(station, []):
-        payload = {k: v for k, v in spec.items() if k != 'scans'}
+        payload = {k: v for k, v in spec.items() if k not in _PLANTING_KEYS}
         shipment = await create_shipment(ShipmentCreate(destination_station=station, **payload))
         for _ in range(spec.get('scans', 0)):
             await scan_shipment(shipment['id'])
+        for temp_c in spec.get('temperatures', ()):
+            await record_temperature(shipment['id'],
+                                     TemperatureReading(temp_c=temp_c, source='logger'))
         planted += 1
     return planted
 

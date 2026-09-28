@@ -170,10 +170,13 @@ class TestAssetDispatch:
         assert station.patch(f'/incidents/assets/{self.snowcat(station)["id"]}/dispatch',
                              json={'incident_id': incident['id']}).status_code == 409
 
-    def test_nearest_assets_are_ordered_by_distance(self, station):
-        distances = [a['distance_m'] for a in station.json(
-            'get', '/incidents/nearby-assets/search?lat=-70.767&lng=11.731')]
-        assert distances == sorted(distances)
+    def test_every_asset_reports_its_distance(self, station):
+        """Ordering is by suitability now, not distance alone — see
+        test_asset_ranking. Distance is still the first thing a commander
+        reads, so it is still on every row."""
+        assets = station.json(
+            'get', '/incidents/nearby-assets/search?lat=-70.767&lng=11.731')
+        assert assets and all(isinstance(a['distance_m'], int) for a in assets)
 
 
 class TestEscalation:
@@ -240,7 +243,10 @@ class TestPowerFailure:
         result = station.json('post', '/incidents/power-failure', json={'station': 'Maitri'})
         incident = station.json('get', f'/incidents/{result["incident_id"]}')
         assert incident['type'] == 'power_failure'
-        assert incident['status'] == 'open'
+        # A drill lands at the first stage of a real response, not in a
+        # separate state of its own — see test_incident_lifecycle.
+        assert incident['status'] == 'declared'
+        assert incident['is_active'] is True
 
     def test_it_comes_with_its_own_protocol(self, station):
         result = station.json('post', '/incidents/power-failure', json={'station': 'Maitri'})
