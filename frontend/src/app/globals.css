@@ -987,3 +987,517 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
 [data-compact] {
   min-height: 0 !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   High-contrast theme  —  [data-theme='contrast']
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Two constituencies, one answer.
+
+   GIGW 3.0 expects a government portal to ship a high-contrast view; that is
+   the same reason the utility rail carries A- / A / A+. And a station laptop
+   taken outside is read against snow, under a sun that does not set for
+   months at these latitudes. The default canvas is a pale ice wash, which is
+   the worst surface for that: the glare it throws back competes with
+   everything drawn on it. Dropping the page to black, pushing the foreground
+   to maximum and thickening every boundary serves the low-vision reader and
+   the operator squinting at a Toughbook equally.
+
+   ── Why this section is purely additive ──────────────────────────────────
+
+   Every rule below is scoped behind the `[data-theme='contrast']` attribute
+   and NOTHING above this line was modified to accommodate it. The standard
+   console therefore cannot regress: with the attribute absent, not one of
+   these selectors matches, and the computed style of every element is
+   byte-identical to what it was before the theme existed. `applyTheme()`
+   removes the attribute rather than setting `data-theme="standard"` for
+   exactly this reason.
+
+   The cost of that choice is this file: because the palette in
+   tailwind.config.ts is literal hex rather than variables, the utility
+   classes have to be re-pointed here by hand. The set below was enumerated
+   from the codebase, not guessed. A component that introduces a colour
+   family not listed here will not follow the theme — that is the known
+   limitation, and the fix is to add it to the group it belongs to.
+
+   ── What deliberately does NOT change ────────────────────────────────────
+
+   Map tiles. They are photographic terrain, and inverting or re-colouring
+   them would misrepresent the ground an expedition is about to cross. The
+   chrome around the map flips; the map itself is left telling the truth.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+[data-theme='contrast'] {
+  /* Surfaces — black, so the screen emits as little as it can. */
+  --bg-page: #000000;
+  --bg-card: #000000;
+  --bg-inset: #101010;
+  --bg-command: #000000;
+  --bg-command-deep: #000000;
+
+  /* Borders do the structural work the drop shadows did. */
+  --border: #ffffff;
+  --border-inset: #9a9a9a;
+  --border-accent: #ffd500;
+
+  /* Yellow on black is 15.6:1 and is the long-standing high-contrast
+     convention for the interactive colour. */
+  --accent: #ffd500;
+  --accent-hover: #ffe766;
+  --accent-tint: #000000;
+  --accent-ring: #ffd500;
+  --accent-deep: #ffd500;
+
+  --text: #ffffff;
+  --text-muted: #d0d0d0;    /* 10.9:1 — still a pass, not a whisper */
+  --text-faint: #a8a8a8;    /*  6.8:1 */
+  --text-on-dark: #ffffff;
+
+  /* Status spectrum. Hue still carries the meaning, but every one of these
+     clears 6:1 on black, which none of the standard-theme values would. */
+  --nominal: #00e676;
+  --nominal-fill: #00e676;
+  --nominal-tint: #000000;
+  --nominal-edge: #00e676;
+
+  --alert: #ffb300;
+  --alert-fill: #ffb300;
+  --alert-tint: #000000;
+  --alert-edge: #ffb300;
+
+  --danger: #ff6b6b;
+  --danger-hover: #ff9090;
+  --danger-fill: #ff6b6b;
+  --danger-tint: #000000;
+  --danger-edge: #ff6b6b;
+
+  /* Shadow is invisible on black and was only ever standing in for an edge,
+     which this theme draws explicitly. */
+  --shadow-card: none;
+  --shadow-raised: none;
+}
+
+/* ── Structure: edges replace elevation ──────────────────────────────────── */
+
+[data-theme='contrast'] body {
+  background-color: #000000;
+}
+
+[data-theme='contrast'] .portal-card,
+[data-theme='contrast'] .subview-card,
+[data-theme='contrast'] .glass-card,
+[data-theme='contrast'] .inset-panel {
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  box-shadow: none;
+}
+
+[data-theme='contrast'] .portal-card--alert {
+  border-color: var(--danger);
+}
+
+[data-theme='contrast'] .portal-card--invert {
+  background: #000000;
+  border: 2px solid var(--border);
+  color: #ffffff;
+}
+
+[data-theme='contrast'] .gov-rail,
+[data-theme='contrast'] .portal-nav,
+[data-theme='contrast'] .notam-strip {
+  background: #000000;
+  color: #ffffff;
+  border-bottom: 2px solid var(--border);
+}
+
+[data-theme='contrast'] .portal-tab {
+  color: #ffffff;
+}
+
+[data-theme='contrast'] .portal-tab:hover,
+[data-theme='contrast'] .portal-tab[aria-current='page'] {
+  background: var(--accent);
+  color: #000000;
+}
+
+/* ── Controls: the accent is a fill, so its text must go dark ────────────── */
+
+[data-theme='contrast'] .btn-primary {
+  background: var(--accent);
+  color: #000000;
+  border-color: var(--accent);
+}
+
+[data-theme='contrast'] .btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: #000000;
+}
+
+[data-theme='contrast'] .btn-danger {
+  background: var(--danger);
+  color: #000000;
+  border-color: var(--danger);
+}
+
+[data-theme='contrast'] .btn-danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+  color: #000000;
+}
+
+[data-theme='contrast'] .btn-secondary,
+[data-theme='contrast'] .btn-ghost {
+  background: #000000;
+  color: #ffffff;
+  border: 2px solid var(--border);
+}
+
+[data-theme='contrast'] .btn-secondary:hover:not(:disabled),
+[data-theme='contrast'] .btn-ghost:hover:not(:disabled) {
+  background: var(--accent);
+  color: #000000;
+  border-color: var(--accent);
+}
+
+[data-theme='contrast'] input,
+[data-theme='contrast'] select,
+[data-theme='contrast'] textarea {
+  background: #000000 !important;
+  color: #ffffff !important;
+  border: 2px solid var(--border) !important;
+}
+
+[data-theme='contrast'] input::placeholder,
+[data-theme='contrast'] textarea::placeholder {
+  color: var(--text-faint) !important;
+}
+
+/* Thicker and offset further: this is the theme someone reaches for when the
+   default focus ring is what they could not see. */
+[data-theme='contrast'] :focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+[data-theme='contrast'] .status-badge {
+  border-width: 2px;
+  background: #000000;
+}
+
+[data-theme='contrast'] .status-info {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+[data-theme='contrast'] .status-neutral {
+  color: #ffffff;
+  border-color: #9a9a9a;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Tailwind utility re-pointing.
+
+   The palette in tailwind.config.ts is literal hex, so these cannot follow
+   the variables above on their own. Grouped by the job the class does rather
+   than by the colour it names, because in this theme a dozen tints all
+   collapse onto black and it is the border and the text that carry meaning.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* — Surfaces: every light fill becomes the page — */
+[data-theme='contrast'] .bg-white,
+[data-theme='contrast'] .bg-white\/95,
+[data-theme='contrast'] .bg-white\/60,
+[data-theme='contrast'] .bg-white\/25,
+[data-theme='contrast'] .bg-white\/15,
+[data-theme='contrast'] .bg-white\/10,
+[data-theme='contrast'] .bg-white\/5,
+[data-theme='contrast'] .bg-black\/30,
+[data-theme='contrast'] .bg-black\/20,
+[data-theme='contrast'] .bg-frost-card,
+[data-theme='contrast'] .bg-frost-subtle,
+[data-theme='contrast'] .bg-ice-surface,
+[data-theme='contrast'] .bg-ice-subtle,
+[data-theme='contrast'] .bg-arctic-50,
+[data-theme='contrast'] .bg-arctic-50\/60,
+[data-theme='contrast'] .bg-arctic-50\/50,
+[data-theme='contrast'] .bg-arctic-50\/40,
+[data-theme='contrast'] .bg-arctic-100,
+[data-theme='contrast'] .bg-arctic-200\/70,
+[data-theme='contrast'] .bg-arctic-600\/25,
+[data-theme='contrast'] .bg-frost-border,
+[data-theme='contrast'] .bg-navy,
+[data-theme='contrast'] .bg-navy-deep,
+[data-theme='contrast'] .bg-navy-panel,
+[data-theme='contrast'] .bg-navy-command,
+[data-theme='contrast'] .bg-arctic-900,
+[data-theme='contrast'] .bg-arctic-950,
+[data-theme='contrast'] .bg-arctic-950\/30,
+[data-theme='contrast'] .bg-amber-50,
+[data-theme='contrast'] .bg-amber-50\/90,
+[data-theme='contrast'] .bg-amber-50\/70,
+[data-theme='contrast'] .bg-amber-50\/30,
+[data-theme='contrast'] .bg-amber-100,
+[data-theme='contrast'] .bg-rose-50,
+[data-theme='contrast'] .bg-rose-50\/90,
+[data-theme='contrast'] .bg-rose-50\/80,
+[data-theme='contrast'] .bg-rose-50\/70,
+[data-theme='contrast'] .bg-rose-50\/60,
+[data-theme='contrast'] .bg-rose-50\/30,
+[data-theme='contrast'] .bg-rose-100,
+[data-theme='contrast'] .bg-emerald-50,
+[data-theme='contrast'] .bg-emerald-50\/80,
+[data-theme='contrast'] .bg-emerald-50\/70,
+[data-theme='contrast'] .bg-emerald-50\/30,
+[data-theme='contrast'] .bg-emerald-100,
+[data-theme='contrast'] .bg-sky-50,
+[data-theme='contrast'] .bg-sky-50\/80,
+[data-theme='contrast'] .bg-sky-50\/70,
+[data-theme='contrast'] .bg-nominal-tint,
+[data-theme='contrast'] .bg-alert-tint,
+[data-theme='contrast'] .bg-emergency-tint {
+  background-color: #000000;
+}
+
+/* — Text: collapse each family onto its high-contrast representative — */
+[data-theme='contrast'] .text-white,
+[data-theme='contrast'] .text-slate-200,
+[data-theme='contrast'] .text-slate-300,
+[data-theme='contrast'] .text-arctic-900,
+[data-theme='contrast'] .text-arctic-800,
+[data-theme='contrast'] .text-arctic-100 {
+  color: #ffffff;
+}
+
+[data-theme='contrast'] .text-frost-muted,
+[data-theme='contrast'] .text-slate-400,
+[data-theme='contrast'] .text-slate-500,
+[data-theme='contrast'] .text-slate-600 {
+  color: var(--text-muted);
+}
+
+[data-theme='contrast'] .text-arctic-700,
+[data-theme='contrast'] .text-arctic-600,
+[data-theme='contrast'] .text-arctic-500,
+[data-theme='contrast'] .text-arctic-400,
+[data-theme='contrast'] .text-arctic-300,
+[data-theme='contrast'] .text-sky-700,
+[data-theme='contrast'] .text-sky-800,
+[data-theme='contrast'] .text-sky-900 {
+  color: var(--accent);
+}
+
+[data-theme='contrast'] .text-rose-100,
+[data-theme='contrast'] .text-rose-300,
+[data-theme='contrast'] .text-rose-600,
+[data-theme='contrast'] .text-rose-700,
+[data-theme='contrast'] .text-rose-800,
+[data-theme='contrast'] .text-rose-900,
+[data-theme='contrast'] .text-emergency,
+[data-theme='contrast'] .text-emergency-fill {
+  color: var(--danger);
+}
+
+[data-theme='contrast'] .text-amber-600,
+[data-theme='contrast'] .text-amber-700,
+[data-theme='contrast'] .text-amber-800,
+[data-theme='contrast'] .text-amber-900,
+[data-theme='contrast'] .text-alert,
+[data-theme='contrast'] .text-alert-fill {
+  color: var(--alert);
+}
+
+[data-theme='contrast'] .text-emerald-600,
+[data-theme='contrast'] .text-emerald-700,
+[data-theme='contrast'] .text-emerald-800,
+[data-theme='contrast'] .text-emerald-900,
+[data-theme='contrast'] .text-nominal,
+[data-theme='contrast'] .text-nominal-fill {
+  color: var(--nominal);
+}
+
+/* A fill's own label must not be re-pointed by the rules above — the fill is
+   already the status colour, so the text on it stays dark. */
+[data-theme='contrast'] .bg-rose-500 .text-white,
+[data-theme='contrast'] .bg-rose-600 .text-white,
+[data-theme='contrast'] .bg-rose-700 .text-white,
+[data-theme='contrast'] .bg-rose-800 .text-white,
+[data-theme='contrast'] .bg-emerald-500 .text-white,
+[data-theme='contrast'] .bg-sky-500 .text-white,
+[data-theme='contrast'] .bg-arctic-600 .text-white,
+[data-theme='contrast'] .bg-arctic-700 .text-white,
+[data-theme='contrast'] .bg-rose-600 .text-rose-100,
+[data-theme='contrast'] .bg-rose-700 .text-rose-100,
+[data-theme='contrast'] .bg-rose-800 .text-rose-100 {
+  color: #000000;
+}
+
+/* — Solid status fills —
+
+   These MUST come after the text rules above. A control that carries both a
+   fill and a text class on the same element — `bg-arctic-600 text-white` on
+   the active nav tab, the A-/A/A+ group and the contrast toggle itself —
+   matches both at equal specificity, so source order decides. With the fills
+   first, `text-white` won and the label came out white on yellow: 1.4:1,
+   which is unreadable, and worst of all on the very control someone reaches
+   for when they cannot read the page. */
+[data-theme='contrast'] .bg-rose-500,
+[data-theme='contrast'] .bg-rose-600,
+[data-theme='contrast'] .bg-rose-700,
+[data-theme='contrast'] .bg-rose-800,
+[data-theme='contrast'] .bg-emergency-fill {
+  background-color: var(--danger);
+  color: #000000;
+}
+
+[data-theme='contrast'] .bg-emerald-500,
+[data-theme='contrast'] .bg-nominal-fill {
+  background-color: var(--nominal);
+  color: #000000;
+}
+
+[data-theme='contrast'] .bg-sky-500,
+[data-theme='contrast'] .bg-arctic-400,
+[data-theme='contrast'] .bg-arctic-500,
+[data-theme='contrast'] .bg-arctic-600,
+[data-theme='contrast'] .bg-arctic-700,
+[data-theme='contrast'] .bg-alert-fill,
+[data-theme='contrast'] .bg-slate-400 {
+  background-color: var(--accent);
+  color: #000000;
+}
+
+
+/* — Borders: thick, and never dimmer than the text they enclose — */
+[data-theme='contrast'] .border-frost-border,
+[data-theme='contrast'] .border-ice-border,
+[data-theme='contrast'] .border-arctic-200,
+[data-theme='contrast'] .border-arctic-100,
+[data-theme='contrast'] .border-arctic-300,
+[data-theme='contrast'] .border-arctic-400,
+[data-theme='contrast'] .border-navy,
+[data-theme='contrast'] .border-navy-panel,
+[data-theme='contrast'] .border-slate-700,
+[data-theme='contrast'] .border-white\/40,
+[data-theme='contrast'] .border-white\/20,
+[data-theme='contrast'] .border-white\/15,
+[data-theme='contrast'] .border-white\/10,
+[data-theme='contrast'] .border-black\/10,
+[data-theme='contrast'] .border-black\/5 {
+  border-color: var(--border);
+}
+
+[data-theme='contrast'] .border-rose-200,
+[data-theme='contrast'] .border-rose-300,
+[data-theme='contrast'] .border-rose-600,
+[data-theme='contrast'] .border-rose-700,
+[data-theme='contrast'] .border-rose-900,
+[data-theme='contrast'] .border-emergency-edge {
+  border-color: var(--danger);
+}
+
+[data-theme='contrast'] .border-amber-200,
+[data-theme='contrast'] .border-amber-300,
+[data-theme='contrast'] .border-alert-edge {
+  border-color: var(--alert);
+}
+
+[data-theme='contrast'] .border-emerald-200,
+[data-theme='contrast'] .border-emerald-300,
+[data-theme='contrast'] .border-nominal-edge {
+  border-color: var(--nominal);
+}
+
+[data-theme='contrast'] .border-sky-200,
+[data-theme='contrast'] .border-arctic-600,
+[data-theme='contrast'] .border-arctic-700 {
+  border-color: var(--accent);
+}
+
+[data-theme='contrast'] .ring-rose-200,
+[data-theme='contrast'] .ring-rose-400\/60 {
+  --tw-ring-color: var(--danger);
+}
+
+[data-theme='contrast'] .ring-amber-200 {
+  --tw-ring-color: var(--alert);
+}
+
+[data-theme='contrast'] .ring-arctic-200 {
+  --tw-ring-color: var(--accent);
+}
+
+/* `divide-*` colours the rule Tailwind draws between siblings, not the
+   element, so it needs the same child selector Tailwind uses. */
+[data-theme='contrast'] .divide-frost-border > * + *,
+[data-theme='contrast'] .divide-arctic-50 > * + * {
+  border-color: var(--border);
+}
+
+[data-theme='contrast'] .decoration-emerald-400 {
+  text-decoration-color: var(--nominal);
+}
+
+[data-theme='contrast'] .decoration-white\/25,
+[data-theme='contrast'] .decoration-white\/60 {
+  text-decoration-color: var(--accent);
+}
+
+/* Any 1px edge in the console becomes 2px: at arm's length in glare, a
+   hairline is the first thing to disappear.
+
+   Per side, not `border-width`. Tailwind's preflight zeroes all four widths,
+   so `.border-b` is a bottom rule only — widening it with the shorthand
+   would draw three edges that the design never had. */
+[data-theme='contrast'] .border { border-width: 2px; }
+[data-theme='contrast'] .border-b { border-bottom-width: 2px; }
+[data-theme='contrast'] .border-t { border-top-width: 2px; }
+[data-theme='contrast'] .border-l { border-left-width: 2px; }
+[data-theme='contrast'] .border-r { border-right-width: 2px; }
+
+/* Gradients wash out to a flat plane; there is no contrast budget for them. */
+[data-theme='contrast'] [class*='bg-gradient-'] {
+  background-image: none;
+}
+
+/* Decoration that exists to look like weather. It is drawn over the text and
+   cannot earn its luminance here — a drifting white particle field is the
+   single worst thing to put on a screen someone switched to this theme in
+   order to read. */
+[data-theme='contrast'] .hero-blizzard,
+[data-theme='contrast'] .blizzard-wind-layer {
+  display: none;
+}
+
+/* ── Leaflet ─────────────────────────────────────────────────────────────
+
+   The map *tiles* stay exactly as they are: they are photographic terrain,
+   and re-colouring the ground an expedition is about to cross would be a
+   lie told in the name of legibility.
+
+   The furniture around them is another matter. The base rules above set the
+   zoom buttons to `background:#fff` with `color:var(--text)` — both marked
+   `!important` — so overriding the variable alone turned their labels white
+   on a white button. Chrome flips; data does not. */
+
+[data-theme='contrast'] .leaflet-control-zoom a,
+[data-theme='contrast'] .leaflet-popup-content-wrapper,
+[data-theme='contrast'] .leaflet-popup-tip {
+  background: #000000 !important;
+  color: #ffffff !important;
+  border-color: #ffffff !important;
+}
+
+[data-theme='contrast'] .leaflet-control-zoom a:hover {
+  background: var(--accent) !important;
+  color: #000000 !important;
+}
+
+/* The attribution sits over the tiles, so it needs its own plate to stay
+   readable rather than inheriting the page background. */
+[data-theme='contrast'] .leaflet-control-attribution {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+[data-theme='contrast'] .leaflet-control-attribution a {
+  color: var(--accent) !important;
+}

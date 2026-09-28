@@ -70,6 +70,10 @@ module reads the same truth.
 | **Procurement is the first leg, not a second list** | The cargo board starts at the dock; a station's exposure starts weeks earlier when someone orders the fuel, so "not ordered yet" and "three days out" both read as absent. Dispatching an order *creates* the consignment through the real shipment path — barcode, risk score, cold-chain band, and the stock row the order named carried through. One chain, not two tables that mention the same cargo. |
 | **A phone gets three buttons, not a smaller dashboard** | Outside, in gloves, an operator does three things: records what they used, says they are back, or calls for help. Field mode is one action per screen with targets well past the 44px floor, and nothing destructive on a single tap — consumption is confirmed against what the station understood, and SOS needs a deliberate hold, because a knock against a parka must not declare a station-wide emergency. |
 | **Field mode is a default, not a cage** | A handset lands on the three-button view and can leave it, and the choice sticks. Trapping every narrow viewport would put the roster out of reach of someone who needs it on a phone, which is a worse failure than a desk user seeing one extra tap. |
+| **A crate is scanned, not typed** | The stores bunker is the worst place in the station to take a glove off. Field mode opens the rear camera onto the crate label and the keyboard is the fallback, not the other way round — a frosted or torn label still has its ID on the manifest. The decoder is imported on demand, because three of field mode's four actions never need it and the page has to open on a bad link. |
+| **A high-contrast theme that cannot break the default one** | GIGW 3.0 expects a portal to offer one, and a laptop carried onto the ice is read against snow under a sun that does not set. Every rule is scoped behind `[data-theme='contrast']` and *nothing* above it in `globals.css` was modified: with the attribute absent no selector matches and the standard console is byte-identical to what it was. `applyTheme()` removes the attribute rather than setting `data-theme="standard"` for exactly that reason. Map tiles are deliberately excluded — re-colouring the ground a traverse is about to cross would be a lie told for legibility. |
+| **The handover is the artefact, not the dashboard** | A station runs continuously and the console does not. What the outgoing commander knows that is not written down goes to bed with them, and the relief sees only the present. The brief is station-wide and forward-looking, where the post-incident debrief is retrospective and about one closed incident. Each source may fail on its own and the document *names* the ones it could not read — a section that is blank because a call timed out, read at 3am, is indistinguishable from a station where nothing is wrong. |
+| **A rung below the offline queue** | The queue assumes the link comes back. If the satellite terminal itself is down the queue holds forever, and Antarctic stations fall back to HF radio. Field mode used to tell an operator whose SOS could not be sent to "raise the alarm by radio" and hand them nothing — leaving somebody in trouble to compose a position report from memory. It now composes it: fixed field order, only characters ITA2 can carry, and a check group so a miscopied position is *known* to be miscopied. This is not compression — ITA2 is a narrower alphabet than ASCII, not a denser one — and the README says so rather than claiming otherwise. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -260,12 +264,13 @@ the browser last did.
 
 ## 📱 Field mode
 
-A handset opening the console lands on `/field`: three targets, one action
+A handset opening the console lands on `/field`: four targets, one action
 per screen, sized for a gloved thumb.
 
 | Action | What it does |
 |---|---|
 | **Log consumption** | Pick the item, step the amount in units that suit it — 10 at a time for litres and kilograms, 1 for counted things — and confirm. It composes the same plain-language command the desk console uses, so a field entry lands in the ledger identically: same parser, same reason, same audit line, and it moves the measured burn rate like any other draw. |
+| **Scan cargo** | Opens the rear camera onto a crate label and advances the consignment the moment it decodes. The same `scanBarcode` path the cargo page has always used, behind a screen that works in gloves. The manifest code can be typed instead — always offered, not revealed on failure, because discovering the fallback while holding a crate is worse than seeing one extra field. |
 | **Check in** | Back at the station, or still out. Only the first counts as accounted for in a head-count, which is what lets an incident close. |
 | **SOS** | Declares a critical incident at your last known position and counts everyone nearby. Held, not tapped — a knock against a parka must not raise a station-wide emergency. |
 
@@ -277,11 +282,143 @@ The link state sits above the buttons throughout, because out there it is the
 difference between *the station knows* and *this handset knows* — and when a
 write is queued, the console says so rather than reporting success. The SOS
 screen is emphatic about it: no link means the station has **not** been told,
-and to raise the alarm by radio.
+and to raise the alarm by radio — and it hands over the message to read out
+(see *HF radio* below) rather than leaving someone in trouble to compose a
+position report from memory.
 
 It is a default, not a cage. `/field` carries a link to the full console and
 the choice sticks, because trapping every narrow viewport would put the
 roster out of reach of someone who needs it on a phone.
+
+---
+
+## 📻 HF radio — the rung below the offline queue
+
+Prahari's offline story stops at one assumption: that the link comes back.
+The queue holds work on the handset and drains when it does. If the satellite
+terminal itself is down — a failed modem, a collapsed dish, a storm on the
+antenna — the queue holds forever, and the station is left with what Antarctic
+stations have always fallen back on.
+
+You cannot put JSON over HF. What you can do is hand the radio operator a
+short block to key or read aloud, and that is all `lib/hfRadio.ts` produces:
+
+```
+ZCZC PRAHARI SOS
+DE MAITRI
+FLASH 28SEP26 1823Z
+SOS DISTRESS
+OP DR. PRIYA SHARMA
+POS 7046.0S 01143.9E
+ACK REQUIRED
+CK 11 RN
+NNNN
+```
+
+`ZCZC` and `NNNN` open and close a teleprinter message on the aeronautical
+fixed service, `DE` means *from*, and `CK` is the check. The position is
+degrees and decimal minutes with a hemisphere — the format already on the
+form the receiving operator is writing on.
+
+**This is not compression, and calling it that would be a lie.** ITA2 — the
+five-bit Baudot-Murray alphabet a teleprinter actually carries — is a
+*character set*, narrower than ASCII, not denser. The useful work is the
+opposite:
+
+- **Restricting** the text to what the mode can carry at all. ITA2 has no
+  lower case, no `°`, no `Δ`, no em dash, and the console's own copy is full
+  of all three. They are transliterated (`-18 DEG C`, `DELTA T +12`), accents
+  are stripped to the base letter so `Nuñez` goes out as `NUNEZ`, and anything
+  still unrepresentable becomes a *space* rather than being deleted — a gap
+  can be queried by the operator reading it back, a silent deletion cannot.
+- **Fixing the field order**, so the message is transcribed rather than parsed.
+- **Attaching a check**, so a corrupted message is *known* to be corrupted.
+  The word count catches a dropped word; the two-character group is a
+  positionally-weighted sum, so transposing two digits changes it where a
+  plain sum would not. It detects accident and is not meant to resist anyone.
+
+Three messages exist: `SOS` (FLASH), a stores demand (`LOGREQ`), and a station
+`SITREP`, which is raised from ROUTINE to IMMEDIATE by an unaccounted person
+or a live incident. The SITREP is also printed at the foot of every shift
+handover brief — a handover is the moment someone is about to be the only
+person awake, and if the terminal fails during their watch the console can no
+longer generate anything.
+
+Where a position is not known, the message says `POS UNKNOWN LAST SEEN AT STN`.
+A fabricated position is worse than none: it sends a search to the wrong place.
+
+---
+
+## 📋 Shift handover brief
+
+A polar station runs 24 hours and the console does not. When the day commander
+goes to sleep, everything they know that is not written down goes with them —
+which consignment is late, who is still out, which stock row they have been
+watching all week. The relief reads a dashboard showing the *present*.
+
+**Generate shift handover brief** on the dashboard reads the station and
+renders a plain-text document: people first, then incidents, conditions,
+stores, cargo, procurement, the tail of the audit log, and the radio SITREP.
+It opens to be read — the handover usually happens over a desk — with
+download, copy and print from there.
+
+It is a different artefact from the post-incident debrief in `lib/debrief.ts`:
+that one is retrospective, concerns a single closed incident, and is filed.
+This one is station-wide, forward-looking, and thrown away at the end of the
+next watch. They share their formatting so a commander who can read one can
+read the other.
+
+Two rules it keeps:
+
+- **Every source may fail on its own, and the document names the ones that
+  did.** A cargo section that is blank because that call timed out is
+  indistinguishable, at 3am, from a station with nothing in transit. The brief
+  prints `** INCOMPLETE — ... Treat each of those sections as unknown, not as
+  empty. **`
+- **Anything that is not a measurement says so on its own line.** The seasonal
+  figure is labelled *published normal, NOT a reading* and the blizzard load
+  as *operator-entered*, because a handover is read quickly by someone who has
+  just woken up, and that is exactly when an unlabelled number gets taken as
+  telemetry.
+
+---
+
+## 🔆 High-contrast display
+
+The utility rail carries a **Contrast** toggle beside the A- / A / A+ text
+size control, and it is one of the few controls that is *not* hidden on a
+handset — the phone is the device that goes outside.
+
+Two constituencies, one answer. GIGW 3.0 expects a government portal to offer
+a high-contrast view. And a station laptop carried onto the ice is read
+against snow, under a sun that does not set for months: the default canvas is
+a pale ice wash, which is the worst possible surface in that light because the
+glare it throws back competes with everything drawn on it. Both wants resolve
+to the same thing — drop the page to black, push the foreground to maximum,
+thicken every boundary. Every colour clears WCAG AA against black, and the
+sweep that proves it is described under *Verifying a change*.
+
+The implementation has one property worth stating plainly: **it cannot break
+the standard console.** Every rule lives behind `[data-theme='contrast']` at
+the foot of `globals.css`, and nothing above that line was modified to
+accommodate it. With the attribute absent, not one of those selectors matches.
+`applyTheme()` removes the attribute rather than setting `data-theme="standard"`
+for exactly this reason, and a test asserts it.
+
+The cost of that choice is honest to state: because the palette in
+`tailwind.config.ts` is literal hex rather than variables, the utility classes
+are re-pointed by hand in that block. The set was enumerated from the
+codebase, not guessed, and a component introducing a colour family not listed
+there will not follow the theme.
+
+The theme is applied by a small synchronous script at the top of `<body>`,
+before React. Without it, an operator who chose high contrast gets a
+full-screen flash of the pale default on every load — which is precisely what
+they turned it on to avoid.
+
+**Map tiles are deliberately excluded.** They are photographic terrain, and
+re-colouring the ground a traverse is about to cross would be a lie told in
+the name of legibility. The chrome around the map flips; the map does not.
 
 ---
 
@@ -387,11 +524,14 @@ you which is which is one you cannot act on.
 | Audit chain | SHA-256 over each entry and the one before it | **Real, and tamper-*evident*** — a writer with database access could recompute the whole chain. Not tamper-proof, and `/events/verify` says so in its own response |
 | Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran | **Real**, and the UI never claims AI when a regex did the work |
 | Purchase orders and vendor names | Synthetic, planted by the demonstration season | **Synthetic** — no vendor system is contacted and nothing is sent to anyone; this is the station's own record of what it has on order |
+| A shift handover brief | Every section read from the station's own records at generation time | **Derived**, and it names any source it could not read rather than printing an empty section |
+| An HF radio message | Composed from the same records, restricted to the ITA2 character set | **Derived** — and it is not transmitted. Prahari has no radio; it produces text for a human to key or read aloud |
+| The HF check group | A positionally-weighted sum over the message body | **Derived** — a transcription check that detects accident. Not a cryptographic one, and not meant to resist anyone |
 | The demonstration season | Synthetic records planted by `/admin/demo-season`, or on boot where `PRAHARI_SEED_DEMO_ON_BOOT` is set and the station is empty | **Synthetic**, and the audit log says so in the entry that creates it |
 
 What Prahari does **not** have, and does not pretend to: a satellite link, a
-meteorological feed, GPS hardware, temperature probes, vehicle telemetry, or a
-directory of real emergency contacts.
+meteorological feed, GPS hardware, temperature probes, vehicle telemetry, an
+HF transmitter, or a directory of real emergency contacts.
 
 ---
 
@@ -500,11 +640,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 221 tests
+npm test                 # 319 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**732 backend tests (~6 s) and 221 frontend tests (~3 s).** No network, no
+**732 backend tests (~6 s) and 319 frontend tests (~14 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -519,6 +659,10 @@ What they cover, and why these things in particular:
 
 | Area | What is pinned |
 |---|---|
+| HF radio encoding | That every character in a generated message is one ITA2 can carry, whatever went in — accents, `°`, `Δ`, em dashes and currency symbols all have a test. That a miscopied character *and* a transposed pair both change the check group. That a missing position is reported as `UNKNOWN`, never invented. That the check is computed over the body only, so re-sending the same content an hour later produces the same check |
+| The shift handover brief | That a source which fails is *named* rather than silently rendered as an empty section. That an open head-count shouts, and that "not yet counted" is distinguished from "nobody missing". That a crate which recovered from a cold-chain excursion still appears, while one whose gauge has simply not been read does not. That the temperature figures carry their "not a reading" labels |
+| The display theme | That the standard console removes the `data-theme` attribute entirely rather than setting it to `"standard"` — the whole safety argument for the themed stylesheet rests on no selector matching. That blocked storage costs the default theme and not a crash |
+| The SOS hold | That a tap cannot raise one, that holding cannot raise more than one however long the finger stays down, and that a queued SOS is never reported as delivered |
 | `test_geo` | Great-circle distance, spherical bearing, cross-track deviation. The place where a plausible-looking wrong answer is most dangerous, because every alarm and heading is built on it. |
 | `test_simulation` | Track densification, the playback cursor, and telemetry derived from the authorised schedule rather than the console's tick rate. |
 | `test_inventory` | The depletion formula, the per-class supply policy matrix, headcount scaling, standing alerts and the cross-station lookup. |
@@ -591,6 +735,35 @@ cd frontend && npm run typecheck && npm test && npm run build
 
 The build is the real frontend gate: `tsc --noEmit` does not catch a server
 component importing a browser-only module, which only fails at prerender.
+
+### The contrast sweep
+
+Colour is the one thing a unit test will not catch, so the high-contrast
+theme is checked against the running console rather than asserted about. With
+the theme on, this walks every element carrying text, resolves the background
+it actually sits on, and reports anything under the WCAG AA ratio for its
+size:
+
+```js
+// paste in the browser console with the contrast theme on
+const parse=c=>{const m=c.match(/[\d.]+/g);if(!m)return null;const a=m.length>3?+m[3]:1;return{r:+m[0],g:+m[1],b:+m[2],a}};
+const lum=({r,g,b})=>{const f=v=>(v/=255)<=0.03928?v/12.92:((v+0.055)/1.055)**2.4;return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b)};
+const bg=el=>{for(let n=el;n&&n!==document.documentElement;n=n.parentElement){const c=parse(getComputedStyle(n).backgroundColor);if(c&&c.a>0.5)return c}return{r:0,g:0,b:0,a:1}};
+const cr=(a,b)=>{const[h,l]=[lum(a),lum(b)].sort((x,y)=>y-x);return (h+0.05)/(l+0.05)};
+console.table([...document.querySelectorAll('body *')].flatMap(el=>{
+  const t=[...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent.trim()).join(' ').trim();
+  if(!t||!el.getBoundingClientRect().width)return[];
+  const st=getComputedStyle(el),fg=parse(st.color);if(!fg||fg.a<0.5)return[];
+  const r=cr(fg,bg(el)),px=parseFloat(st.fontSize);
+  const need=(px>=24||(px>=18.66&&+st.fontWeight>=700))?3:4.5;
+  return r<need?[{text:t.slice(0,40),ratio:+r.toFixed(2),need,color:st.color}]:[];
+}));
+```
+
+It should print an empty table on every page. It is also how the two bugs
+this theme shipped with were found: the toggle's own label came out white on
+its yellow fill, and Leaflet's zoom buttons inherited a white foreground onto
+their hardcoded white background.
 
 ---
 

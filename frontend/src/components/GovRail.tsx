@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Accessibility, Globe, Volume2 } from 'lucide-react';
+import { Accessibility, Contrast, Globe, Volume2 } from 'lucide-react';
+import { applyTheme, loadTheme, nextTheme, saveTheme, type Theme } from '@/lib/theme';
 
 /**
  * Tier 1 — Government of India utility rail.
@@ -11,6 +12,8 @@ import { Accessibility, Globe, Volume2 } from 'lucide-react';
  *
  * The text-size buttons are real: they scale the root font size, which the whole
  * console is sized in rem/px-relative units against, and the choice persists.
+ * So is the contrast toggle — see lib/theme.ts and the themed block at the
+ * foot of globals.css.
  */
 const SIZES = [
   { id: 'sm', label: 'A-', scale: 0.9, title: 'Decrease text size' },
@@ -18,10 +21,22 @@ const SIZES = [
   { id: 'lg', label: 'A+', scale: 1.12, title: 'Increase text size' },
 ] as const;
 
+// Both keys are also read by the pre-paint script in app/layout.tsx, which
+// runs before React and so cannot import them. Change either one in both
+// places or the console flashes the previous setting on every load.
 const STORAGE_KEY = 'prahari_text_scale';
 
 export function GovRail() {
   const [size, setSize] = useState<(typeof SIZES)[number]['id']>('md');
+  const [theme, setTheme] = useState<Theme>('standard');
+
+  // Read once on mount rather than during render: the server has no
+  // localStorage, and seeding state from it directly would hydrate-mismatch.
+  useEffect(() => {
+    const saved = loadTheme();
+    setTheme(saved);
+    applyTheme(saved);
+  }, []);
 
   useEffect(() => {
     try {
@@ -78,6 +93,29 @@ export function GovRail() {
               </button>
             ))}
           </div>
+
+          {/* Not hidden on small screens, unlike the text-size group beside
+              it: the handset is the device that goes outside, so this is
+              exactly where the control is most needed. */}
+          <button
+            type="button"
+            data-compact
+            onClick={() => { const next = nextTheme(theme);
+                             setTheme(next); applyTheme(next); saveTheme(next); }}
+            aria-pressed={theme === 'contrast'}
+            title="High-contrast display for glare and low vision"
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border
+                        uppercase tracking-caps text-2xs font-bold transition-colors
+                        ${theme === 'contrast'
+                          ? 'bg-arctic-600 border-arctic-600 text-white'
+                          : 'border-slate-700 text-slate-300 hover:bg-white/10'}`}
+          >
+            <Contrast size={13} aria-hidden="true" />
+            <span className="hidden sm:inline">Contrast</span>
+            <span className="sr-only sm:hidden">
+              {theme === 'contrast' ? 'Turn off high contrast' : 'Turn on high contrast'}
+            </span>
+          </button>
 
           <a href="#main"
              className="hidden lg:flex items-center gap-1.5 uppercase tracking-caps

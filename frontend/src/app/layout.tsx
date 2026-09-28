@@ -66,9 +66,47 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
+    // The pre-paint script below writes `data-theme`, `color-scheme` and a
+    // root font size onto this element before React runs, so the server's
+    // markup and the client's DOM differ here by design. Suppressed on <html>
+    // only, and only one level deep — it does not extend to the tree inside.
     <html lang="en"
+          suppressHydrationWarning
           className={`${outfit.variable} ${jetbrains.variable} ${plexMono.variable}`}>
       <body>
+        {/*
+          Set the theme before first paint.
+
+          The toggle lives in a client component, so React cannot apply the
+          saved choice until after hydration — which means an operator who
+          chose high contrast gets a full-screen flash of the pale default on
+          every navigation. For the person who turned that theme on because
+          the default was unreadable in glare, or because they have low
+          vision, the flash is the exact thing they were avoiding.
+
+          Inline and synchronous on purpose: a deferred or external script
+          runs too late to help. It writes one attribute and swallows
+          everything, so blocked storage costs the default theme rather than
+          a blank page.
+
+          First child of <body> rather than in <head>: the App Router owns
+          <head>, and a script placed there is rendered by React rather than
+          emitted as ordinary markup. Here it is part of the initial document
+          and runs before anything below it paints, which is the only load
+          that can flash — a client-side navigation never re-mounts <html>.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('prahari_theme');`
+              + `if(t==='contrast'){document.documentElement.dataset.theme=t;`
+              + `document.documentElement.style.colorScheme='dark';}`
+              + `var s=localStorage.getItem('prahari_text_scale');`
+              + `var m={sm:0.9,md:1,lg:1.12};if(m[s])`
+              + `document.documentElement.style.fontSize=(16*m[s])+'px';`
+              + `}catch(e){}})();`,
+          }}
+        />
+
         {/* Outside the sign-in gate on purpose: the offline cache has to be
             installed before it is needed, and an operator who reaches a
             signed-out console during an outage should still get the sign-in

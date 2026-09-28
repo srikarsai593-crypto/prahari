@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  ArrowLeft, Check, CloudSnow, Loader2, Minus, PackageMinus, Plus, Siren, UserCheck,
+  ArrowLeft, Camera, Check, ClipboardCheck, CloudSnow, Copy, Loader2, Minus, PackageMinus,
+  Plus, Radio, ScanLine, Siren, UserCheck,
 } from 'lucide-react';
 import { api, isQueued } from '@/lib/api';
 import { offlineQueue } from '@/lib/offlineQueue';
@@ -12,15 +13,16 @@ import { useToast } from '@/components/Toast';
 import {
   loadFieldOperator, saveConsolePreference, saveFieldOperator, type FieldOperator,
 } from '@/lib/fieldOperator';
+import { encodeSos } from '@/lib/hfRadio';
 import type { InventoryItem, Personnel } from '@/lib/types';
 
 /**
  * Field mode — the console for someone outside, in gloves, on a phone.
  *
  * The full console is a dense telemetry board, which is right at a desk and
- * wrong at arm's length in a wind chill. Out there an operator does three
- * things: records what they used, says they are back, or calls for help.
- * Everything else can wait until they are indoors.
+ * wrong at arm's length in a wind chill. Out there an operator does four
+ * things: records what they used, scans a crate in, says they are back, or
+ * calls for help. Everything else can wait until they are indoors.
  *
  * Design rules this page follows and the full console does not:
  *
@@ -33,9 +35,12 @@ import type { InventoryItem, Personnel } from '@/lib/types';
  * * **The link state is always on screen.** Out here it is the difference
  *   between "recorded" and "recorded on this handset until we get back",
  *   and the operator has to be told which.
+ * * **Nothing that needs typing.** The stores bunker is the worst place in
+ *   the station to take a glove off, so a crate is identified by camera and
+ *   the keyboard is the fallback, not the other way round.
  */
 
-type Screen = 'home' | 'consume' | 'checkin' | 'sos';
+type Screen = 'home' | 'consume' | 'scan' | 'checkin' | 'sos';
 
 export default function FieldPage() {
   const { station, stationId, ready } = useStation();
@@ -95,12 +100,17 @@ export default function FieldPage() {
                         operator={operator} addToast={addToast}
                         onDone={() => setScreen('home')} />
       )}
+      {screen === 'scan' && (
+        <ScanCargo addToast={addToast} onDone={() => setScreen('home')} />
+      )}
       {screen === 'checkin' && (
         <CheckIn operator={operator} addToast={addToast}
                  onDone={() => setScreen('home')} />
       )}
       {screen === 'sos' && (
-        <Sos operator={operator} addToast={addToast} onDone={() => setScreen('home')} />
+        <Sos operator={operator} station={stationId}
+             position={roster.find((p) => p.id === operator.id) ?? null}
+             addToast={addToast} onDone={() => setScreen('home')} />
       )}
     </div>
   );
@@ -209,6 +219,9 @@ function Home({ onPick }: { onPick: (s: Screen) => void }) {
     <div className="space-y-4">
       <BigButton tone="neutral" icon={PackageMinus} label="Log consumption"
                  hint="Record what you have used" onClick={() => onPick('consume')} />
+      <BigButton tone="neutral" icon={ScanLine} label="Scan cargo"
+                 hint="Point the camera at a crate label"
+                 onClick={() => onPick('scan')} />
       <BigButton tone="neutral" icon={UserCheck} label="Check in"
                  hint="Tell the station you are back" onClick={() => onPick('checkin')} />
       <BigButton tone="danger" icon={Siren} label="SOS"
@@ -343,7 +356,202 @@ function LogConsumption({ stationId, stationLabel, operator, addToast, onDone }:
   );
 }
 
-// ── 2. Check in ────────────────────────────────────────────────────────────
+// ── A message for the radio ────────────────────────────────────────────────
+
+/**
+ * The block an operator reads over HF when the console cannot send.
+ *
+ * Prahari's offline queue assumes the link comes back. If the satellite
+ * terminal itself is down, the queue holds forever — and until now field
+ * mode told the operator to "raise the alarm by radio" and handed them
+ * nothing to say. See lib/hfRadio.ts for what the format is and why.
+ */
+function RadioMessage({ message, title, note }: {
+  message: string; title: string; note: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Needs a secure context, which a handset on the station LAN may not
+      // have. The text is on screen, which is the part that matters.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border-2 border-arctic-200 bg-white p-5 mt-5">
+      <p className="flex items-center gap-2 text-15 font-extrabold text-arctic-900">
+        <Radio size={20} aria-hidden="true" /> {title}
+      </p>
+      <p className="text-13 text-frost-muted mt-1 mb-3">{note}</p>
+      <pre className="overflow-x-auto rounded-xl bg-arctic-900 text-white p-4
+                      font-mono text-13 leading-relaxed whitespace-pre">
+        {message}
+      </pre>
+      <button type="button" onClick={() => void copy()}
+              className="btn-secondary w-full mt-3 !py-3 text-15">
+        {copied
+          ? <ClipboardCheck size={16} aria-hidden="true" />
+          : <Copy size={16} aria-hidden="true" />}
+        {copied ? 'Copied' : 'Copy the message'}
+      </button>
+    </div>
+  );
+}
+
+// ── 2. Scan cargo ──────────────────────────────────────────────────────────
+
+/**
+ * Shut the camera down without caring whether it was up.
+ *
+ * `Html5Qrcode.stop()` throws *synchronously* when the scanner is not
+ * running — it does not return a rejected promise — so the obvious
+ * `stop().catch(...)` never attaches a handler and the throw escapes as an
+ * unhandled error. That happens on any ordinary path: leaving the screen
+ * before the camera finished starting, or a decode and an unmount racing.
+ */
+async function release(scanner: { stop: () => Promise<void> }): Promise<void> {
+  try { await scanner.stop(); } catch { /* it was not running */ }
+}
+
+/**
+ * Identify a crate with the camera.
+ *
+ * The console has had a scanner on the cargo page since well before field
+ * mode existed; this is the same `scanBarcode` call behind a screen that can
+ * be used in gloves. It is here rather than only there because the stores
+ * bunker is the worst place in the station to take a glove off to type
+ * "Aviation Turbine Fuel drum 45" into a phone.
+ *
+ * The decoder is imported on demand. It is a large dependency and field
+ * mode's whole reason to exist is opening quickly on a bad link — three of
+ * the four actions never need it.
+ */
+function ScanCargo({ addToast, onDone }: {
+  addToast: (m: string, t: 'success' | 'warning' | 'alert' | 'info') => void;
+  onDone: () => void;
+}) {
+  const [starting, setStarting] = useState(true);
+  const [cameraFailed, setCameraFailed] = useState<string | null>(null);
+  const [manual, setManual] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const submit = useCallback(async (code: string) => {
+    if (!code.trim()) return;
+    setSending(true);
+    try {
+      const result = await api.scanBarcode(code.trim());
+      if (isQueued(result)) {
+        addToast('Held on this handset — it will be sent when the link returns.', 'info');
+      } else {
+        addToast(`${result.barcode_id}: ${result.old_status} → ${result.new_status}`,
+          result.new_status === 'unloaded' ? 'success' : 'info');
+      }
+      onDone();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'That code is not on the manifest', 'alert');
+    } finally { setSending(false); }
+  }, [addToast, onDone]);
+
+  /**
+   * Held in a ref so the camera effect below can depend on nothing.
+   *
+   * `onDone` is a fresh arrow on every render of the page above, and the page
+   * re-renders whenever the offline queue reports a change — which it does on
+   * a timer. With `submit` in the dependency list the camera tore itself down
+   * and restarted every few seconds, which is exactly while somebody is
+   * holding a crate up to it.
+   */
+  const submitRef = useRef(submit);
+  useEffect(() => { submitRef.current = submit; }, [submit]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let scanner: { stop: () => Promise<void> } | null = null;
+
+    (async () => {
+      try {
+        const { Html5Qrcode } = await import('html5-qrcode');
+        if (cancelled) return;
+        const instance = new Html5Qrcode('field-qr-reader');
+        scanner = instance;
+        await instance.start(
+          // The rear camera: nobody scans a crate with the selfie lens.
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 240, height: 240 } },
+          (decoded) => {
+            // Stop before submitting, or a code held in frame fires the same
+            // scan a dozen times over while the first request is in flight.
+            void release(instance).then(() => {
+              scanner = null;
+              void submitRef.current(decoded);
+            });
+          },
+          () => {},
+        );
+        if (!cancelled) setStarting(false);
+      } catch {
+        if (cancelled) return;
+        setStarting(false);
+        setCameraFailed('No camera on this device, or permission was refused.');
+      }
+    })();
+
+    // Leaving the screen must release the camera. A handset that keeps the
+    // lens open burns battery an operator outside may need.
+    return () => {
+      cancelled = true;
+      if (scanner) void release(scanner);
+    };
+  }, []);
+
+  return (
+    <div>
+      <BackBar onDone={onDone} title="Scan a crate" />
+
+      <div className="rounded-2xl border-2 border-arctic-200 bg-white overflow-hidden">
+        <div id="field-qr-reader" className="w-full min-h-[240px] bg-arctic-900" />
+        <p className="text-13 text-frost-muted px-4 py-3">
+          {starting ? 'Starting the camera…'
+            : cameraFailed ?? 'Hold the crate label in the frame. It scans on its own.'}
+        </p>
+      </div>
+
+      {/* Always offered, not just on failure: a label can be frosted over or
+          torn off entirely, and the ID is printed on the manifest too. */}
+      <div className="mt-5">
+        <label htmlFor="field-manual-code"
+               className="block text-13 font-bold text-arctic-900 mb-2">
+          Or type the code from the manifest
+        </label>
+        <input
+          id="field-manual-code"
+          value={manual}
+          onChange={(event) => setManual(event.target.value)}
+          placeholder="SHP-2026-000000"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          className="w-full !py-4 font-mono text-lg"
+        />
+        <button type="button" disabled={sending || !manual.trim()}
+                onClick={() => void submit(manual)}
+                className="w-full min-h-[68px] mt-3 rounded-2xl bg-arctic-600 text-white
+                           text-lg font-extrabold disabled:opacity-40 hover:bg-arctic-700
+                           transition-colors">
+          {sending ? 'Sending…' : 'Scan this code'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── 3. Check in ────────────────────────────────────────────────────────────
 
 function CheckIn({ operator, addToast, onDone }: {
   operator: FieldOperator;
@@ -402,37 +610,78 @@ function CheckIn({ operator, addToast, onDone }: {
   );
 }
 
-// ── 3. SOS ─────────────────────────────────────────────────────────────────
+// ── 4. SOS ─────────────────────────────────────────────────────────────────
 
 /** How long the SOS button must be held. Long enough that a knock against a
  *  parka cannot raise a station-wide emergency; short enough that somebody
  *  in trouble is not fighting the interface. */
-const SOS_HOLD_MS = 1500;
+export const SOS_HOLD_MS = 1500;
 
-function Sos({ operator, addToast, onDone }: {
-  operator: FieldOperator;
+function Sos({ operator, station, position, addToast, onDone }: {
+  operator: FieldOperator; station: string; position: Personnel | null;
   addToast: (m: string, t: 'success' | 'warning' | 'alert' | 'info') => void;
   onDone: () => void;
 }) {
   const [held, setHeld] = useState(0);
   const [sending, setSending] = useState(false);
+  const [unsent, setUnsent] = useState<string | null>(null);
+
+  /**
+   * One SOS per press, whatever happens afterwards.
+   *
+   * On the sent path the screen closes and the question never arises. On the
+   * queued path it stays open to show the radio message — and the finger is
+   * very likely still on the button, because nothing asked for it back.
+   * Without this the hold timer re-arms against a still-pressed button and
+   * queues another SOS every 1.5 seconds, for as long as somebody in trouble
+   * keeps holding.
+   */
+  const fired = useRef(false);
 
   const fire = useCallback(async () => {
+    if (fired.current) return;
+    fired.current = true;
+    setHeld(0);
     setSending(true);
     try {
       const result = await api.triggerSOS(operator.id);
       if (isQueued(result)) {
-        // The one place this console must not be optimistic.
-        addToast('NO LINK — the station has NOT been told. This is held on the handset '
-          + 'and will send when the link returns. Raise the alarm by radio now.', 'alert');
-      } else {
-        addToast(`SOS raised for ${operator.name}. The station has been alerted.`, 'alert');
+        // The one place this console must not be optimistic. Telling somebody
+        // to "raise the alarm by radio" and then handing them a blank screen
+        // leaves them composing a position report from memory, in whatever
+        // state put them in this screen — so compose it for them.
+        setUnsent(encodeSos({
+          station,
+          operatorName: operator.name,
+          // The station's own last known position for this person. Not the
+          // handset's GPS: asking for a location permission is the wrong
+          // thing to put between someone and an SOS, and a refused prompt
+          // would leave the field blank. UNKNOWN is honest and searchable;
+          // an invented position sends a search to the wrong place.
+          lat: position?.current_lat ?? null,
+          lng: position?.current_lng ?? null,
+        }));
+        addToast('NO LINK — the station has NOT been told. Raise the alarm by radio '
+          + 'now, using the message below.', 'alert');
+        return;
       }
+      addToast(`SOS raised for ${operator.name}. The station has been alerted.`, 'alert');
       onDone();
     } catch (e) {
       addToast(e instanceof Error ? e.message : 'Could not raise the SOS', 'alert');
     } finally { setSending(false); }
-  }, [operator, addToast, onDone]);
+  }, [operator, station, position, addToast, onDone]);
+
+  /**
+   * Kept in a ref so the timer below depends only on the press.
+   *
+   * `fire` is rebuilt whenever the page above re-renders, and with it in the
+   * dependency list the effect tore down and restarted the countdown each
+   * time — resetting the clock to zero. On a console that re-renders as the
+   * offline queue ticks, that is an SOS that can never finish being held.
+   */
+  const fireRef = useRef(fire);
+  useEffect(() => { fireRef.current = fire; }, [fire]);
 
   useEffect(() => {
     if (held === 0 || sending) return undefined;
@@ -440,11 +689,35 @@ function Sos({ operator, addToast, onDone }: {
     const tick = window.setInterval(() => {
       if (Date.now() - started >= SOS_HOLD_MS) {
         window.clearInterval(tick);
-        void fire();
+        void fireRef.current();
       }
     }, 50);
     return () => window.clearInterval(tick);
-  }, [held, sending, fire]);
+  }, [held, sending]);
+
+  // The handset could not reach the station. Nothing else on this screen
+  // matters now except the words to say into the radio.
+  if (unsent) {
+    return (
+      <div>
+        <BackBar onDone={onDone} title="SOS NOT SENT" />
+        <div className="rounded-2xl border-2 border-rose-600 bg-rose-600 text-white p-5">
+          <p className="text-xl font-extrabold">The station has not been told.</p>
+          <p className="text-15 mt-1 text-rose-100">
+            There is no link. This SOS is held on the handset and will send by itself
+            if the link returns — but do not wait for that. Raise it by radio now.
+          </p>
+        </div>
+        <RadioMessage
+          message={unsent}
+          title="Read this over the radio"
+          note={'Plain HF traffic — every character here can be keyed or read aloud. '
+            + 'CK is the word count and a check group, so the operator receiving it '
+            + 'can tell you whether they copied it correctly.'}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>

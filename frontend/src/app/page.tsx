@@ -16,6 +16,7 @@ import BlizzardCanvasLoader from '@/components/BlizzardCanvasLoader';
 import { EventTimeline } from '@/components/EventTimeline';
 import { StandingAlerts } from '@/components/StandingAlerts';
 import { DemoSeasonButton } from '@/components/DemoSeasonButton';
+import { HandoverBriefButton } from '@/components/HandoverBriefButton';
 import { PanelBoundary } from '@/components/PanelBoundary';
 import { useToast } from '@/components/Toast';
 import type {
@@ -460,12 +461,20 @@ export default function Dashboard() {
 
       {/* ── Operational status ───────────────────────────────────────────── */}
       <section aria-labelledby="status-heading">
-        <h2 id="status-heading" className="section-heading mb-1">
-          {ready ? `${station.label} Operational Status` : 'Station Operational Status'}
-        </h2>
-        <p className="text-13 text-frost-muted mb-4 ml-[18px]">
-          Live figures for {ready ? station.label : 'the active station'}.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div className="min-w-0">
+            <h2 id="status-heading" className="section-heading mb-1">
+              {ready ? `${station.label} Operational Status` : 'Station Operational Status'}
+            </h2>
+            <p className="text-13 text-frost-muted ml-[18px]">
+              Live figures for {ready ? station.label : 'the active station'}.
+            </p>
+          </div>
+          {/* The same figures as a document the outgoing watch can hand over.
+              Sits with the status block because that is what it is a
+              snapshot of. */}
+          {ready && <HandoverBriefButton station={stationId} />}
+        </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {kpis.map((k) => (

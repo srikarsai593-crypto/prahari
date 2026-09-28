@@ -1,4 +1,6 @@
 import { api } from './api';
+import { downloadTextFile } from './download';
+import { RULE, heading, masthead, row, stamp } from './textReport';
 import { getStation } from './stations';
 import type { AppEvent, Incident, NearbyAsset } from './types';
 
@@ -16,24 +18,6 @@ import type { AppEvent, Incident, NearbyAsset } from './types';
  * being pasted into a ticket or an email, and needs no font, viewer or
  * dependency that a console at the end of a satellite link might not have.
  */
-
-const RULE = '='.repeat(78);
-const THIN = '-'.repeat(78);
-
-/** UTC throughout. Station logs are UTC and a debrief must not re-zone them. */
-const stamp = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? String(iso)
-    : `${d.toISOString().slice(0, 19).replace('T', ' ')}Z`;
-};
-
-/** `label ....... value`, so the columns line up in a fixed-width viewer. */
-const row = (label: string, value: string | number | null | undefined): string =>
-  `  ${(label + ' ').padEnd(30, '.')} ${value ?? '—'}`;
-
-const heading = (title: string): string => `\n${title}\n${THIN}`;
 
 /** A metadata blob is `{"k": v}` or a JSON string, and sometimes neither. */
 function readMetadata(raw: AppEvent['metadata']): Record<string, unknown> | null {
@@ -95,14 +79,8 @@ export function renderDebrief(sources: DebriefSources, generatedAt = new Date())
   const out: string[] = [];
 
   // ── Masthead ──────────────────────────────────────────────────────────────
-  out.push(RULE);
-  out.push('  MINISTRY OF EARTH SCIENCES · GOVERNMENT OF INDIA');
-  out.push('  NATIONAL CENTRE FOR POLAR AND OCEAN RESEARCH (NCPOR)');
-  out.push('');
-  out.push('  POST-INCIDENT OPERATIONAL DEBRIEF');
-  out.push(`  ${station.label} — ${station.region}`);
-  out.push(RULE);
-  out.push('');
+  out.push(...masthead('POST-INCIDENT OPERATIONAL DEBRIEF',
+                       `${station.label} — ${station.region}`));
   out.push(row('Incident reference', incident.id));
   out.push(row('Category', incident.type.replace(/_/g, ' ').toUpperCase()));
   out.push(row('Severity at closure', incident.severity.toUpperCase()));
@@ -223,21 +201,6 @@ export function debriefFilename(incident: Incident, generatedAt = new Date()): s
   return `MoES-Debrief-${safeId}-${day}.txt`;
 }
 
-/**
- * Hand the rendered debrief to the browser as a download.
- *
- * The object URL is revoked on the next frame rather than immediately —
- * Safari has not begun the download when `click()` returns, and revoking in
- * the same tick cancels it.
- */
-export function downloadDebrief(filename: string, body: string) {
-  const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
+/** Hand the rendered debrief to the browser as a download. The mechanics are
+ *  shared with the shift handover brief; see lib/download.ts. */
+export const downloadDebrief = downloadTextFile;
