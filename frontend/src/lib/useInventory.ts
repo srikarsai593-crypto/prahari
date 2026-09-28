@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api } from './api';
+import { api, isQueued } from './api';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { isAnyOf } from './broadcasts';
 import type { HeadcountBasis, InventoryItem, StockCommandResult } from './types';
@@ -95,6 +95,13 @@ export function useStockCommand(stationId: string, onApplied: () => void) {
     setPreview(null);
     try {
       const result = await api.stockCommand(source, stationId, true);
+      // The command is parsed on the server, so with the link down there is
+      // nothing to show. Previewing a write is also the one step that must not
+      // be queued: it would apply on reconnect without anyone having read it.
+      if (isQueued(result)) {
+        return { error: 'The link is down, so this command cannot be checked. '
+                        + 'Adjust the quantity directly, or wait for the link.' } as const;
+      }
       setPreview(result);
       return { result } as const;
     } catch (cause) {
@@ -109,6 +116,11 @@ export function useStockCommand(stationId: string, onApplied: () => void) {
     setStage('applying');
     try {
       const result = await api.stockCommand(transcript, stationId, false);
+      if (isQueued(result)) {
+        reset();
+        onApplied();
+        return { queued: true } as const;
+      }
       if (result.applied) reset();
       else setPreview(result);
       onApplied();

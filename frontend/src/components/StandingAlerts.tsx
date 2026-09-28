@@ -118,7 +118,7 @@ export function StandingAlerts({ stationId }: { stationId: string }) {
             </Link>
           </div>
           <p className="text-2xs text-amber-800 mt-1">
-            These stay on record until stock recovers — they are not dismissible.
+            These clear on their own once stock recovers.
           </p>
           <ul className="mt-2 space-y-1">
             {alerts.slice(0, 5).map((alert) => (

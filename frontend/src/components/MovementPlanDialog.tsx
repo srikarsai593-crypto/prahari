@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { AlertTriangle, CheckCircle2, Route, Undo2, X } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from './Toast';
 import type { Personnel, Geofence } from '@/lib/types';
 import { getStation } from '@/lib/stations';
@@ -171,6 +171,15 @@ export function MovementPlanDialog({ person, stationId, onClose, onCreated }: Pr
         expected_arrival: arrival.toISOString(),
       });
 
+      // The pre-flight geofence check runs on the server, so a queued plan has
+      // not been checked against anything. "Authorised" would be a claim that
+      // the corridor was cleared.
+      if (isQueued(result)) {
+        addToast(queuedMessage(`Movement plan for ${person.name}`)
+          + ' The route has not been checked against the restricted zones yet.', 'warning');
+        onCreated();
+        return;
+      }
       // The backend runs a pre-flight check: say so rather than burying it.
       const warnings = (result as { route_warnings?: string[] })?.route_warnings ?? [];
       if (warnings.length > 0) {

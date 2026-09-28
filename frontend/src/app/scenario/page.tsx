@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { api, isQueued } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
+import { DemoSeasonButton } from '@/components/DemoSeasonButton';
 import { offlineQueue } from '@/lib/offlineQueue';
 import { useToast } from '@/components/Toast';
 import { useStation } from '@/components/StationProvider';
@@ -39,21 +40,11 @@ export default function ScenarioPage() {
   // was selected, so every step reported on a base the operator was not
   // looking at.
   const { station, stationId, ready } = useStation();
-  const [offline, setOffline] = useState(offlineQueue.isOffline);
-  const [pendingCount, setPendingCount] = useState(offlineQueue.pendingCount);
   const [activeStep, setActiveStep] = useState(1);
   const [stepStatus, setStepStatus] =
     useState<Record<number, 'pending' | 'running' | 'done' | 'error'>>({});
   const [counts, setCounts] = useState<StationCounts | null>(null);
   const [resetting, setResetting] = useState(false);
-
-  useEffect(() => {
-    const unsub = offlineQueue.subscribe(() => {
-      setOffline(offlineQueue.isOffline);
-      setPendingCount(offlineQueue.pendingCount);
-    });
-    return unsub;
-  }, []);
 
   // Switching station invalidates the run: the steps now target somewhere else.
   useEffect(() => { setStepStatus({}); setActiveStep(1); }, [stationId]);
@@ -147,18 +138,6 @@ export default function ScenarioPage() {
       ?? local.find((g) => g.type !== 'restricted' && g.type !== 'station');
     if (!camp) throw new Error(`No field camp registered near ${station.label} to traverse to.`);
     return camp;
-  };
-
-  const toggleConnectivity = async () => {
-    if (offlineQueue.isOffline) {
-      // setOffline(false) drains the queue and resolves with what it replayed.
-      const { flushed, dropped } = await offlineQueue.setOffline(false);
-      addToast(`Back online — ${flushed} queued change${flushed !== 1 ? 's' : ''} synced`
-        + (dropped ? `, ${dropped} rejected` : ''), dropped ? 'warning' : 'success');
-    } else {
-      void offlineQueue.setOffline(true);
-      addToast('Link down — changes will be saved here and sent when it returns', 'warning');
-    }
   };
 
   const steps = [
@@ -394,18 +373,10 @@ export default function ScenarioPage() {
           <RotateCcw size={14} aria-hidden="true" />
           {resetting ? 'Resetting…' : 'Reset station data'}
         </button>
-        <button
-          onClick={toggleConnectivity}
-          className={`px-4 py-2 rounded-md text-13 font-bold border transition-colors
-                      flex items-center gap-1.5 font-mono tracking-caps ${
-            offline
-              ? 'bg-alert-tint text-alert border-alert-edge'
-              : 'bg-nominal-tint text-nominal border-nominal-edge'}`}
-        >
-          {offline
-            ? <><AlertTriangle size={14} aria-hidden="true" /> OFFLINE — {pendingCount} PENDING</>
-            : <><CheckCircle2 size={14} aria-hidden="true" /> CONNECTED</>}
-        </button>
+        {/* Link state and the blackout drill live in the navigation band, on
+            every page. A second copy here said the same thing in different
+            words and could disagree with it. */}
+        <DemoSeasonButton onLoaded={loadCounts} />
       </PageHeader>
 
       {counts && (

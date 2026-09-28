@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Siren, RotateCw, Zap, CheckCircle2, Users, FileDown } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
 import { Coordinate } from '@/components/Coordinate';
@@ -172,6 +172,13 @@ export default function EmergencyPage() {
         location_lng: lngValue,
         affected_radius_m: 1000,
       });
+      // Saying "declared" of a write still sitting in the queue is the one
+      // place this console must never be optimistic: nobody has been counted.
+      if (isQueued(result)) {
+        return addToast('The link is down, so this emergency has NOT been declared and '
+          + 'nobody has been counted. It will be sent when the link returns — raise the '
+          + 'alarm by radio now.', 'alert');
+      }
       addToast('Emergency declared — accountability check initiated', 'alert');
       if (result?.id) setFocusId(result.id);
       if (result?.expected_count !== undefined) {
@@ -241,6 +248,7 @@ export default function EmergencyPage() {
   const handlePowerFailure = async () => {
     try {
       const res = await api.declarePowerFailure(stationId);
+      if (isQueued(res)) return addToast(queuedMessage('Power failure drill'), 'info');
       addToast(`Power failure declared at ${station.label} — ${res.unaccounted_count} of `
         + `${res.expected_count} in the affected zone unaccounted for`, 'alert');
       setFocusId(res.incident_id);
@@ -281,8 +289,8 @@ export default function EmergencyPage() {
               <Siren size={16} aria-hidden="true" /> Declare Emergency
             </h2>
             <p className="text-xs text-frost-muted mb-4">
-              Declares a critical incident at the given position and starts an accountability
-              check across {station.label}.
+              Raises an incident at this position and immediately counts who is inside the
+              affected area.
             </p>
             <div className="space-y-3">
               <div>

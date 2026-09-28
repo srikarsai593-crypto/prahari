@@ -148,6 +148,24 @@ describe('useStockCommand', () => {
     expect(onApplied).not.toHaveBeenCalled();
   });
 
+  it('will not offer a preview it never received', async () => {
+    /**
+     * The command is parsed on the server. With the link down the call is
+     * queued and resolves to the queue marker, so setting that as the preview
+     * put a confirm button in front of an operator with nothing behind it —
+     * and the write would then apply on reconnect unread.
+     */
+    vi.spyOn(api, 'stockCommand').mockResolvedValue({ queued: true, pending: true } as never);
+    const { result } = renderHook(() => useStockCommand('Maitri', vi.fn()));
+
+    act(() => result.current.setTranscript('Removed 200 litres of diesel fuel'));
+    let outcome: Awaited<ReturnType<typeof result.current.parse>> | undefined;
+    await act(async () => { outcome = await result.current.parse(); });
+
+    expect(outcome).toHaveProperty('error');
+    expect(result.current.preview).toBeNull();
+  });
+
   it('applies the same text it previewed', async () => {
     vi.spyOn(api, 'stockCommand')
       .mockResolvedValueOnce(previewResult())

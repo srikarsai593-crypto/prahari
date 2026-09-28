@@ -2,7 +2,27 @@ import sqlite3
 import os
 import threading
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'prahari.db')
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'prahari.db')
+
+
+def resolve_db_path() -> str:
+    """Where the station's database lives.
+
+    Overridable because a hosted container's filesystem is ephemeral: a path
+    inside the application directory is wiped by every deploy and every
+    restart, taking the station's whole operational record with it. Pointing
+    PRAHARI_DB_PATH at a mounted disk is what makes a hosted console keep what
+    it was told. The directory is created because a mount point can exist
+    without the folder the path names.
+    """
+    path = os.getenv('PRAHARI_DB_PATH') or DEFAULT_DB_PATH
+    directory = os.path.dirname(os.path.abspath(path))
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    return path
+
+
+DB_PATH = resolve_db_path()
 
 # Thread-local storage for connections
 _local = threading.local()

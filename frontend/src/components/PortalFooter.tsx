@@ -15,14 +15,15 @@ import { Coordinate } from '@/components/Coordinate';
  */
 /**
  * These were statutory policy titles that linked nowhere and described no
- * document this console serves — decoration shaped like compliance. They are
- * replaced by the operating facts an operator can verify from the console
- * itself.
+ * document this console serves — decoration shaped like compliance.
+ *
+ * What replaced them was five sentences of self-justification, which is the
+ * same mistake in a different register: a footer is not where an operator
+ * learns how the software works. Three remain, and only the ones that change
+ * what someone does — the rest were the console praising itself.
  */
 const OPERATING_NOTES = [
-  'Everything the station needs is held here, not somewhere else.',
   'Changes made while the link is down are saved and sent when it returns.',
-  'Stock figures are counted, never estimated.',
   'Every action is written to the station log with who did it and when.',
   'Anything filled in from a written request is a suggestion — confirm it.',
 ];
@@ -42,8 +43,8 @@ export function PortalFooter() {
             </span>
           </div>
           <p className="text-13 leading-relaxed text-slate-400">
-            National Polar Operational Intelligence Grid. Engineered for the Indian Antarctic
-            Programme under the aegis of the Ministry of Earth Sciences (MoES), Government of India.
+            Station operations console for the Indian Antarctic Programme, under the Ministry of
+            Earth Sciences, Government of India.
           </p>
           <p className="mt-4 font-mono text-xs leading-relaxed text-slate-400">
             <span className="text-slate-500">Nodal Agency:</span>{' '}
@@ -75,7 +76,7 @@ export function PortalFooter() {
           <h2 id="footer-policies"
               className="font-mono text-xs font-bold tracking-caps text-white uppercase
                          pb-2 mb-3 border-b border-white/15">
-            How This Console Behaves
+            Good to Know
           </h2>
           <ul className="space-y-2.5 text-13 text-slate-400">
             {OPERATING_NOTES.map((note) => <li key={note}>{note}</li>)}
@@ -97,8 +98,7 @@ export function PortalFooter() {
               </li>
             ))}
             <li className="pt-1 text-slate-500">
-              Positions are the published station coordinates and match the geofence
-              table the tracker checks against.
+              Published station coordinates.
             </li>
           </ul>
         </section>

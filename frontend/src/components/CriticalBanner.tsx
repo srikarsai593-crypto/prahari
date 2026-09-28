@@ -21,6 +21,8 @@ interface CriticalAlert {
   key: string;
   message: string;
   kind: string;
+  /** The incident this banner is about, so its resolution can clear it. */
+  incidentId?: string;
 }
 
 export function CriticalBanner() {
@@ -28,7 +30,30 @@ export function CriticalBanner() {
   const [alert, setAlert] = useState<CriticalAlert | null>(null);
 
   useEffect(() => {
-    if (lastMessage?.type !== 'alert') return;
+    if (!lastMessage) return;
+
+    /**
+     * An emergency that has been dealt with must stop shouting.
+     *
+     * The banner only ever cleared when someone clicked Acknowledge, so a
+     * resolved incident kept a full-width red bar over every page until each
+     * console dismissed it by hand — and an operator who arrives afterwards
+     * is told the station is in an emergency that ended an hour ago. A reset
+     * clears it for the same reason: the incident it names no longer exists.
+     */
+    if (lastMessage.type === 'incident_update') {
+      const { incident_id: id, status } = lastMessage.data ?? {};
+      setAlert((current) => (status === 'resolved'
+        && (current?.incidentId === undefined || current.incidentId === id)
+        ? null : current));
+      return;
+    }
+    if (lastMessage.type === 'station_reset') {
+      setAlert(null);
+      return;
+    }
+
+    if (lastMessage.type !== 'alert') return;
     const data = lastMessage.data ?? {};
     if (!CRITICAL_TYPES.has(data.type) && data.severity !== 'critical') return;
 
@@ -41,7 +66,12 @@ export function CriticalBanner() {
               + `severity ${data.severity}`
             : 'Critical station alert');
 
-    setAlert({ key: `${Date.now()}`, message, kind: data.type ?? 'alert' });
+    setAlert({
+      key: `${Date.now()}`,
+      message,
+      kind: data.type ?? 'alert',
+      incidentId: data.incident_id,
+    });
   }, [lastMessage]);
 
   if (!alert) return null;
@@ -54,8 +84,11 @@ export function CriticalBanner() {
                  px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 shadow-lg"
     >
       <div className="flex items-center gap-3 min-w-0">
+        {/* A steady ring, not an expanding ping. The banner is already a
+            full-width red bar pinned above every page — it does not need a
+            second device competing for the same attention. */}
         <span className="w-2.5 h-2.5 rounded-full bg-white ring-4 ring-rose-400/60 shrink-0
-                         animate-ping" aria-hidden="true" />
+                         pulse-dot" aria-hidden="true" />
         <span className="text-xs uppercase tracking-widest font-bold bg-black/20
                          px-2.5 py-0.5 rounded font-mono shrink-0 hidden sm:inline">
           {alert.kind.replace('_', ' ')}

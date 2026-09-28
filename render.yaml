@@ -5,9 +5,32 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    # ── Durability ────────────────────────────────────────────────────────
+    # A container filesystem is ephemeral. Without a disk, every deploy and
+    # every idle spin-down wipes the station's whole operational record and
+    # the console comes back on the bare seed - which is what made a hosted
+    # demo look like an outage.
+    #
+    # A disk requires a paid instance type; the free tier cannot hold one.
+    # To stay on free, delete the `plan` and `disk` blocks and the
+    # PRAHARI_DB_PATH variable below, and accept that the record does not
+    # survive a restart - POST /admin/demo-season puts a populated season
+    # back in one call.
+    plan: starter
+    disk:
+      name: prahari-data
+      mountPath: /var/data
+      sizeGB: 1
+
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+
+      # Keep the database on the mounted disk, not inside the application
+      # directory, which a deploy replaces wholesale.
+      - key: PRAHARI_DB_PATH
+        value: /var/data/prahari.db
 
       # ── Credentials ──────────────────────────────────────────────────────
       # The key every write endpoint checks, under the name the code reads

@@ -141,18 +141,25 @@ export function PortalNav() {
           </button>
 
           {/* A console left signed in on a shared terminal is the other half
-              of taking the key out of the bundle. */}
+              of taking the key out of the bundle.
+
+              Set in the band's own sentence case rather than as a monospace
+              caps badge: it is an ordinary account action, and three uppercase
+              mono items in a row made the link status, the blackout drill and
+              this read as one alarm cluster. It does not go red on hover
+              either — signing out is routine, and red is the colour this
+              console uses for an emergency. */}
           {authenticated && (
             <button
               type="button"
               data-compact
               onClick={() => void signOut()}
               title="End this station session"
-              className="flex items-center gap-1.5 font-mono text-2xs font-bold tracking-caps
-                         uppercase text-frost-muted hover:text-emergency transition-colors
-                         border-l border-frost-border pl-3"
+              className="flex items-center gap-1.5 text-13 text-slate-400
+                         hover:text-white transition-colors
+                         border-l border-white/15 pl-3"
             >
-              <LogOut size={12} aria-hidden="true" />
+              <LogOut size={13} aria-hidden="true" />
               <span className="hidden lg:inline">Sign out</span>
             </button>
           )}

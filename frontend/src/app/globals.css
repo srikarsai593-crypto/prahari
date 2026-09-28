@@ -485,187 +485,123 @@ select {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Liquid-glass pop — the tactile layer on every console control.
+   Control feedback — the tactile layer on the console's primary controls.
 
-   Structure stays flat (the cards above still use 1px hairlines rather than
-   fuzzy depth); the dimension lives only in the interaction, where it is the
-   point. A button lifts toward the operator on hover, a specular sheen sweeps
-   across its face, and a press drives it back into the surface. On a gloved
-   hand at a station terminal that travel is the confirmation that the control
-   took the input.
+   Restrained on purpose. This is a government operations portal, not a
+   consumer landing page: a control should acknowledge the pointer, and stop
+   there. A press confirms that the control took the input, which on a gloved
+   hand at a station terminal is the part that earns its keep.
+
+   Scoped to the button *classes*, never to the bare `button` element. A bare
+   selector caught every control in the console — the sign-out link, the A-/A/A+
+   text-size group, the station switcher, the nav tabs — and lifted, scaled and
+   swept a specular highlight through each of them. A one-word text control
+   that rears up off the page reads as a fault, not as polish.
 
    Disabled controls are excluded throughout: a button that cannot be pressed
    must not answer the pointer as though it can.
    ═══════════════════════════════════════════════════════════════════════════ */
-button,
-[role='button'],
-a.btn,
 .btn-primary,
 .btn-secondary,
 .btn-danger,
 .btn-ghost,
+a.btn,
 .glass-btn-pill,
 .portal-card--invert {
   position: relative;
   overflow: hidden;
   z-index: 1;
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
-              box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              background-color 0.25s ease,
-              border-color 0.25s ease,
-              color 0.25s ease;
+  transition: transform 0.18s ease,
+              box-shadow 0.18s ease,
+              background-color 0.15s ease,
+              border-color 0.15s ease,
+              color 0.15s ease;
 }
 
-/* The sheen. Parked off the top-left corner and scaled down, so the hover
-   transition reads as light travelling across glass rather than a fade. */
-button::before,
-[role='button']::before,
-a.btn::before,
+/* A single soft highlight that settles in, rather than a specular arc that
+   travels across the face. Kept well under half opacity so the label stays
+   the brightest thing on the control. */
 .btn-primary::before,
 .btn-secondary::before,
 .btn-danger::before,
 .btn-ghost::before,
+a.btn::before,
 .glass-btn-pill::before,
 .portal-card--invert::before {
   content: '';
   position: absolute;
-  top: -65%;
-  left: -65%;
-  width: 230%;
-  height: 230%;
-  border-radius: 46%;
-  background: radial-gradient(circle at 35% 35%,
-              rgba(255, 255, 255, 0.58) 0%,
-              rgba(186, 230, 253, 0.32) 28%,
-              rgba(56, 189, 248, 0.12) 50%,
-              rgba(255, 255, 255, 0) 70%);
-  transform: translate(-38%, -38%) scale(0.45) rotate(-15deg);
+  inset: 0;
+  background: linear-gradient(180deg,
+              rgba(255, 255, 255, 0.16) 0%,
+              rgba(255, 255, 255, 0) 60%);
   opacity: 0;
   pointer-events: none;
   z-index: 0;
-  transition: transform 0.65s cubic-bezier(0.16, 1, 0.3, 1),
-              opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.18s ease;
 }
 
-/* Label and icon ride above the sheen. */
-button > *,
-[role='button'] > *,
-a.btn > *,
+/* Label and icon ride above the highlight. */
 .btn-primary > *,
 .btn-secondary > *,
 .btn-danger > *,
 .btn-ghost > *,
+a.btn > *,
 .glass-btn-pill > *,
 .portal-card--invert > * {
   position: relative;
   z-index: 1;
 }
 
-/* Hover: lift, rim-light, and sweep the sheen through. */
-button:hover:not(:disabled),
-[role='button']:hover:not(:disabled),
-a.btn:hover,
+/* Hover: a single pixel of lift and a contact shadow. No scale — a control
+   that changes size on hover nudges the layout around it and pulls the eye
+   away from the figures the page exists to report. */
 .btn-primary:hover:not(:disabled),
-.glass-btn-pill:hover:not(:disabled) {
-  transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 8px 20px -4px rgba(2, 132, 199, 0.28),
-              inset 0 1px 1.5px rgba(255, 255, 255, 0.45),
-              inset 0 -1px 1px rgba(0, 0, 0, 0.08);
-}
-
-button:hover:not(:disabled)::before,
-[role='button']:hover:not(:disabled)::before,
-a.btn:hover::before,
-.btn-primary:hover:not(:disabled)::before,
-.glass-btn-pill:hover:not(:disabled)::before {
-  transform: translate(12%, 12%) scale(1.15) rotate(0deg);
-  opacity: 1;
-}
-
-/* Secondary and ghost sit on white, so the rim-light is brighter and the
-   sheen is held back a little to keep the navy label readable. */
 .btn-secondary:hover:not(:disabled),
-.btn-ghost:hover:not(:disabled) {
-  transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 8px 20px -4px rgba(2, 132, 199, 0.28),
-              inset 0 1px 1.5px rgba(255, 255, 255, 0.7),
-              inset 0 -1px 1px rgba(0, 0, 0, 0.05);
+.btn-danger:hover:not(:disabled),
+.btn-ghost:hover:not(:disabled),
+a.btn:hover,
+.glass-btn-pill:hover:not(:disabled),
+.portal-card--invert:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.18);
 }
 
+.btn-primary:hover:not(:disabled)::before,
 .btn-secondary:hover:not(:disabled)::before,
-.btn-ghost:hover:not(:disabled)::before {
-  transform: translate(12%, 12%) scale(1.15) rotate(0deg);
-  opacity: 0.85;
-}
-
-/* Danger keeps the same physics but glows in its own colour — an emergency
-   control should never read as the ordinary blue one. */
-.btn-danger::before {
-  background: radial-gradient(circle at 35% 35%,
-              rgba(255, 255, 255, 0.58) 0%,
-              rgba(254, 202, 202, 0.35) 28%,
-              rgba(239, 68, 68, 0.15) 50%,
-              rgba(255, 255, 255, 0) 70%);
-}
-
-.btn-danger:hover:not(:disabled) {
-  transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 8px 20px -4px rgba(220, 38, 38, 0.42),
-              inset 0 1px 1.5px rgba(255, 255, 255, 0.5),
-              inset 0 -1px 1px rgba(0, 0, 0, 0.12);
-}
-
-.btn-danger:hover:not(:disabled)::before {
-  transform: translate(12%, 12%) scale(1.15) rotate(0deg);
+.btn-danger:hover:not(:disabled)::before,
+.btn-ghost:hover:not(:disabled)::before,
+a.btn:hover::before,
+.glass-btn-pill:hover:not(:disabled)::before,
+.portal-card--invert:hover::before {
   opacity: 1;
 }
 
-/* The one dark card in the grid — deeper glow, dimmer sheen against navy. */
-.portal-card--invert:hover {
-  transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 8px 22px -4px rgba(2, 132, 199, 0.38),
-              inset 0 1px 1.5px rgba(255, 255, 255, 0.25),
-              inset 0 -1px 1px rgba(0, 0, 0, 0.3);
-}
-
-.portal-card--invert:hover::before {
-  transform: translate(12%, 12%) scale(1.15) rotate(0deg);
-  opacity: 0.9;
-}
-
-/* Press: short, inward, and faster than the lift, so the button feels like it
-   bottoms out under the finger instead of easing. */
-button:active:not(:disabled),
-[role='button']:active:not(:disabled),
-a.btn:active,
+/* Press: back to the surface, faster than the lift, so the control bottoms
+   out under the finger instead of easing. */
 .btn-primary:active:not(:disabled),
 .btn-secondary:active:not(:disabled),
 .btn-danger:active:not(:disabled),
 .btn-ghost:active:not(:disabled),
+a.btn:active,
 .glass-btn-pill:active:not(:disabled),
 .portal-card--invert:active {
-  transform: translateY(0.5px) scale(0.98);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
-  transition-duration: 0.08s;
+  transform: translateY(0);
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.16);
+  transition-duration: 0.07s;
 }
 
-/* Opt-out for buttons that are a run of text rather than a control surface —
-   a word inside a sentence, set as a <button> because activating it does
-   something. Lifting and rim-lighting a phrase mid-paragraph reads as a
-   glitch, so these keep only a colour shift. */
-button.btn-inline,
-button.btn-inline:hover,
-button.btn-inline:active {
-  position: static;
-  overflow: visible;
-  transform: none;
-  box-shadow: none;
+/* Every other control — the sign-out link, the text-size group, the station
+   switcher, the nav tabs, icon buttons — answers the pointer with colour
+   alone. Those rules live with the components that own them. */
+
+/* A run of text rather than a control surface — a word inside a sentence, set
+   as a <button> because activating it does something. It opts out of the 44px
+   touch floor every other button carries, because it is sized by the line it
+   sits in. (It no longer needs to opt out of lift or sheen: those are scoped
+   to the button classes above, and a text control never had them.) */
+button.btn-inline {
   min-height: 0;
   transition: color 0.15s ease, text-decoration-color 0.15s ease;
-}
-
-button.btn-inline::before {
-  display: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -764,20 +700,23 @@ input[type='range']::-moz-range-thumb {
 .toast-enter { animation: slideIn 0.25s ease-out; }
 .toast-exit  { animation: slideOut 0.25s ease-in; }
 
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 3px currentColor; }
-  50%      { box-shadow: 0 0 10px currentColor; }
+/* A live indicator should read as alive without bleeding light across the
+   surface beside it. The dot breathes in opacity, and the glow is a thin ring
+   at the dot's own edge rather than an 8px bloom. */
+@keyframes pulse-dim {
+  0%, 100% { opacity: 1;    }
+  50%      { opacity: 0.55; }
 }
 
 .pulse-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  animation: pulse-glow 2s ease-in-out infinite;
+  animation: pulse-dim 2.4s ease-in-out infinite;
 }
 
 .status-badge-glow {
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.22);
 }
 
 /* Radar sweep on the polar compass. */
@@ -791,10 +730,14 @@ input[type='range']::-moz-range-thumb {
   border: 1px solid var(--border-inset);
 }
 
+/* The plot is a position chart, not a scanning radar — nothing is actually
+   being swept. The hand is kept as an orientation cue, slowed to a quarter of
+   its old rate and faded back so it sits behind the markers it is there to
+   frame rather than drawing the eye off them. */
 .compass-sweep {
   transform-origin: 50% 50%;
-  animation: radarSweep 16s linear infinite;
-  opacity: 0.55;
+  animation: radarSweep 60s linear infinite;
+  opacity: 0.18;
 }
 
 /* NOTAM ticker. */
@@ -806,10 +749,13 @@ input[type='range']::-moz-range-thumb {
 .notam-track {
   display: inline-flex;
   white-space: nowrap;
-  animation: notamScroll 40s linear infinite;
+  animation: notamScroll 75s linear infinite;
 }
 
-.notam-strip:hover .notam-track {
+/* WCAG 2.2.2 wants moving text to be pausable, and hover alone does not
+   reach a keyboard. Focus inside the strip stops it too. */
+.notam-strip:hover .notam-track,
+.notam-strip:focus-within .notam-track {
   animation-play-state: paused;
 }
 
@@ -823,9 +769,14 @@ input[type='range']::-moz-range-thumb {
   animation: bannerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* ── PRAHARI mark — spinning snowflake in a breathing halo ─────────────────
-   Recovered from the pre-portal shell. The wrapper is inline-flex and sized by
-   the component, so the halo tracks whatever size the caller asks for. */
+/* ── PRAHARI mark ─────────────────────────────────────────────────────────
+   An emblem, so it holds still. It used to rotate continuously and speed up
+   on hover inside a halo that pulsed its scale and opacity — motion an
+   organisational mark should not have, and the one thing on the page that
+   never stopped moving. The rotation is kept for the hover, once, as
+   acknowledgement that the mark is a link; the halo stays as a fixed ring.
+   The wrapper is inline-flex and sized by the component, so the ring tracks
+   whatever size the caller asks for. */
 .snowflake-hero-wrapper {
   position: relative;
   display: inline-flex;
@@ -835,34 +786,20 @@ input[type='range']::-moz-range-thumb {
 }
 
 .snowflake-svg-element {
-  animation: snowSpin 18s linear infinite;
-  filter: drop-shadow(0 0 12px rgba(2, 132, 199, 0.3));
-  transition: filter 0.4s ease;
+  transition: transform 1.2s cubic-bezier(0.22, 1, 0.36, 1), filter 0.25s ease;
 }
 
-/* Hovering the mark — or the link wrapping it — spins it up. */
 .snowflake-hero-wrapper:hover .snowflake-svg-element,
 a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
-  animation-duration: 4s;
-  filter: drop-shadow(0 0 24px rgba(2, 132, 199, 0.6));
+  transform: rotate(60deg);
+  filter: drop-shadow(0 0 6px rgba(2, 132, 199, 0.35));
 }
 
 .snowflake-halo {
   position: absolute;
   inset: -14%;
   border-radius: 50%;
-  border: 1px solid rgba(2, 132, 199, 0.25);
-  animation: haloBreath 3s ease-in-out infinite;
-}
-
-@keyframes snowSpin {
-  from { transform: rotate(0deg);   }
-  to   { transform: rotate(360deg); }
-}
-
-@keyframes haloBreath {
-  0%, 100% { opacity: 0.4; transform: scale(1);    }
-  50%      { opacity: 0.8; transform: scale(1.08); }
+  border: 1px solid rgba(2, 132, 199, 0.22);
 }
 
 /* ── Hero blizzard ────────────────────────────────────────────────────────
@@ -891,7 +828,9 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
   inset: 0;
   pointer-events: none;
   overflow: hidden;
-  opacity: 0.22;
+  /* Faint enough to read as atmosphere rather than as a weather overlay the
+     operator is supposed to interpret. */
+  opacity: 0.12;
 }
 
 .wind-drift,
@@ -912,7 +851,7 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
     transparent 19%, transparent 35%
   );
   filter: blur(8px);
-  animation: blizzardDrift 12s linear infinite;
+  animation: blizzardDrift 26s linear infinite;
 }
 
 .wind-drift-fast {
@@ -924,7 +863,7 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
     transparent 25%, transparent 45%
   );
   filter: blur(10px);
-  animation: blizzardDrift 6.5s linear infinite;
+  animation: blizzardDrift 15s linear infinite;
 }
 
 @keyframes blizzardDrift {
@@ -958,43 +897,33 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
     transition: none !important;
   }
 
-  /* The button pop keeps its colour and rim-light — those carry the state —
-     but drops the travel and the sheen sweep, which are the parts that move. */
-  button,
-  [role='button'],
-  a.btn,
+  /* Controls keep their colour and contact shadow — those carry the state —
+     and drop the one pixel of travel, which is the part that moves. */
   .btn-primary,
   .btn-secondary,
   .btn-danger,
   .btn-ghost,
+  a.btn,
   .glass-btn-pill,
   .portal-card--invert {
     transition: box-shadow 0.15s ease, background-color 0.15s ease,
                 border-color 0.15s ease, color 0.15s ease !important;
   }
 
-  button:hover, button:active,
-  [role='button']:hover, [role='button']:active,
-  a.btn:hover, a.btn:active,
   .btn-primary:hover, .btn-primary:active,
   .btn-secondary:hover, .btn-secondary:active,
   .btn-danger:hover, .btn-danger:active,
   .btn-ghost:hover, .btn-ghost:active,
+  a.btn:hover, a.btn:active,
   .glass-btn-pill:hover, .glass-btn-pill:active,
   .portal-card--invert:hover, .portal-card--invert:active {
     transform: none !important;
   }
 
-  button::before,
-  [role='button']::before,
-  a.btn::before,
-  .btn-primary::before,
-  .btn-secondary::before,
-  .btn-danger::before,
-  .btn-ghost::before,
-  .glass-btn-pill::before,
-  .portal-card--invert::before {
-    display: none !important;
+  /* The mark's hover rotation is motion too. */
+  .snowflake-hero-wrapper:hover .snowflake-svg-element,
+  a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
+    transform: none !important;
   }
 }
 
