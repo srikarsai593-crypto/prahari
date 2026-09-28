@@ -1,6 +1,7 @@
 'use client';
 import { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { isStationBroadcast, type StationBroadcast } from '@/lib/broadcasts';
+import { offlineQueue } from '@/lib/offlineQueue';
 
 export type { StationBroadcast, StationMessageType, PayloadOf } from '@/lib/broadcasts';
 export { isType, isAnyOf } from '@/lib/broadcasts';
@@ -46,14 +47,24 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
   const retryDelay = useRef(RECONNECT_BASE_MS);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmounted = useRef(false);
+  /**
+   * Set while the operator is running a SATCOM blackout drill. The socket's
+   * own job is to get back up, so without a flag it would reconnect within a
+   * second of being cut and the drill would prove nothing.
+   */
+  const blackout = useRef(false);
+  /** The live socket, including one still opening — `socket` state is only
+   *  set on open, so a blackout declared mid-handshake needs this to close. */
+  const wsRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback(() => {
-    if (unmounted.current) return;
+    if (unmounted.current || blackout.current) return;
 
     const ws = new WebSocket(getWsUrl());
+    wsRef.current = ws;
 
     ws.onopen = () => {
-      if (unmounted.current) { ws.close(); return; }
+      if (unmounted.current || blackout.current) { ws.close(); return; }
       console.log('[WS] Connected');
       setConnected(true);
       retryDelay.current = RECONNECT_BASE_MS; // reset backoff on successful connect
@@ -75,10 +86,14 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     };
 
     ws.onclose = () => {
+      if (wsRef.current === ws) wsRef.current = null;
       if (unmounted.current) return;
-      console.log(`[WS] Disconnected — retrying in ${retryDelay.current}ms`);
       setConnected(false);
       setSocket(null);
+      // A severed link the operator is holding open stays severed until they
+      // close the drill; scheduling a retry here would fight them.
+      if (blackout.current) { console.log('[WS] Down — SATCOM blackout held'); return; }
+      console.log(`[WS] Disconnected — retrying in ${retryDelay.current}ms`);
       // Exponential backoff reconnect
       retryTimer.current = setTimeout(() => {
         retryDelay.current = Math.min(retryDelay.current * 2, RECONNECT_MAX_MS);
@@ -99,8 +114,30 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
     return () => {
       unmounted.current = true;
       if (retryTimer.current) clearTimeout(retryTimer.current);
+      wsRef.current = null;
       setSocket(prev => { prev?.close(); return null; });
     };
+  }, [connect]);
+
+  // Follow the blackout switch: cut the link when it goes on, and reconnect
+  // immediately — not on the backoff the outage had built up — when it lifts.
+  useEffect(() => {
+    const sync = () => {
+      if (offlineQueue.isBlackout === blackout.current) return;
+      blackout.current = offlineQueue.isBlackout;
+      if (blackout.current) {
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+        wsRef.current?.close();
+        wsRef.current = null;
+        setConnected(false);
+        setSocket(null);
+      } else {
+        retryDelay.current = RECONNECT_BASE_MS;
+        connect();
+      }
+    };
+    sync();
+    return offlineQueue.subscribe(sync);
   }, [connect]);
 
   return (

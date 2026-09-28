@@ -114,8 +114,9 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
                 This station is running on the public demo key. Use{' '}
                 <button type="button"
                         onClick={() => setKey(state.demo_key ?? '')}
-                        className="font-mono text-arctic-300 hover:text-white underline
-                                   underline-offset-2">
+                        className="btn-inline font-mono text-arctic-300 hover:text-white
+                                   underline underline-offset-2 decoration-white/25
+                                   hover:decoration-white/60">
                   {state.demo_key}
                 </button>{' '}
                 to sign in.

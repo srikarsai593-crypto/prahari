@@ -51,6 +51,7 @@ const NOTHING_TO_FLUSH: FlushResult = { flushed: 0, failed: 0, dropped: 0 };
 class OfflineQueue {
   private queue: QueuedRequest[] = [];
   private _isOffline = false;
+  private _blackout = false;
   private _flushing = false;
   /** The in-flight replay, so concurrent callers observe one real result. */
   private _flushPromise: Promise<FlushResult> | null = null;
@@ -77,6 +78,8 @@ class OfflineQueue {
   }
 
   get isOffline() { return this._isOffline; }
+  /** True only while an operator is holding the link down deliberately. */
+  get isBlackout() { return this._blackout; }
   get pendingCount() { return this.queue.length; }
   get isFlushing() { return this._flushing; }
 
@@ -111,6 +114,26 @@ class OfflineQueue {
     this.notify();
     if (wasOffline && !offline && this.queue.length > 0) return this.flush();
     return Promise.resolve(NOTHING_TO_FLUSH);
+  }
+
+  /**
+   * Operator-forced outage — the SATCOM blackout drill.
+   *
+   * Distinct from `setOffline`, which is the console's own reading of the
+   * link. A blackout is deliberate, so it has to survive the socket's own
+   * reconnect attempts: the WebSocket provider watches this flag and stays
+   * down while it is set, rather than racing the operator back online. It is
+   * also named separately in the badge, so nobody walks past a console mid
+   * drill and reports a real satellite failure.
+   *
+   * Deliberately not persisted. A blackout is a demonstration of what the
+   * console does during an outage, and coming back to a reloaded page still
+   * severed — with no memory of why — is a worse failure than losing the
+   * drill state.
+   */
+  setBlackout(on: boolean): Promise<FlushResult> {
+    this._blackout = on;
+    return this.setOffline(on);
   }
 
   enqueue(url: string, options: RequestInit, description: string) {

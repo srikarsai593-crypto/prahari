@@ -70,8 +70,8 @@ const config: Config = {
       fontFamily: {
         // Industrial sans for prose, monospace for every coordinate, ID code,
         // timestamp and telemetry figure (tabular alignment under field glare).
-        sans: ['var(--font-inter)', 'Inter', 'Segoe UI', 'system-ui', 'sans-serif'],
-        display: ['var(--font-inter)', 'Inter', 'Segoe UI', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-outfit)', 'Outfit', 'Segoe UI', 'system-ui', 'sans-serif'],
+        display: ['var(--font-outfit)', 'Outfit', 'Segoe UI', 'system-ui', 'sans-serif'],
         mono: ['var(--font-jetbrains)', 'JetBrains Mono', 'Consolas', 'monospace'],
         // Figures an operator reads off the console — coordinates, ΔT, counts.
         telemetry: ['var(--font-telemetry)', 'IBM Plex Mono', 'Consolas', 'monospace'],
