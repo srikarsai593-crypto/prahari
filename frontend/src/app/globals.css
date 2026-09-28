@@ -649,6 +649,25 @@ a.btn:active,
   transition-duration: 0.08s;
 }
 
+/* Opt-out for buttons that are a run of text rather than a control surface —
+   a word inside a sentence, set as a <button> because activating it does
+   something. Lifting and rim-lighting a phrase mid-paragraph reads as a
+   glitch, so these keep only a colour shift. */
+button.btn-inline,
+button.btn-inline:hover,
+button.btn-inline:active {
+  position: static;
+  overflow: visible;
+  transform: none;
+  box-shadow: none;
+  min-height: 0;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+button.btn-inline::before {
+  display: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Inputs — flat white, 1px slate border, sky focus ring
    ═══════════════════════════════════════════════════════════════════════════ */
