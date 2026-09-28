@@ -160,6 +160,12 @@ export default function Dashboard() {
     const draftExpeditions = expeditions.filter((e) => e.status === 'draft');
     const inTransit = shipments.filter((s) => s.status === 'in_transit').length;
     const delayed = shipments.filter((s) => s.status === 'delayed').length;
+    // Everything the station is still waiting on. A crate that has arrived
+    // but is not unloaded is still the station's problem, so "in transit"
+    // alone under-reports what cargo is carrying.
+    const inbound = shipments.filter((s) => s.status !== 'unloaded').length;
+    const overdueCargo = shipments.filter(
+      (s) => s.is_overdue === true || s.status === 'delayed').length;
     const openPlans = plans.filter((p) => ['planned', 'in_transit'].includes(p.status));
     const deviated = plans.filter((p) => p.status === 'deviated').length;
 
@@ -183,8 +189,8 @@ export default function Dashboard() {
     const overdue = personnel.filter((p) => p.overdue).length;
 
     return {
-      activeExpeditions, draftExpeditions, inTransit, delayed, openPlans, deviated,
-      minCover, critical, deployed, unaccounted, overdue,
+      activeExpeditions, draftExpeditions, inTransit, delayed, inbound, overdueCargo,
+      openPlans, deviated, minCover, critical, deployed, unaccounted, overdue,
       totalPersonnel: personnel.length,
       openIncidents: incidents.length,
     };
@@ -253,27 +259,58 @@ export default function Dashboard() {
 
   const dash = loading ? '—' : undefined;
 
+  /**
+   * The four headline figures.
+   *
+   * Each one is a *total* the station is carrying, with the sharp filtered
+   * figure underneath it. It used to be the other way round — the headline
+   * was the narrow count and the context was the footnote — which on a
+   * working station read `0 · 1 · 0 · 10d`: four boxes saying nothing is
+   * happening, above three traverses awaiting authorisation, an overdue
+   * consignment and two stock rows inside their critical window.
+   *
+   * Nothing here is padded to avoid a zero. A station with no traverses
+   * still shows none, and the banner above says whether that is an empty
+   * console or a quiet one. What changed is which number is the headline:
+   * "how many are on my books" is the question a commander opens this page
+   * with, and "how many of those are under way" is the follow-up.
+   */
   const kpis: Array<{ value: string; label: string; tone: string; href: string;
                      note?: string }> = [
     {
-      value: dash ?? String(m.activeExpeditions.length),
-      label: 'Active Expeditions', tone: 'text-arctic-900', href: '/expedition',
-      note: m.draftExpeditions.length > 0
-        ? `${m.draftExpeditions.length} draft awaiting authorisation` : undefined,
+      value: dash ?? String(m.activeExpeditions.length + m.draftExpeditions.length),
+      label: 'Traverses on the Books', tone: 'text-arctic-900', href: '/expedition',
+      note: dash ? undefined
+        : `${m.activeExpeditions.length} under way · `
+          + `${m.draftExpeditions.length} awaiting authorisation`,
     },
     {
-      value: dash ?? String(m.inTransit),
-      label: 'Consignments in Transit', tone: 'text-arctic-900', href: '/cargo',
+      value: dash ?? String(m.inbound),
+      label: 'Consignments Inbound',
+      tone: m.overdueCargo > 0 ? 'text-alert' : 'text-arctic-900', href: '/cargo',
+      note: dash ? undefined
+        : m.overdueCargo > 0
+          ? `${m.inTransit} in transit · ${m.overdueCargo} overdue`
+          : `${m.inTransit} in transit`,
     },
     {
-      value: dash ?? String(m.deployed),
-      label: 'Personnel Deployed', tone: 'text-arctic-900', href: '/personnel',
+      value: dash ?? String(m.totalPersonnel),
+      label: 'Crew on Strength',
+      tone: m.unaccounted > 0 ? 'text-emergency' : 'text-arctic-900', href: '/personnel',
+      note: dash ? undefined
+        : m.unaccounted > 0
+          ? `${m.unaccounted} unaccounted for`
+          : `${m.deployed} in the field · ${m.totalPersonnel - m.deployed} at base`,
     },
     {
       value: dash ?? (m.minCover === null ? 'n/a' : `${m.minCover.toFixed(0)}d`),
       label: 'Shortest Stock Cover',
       tone: m.critical > 0 ? 'text-emergency' : 'text-arctic-900',
       href: '/inventory',
+      note: dash ? undefined
+        : m.critical > 0
+          ? `${m.critical} row${m.critical === 1 ? '' : 's'} inside the critical window`
+          : 'every row outside its critical window',
     },
   ];
 

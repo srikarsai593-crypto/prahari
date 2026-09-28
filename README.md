@@ -74,6 +74,8 @@ module reads the same truth.
 | **A high-contrast theme that cannot break the default one** | GIGW 3.0 expects a portal to offer one, and a laptop carried onto the ice is read against snow under a sun that does not set. Every rule is scoped behind `[data-theme='contrast']` and *nothing* above it in `globals.css` was modified: with the attribute absent no selector matches and the standard console is byte-identical to what it was. `applyTheme()` removes the attribute rather than setting `data-theme="standard"` for exactly that reason. Map tiles are deliberately excluded — re-colouring the ground a traverse is about to cross would be a lie told for legibility. |
 | **The handover is the artefact, not the dashboard** | A station runs continuously and the console does not. What the outgoing commander knows that is not written down goes to bed with them, and the relief sees only the present. The brief is station-wide and forward-looking, where the post-incident debrief is retrospective and about one closed incident. Each source may fail on its own and the document *names* the ones it could not read — a section that is blank because a call timed out, read at 3am, is indistinguishable from a station where nothing is wrong. |
 | **A rung below the offline queue** | The queue assumes the link comes back. If the satellite terminal itself is down the queue holds forever, and Antarctic stations fall back to HF radio. Field mode used to tell an operator whose SOS could not be sent to "raise the alarm by radio" and hand them nothing — leaving somebody in trouble to compose a position report from memory. It now composes it: fixed field order, only characters ITA2 can carry, and a check group so a miscopied position is *known* to be miscopied. This is not compression — ITA2 is a narrower alphabet than ASCII, not a denser one — and the README says so rather than claiming otherwise. |
+| **A dead accessibility control is worse than none** | The utility rail carried "Screen Reader" as a `<span>` that did nothing, between two controls that work. The support it named was real — skip link, landmarks, `aria-live` on every alert, keyboard operation — so the label read as a control that was simply broken. It now opens a statement, and the statement lists what the console *cannot* do as prominently as what it can: the maps are not readable by a screen reader, there is no Hindi, and both say so. Someone deciding whether they can use this console needs the gaps more than the wins. |
+| **A headline figure is a total, not a filtered count** | The four KPIs read `0 · 1 · 0 · 10d` on a station carrying three traverses, four consignments and two stock rows inside their critical window — because each headline was the narrow count and the context was the footnote. They are the other way round now. Nothing is padded to avoid a zero: every filtered figure is still shown, underneath. "How many are on my books" is the question this page is opened with; "how many of those are under way" is the follow-up. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -524,6 +526,7 @@ you which is which is one you cannot act on.
 | Audit chain | SHA-256 over each entry and the one before it | **Real, and tamper-*evident*** — a writer with database access could recompute the whole chain. Not tamper-proof, and `/events/verify` says so in its own response |
 | Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran | **Real**, and the UI never claims AI when a regex did the work |
 | Purchase orders and vendor names | Synthetic, planted by the demonstration season | **Synthetic** — no vendor system is contacted and nothing is sent to anyone; this is the station's own record of what it has on order |
+| The accessibility statement | Hand-maintained, checked against the code | **A claim, and it lists its own gaps** — if a line stops being true it is wrong and must be corrected, not left standing |
 | A shift handover brief | Every section read from the station's own records at generation time | **Derived**, and it names any source it could not read rather than printing an empty section |
 | An HF radio message | Composed from the same records, restricted to the ITA2 character set | **Derived** — and it is not transmitted. Prahari has no radio; it produces text for a human to key or read aloud |
 | The HF check group | A positionally-weighted sum over the message body | **Derived** — a transcription check that detects accident. Not a cryptographic one, and not meant to resist anyone |
@@ -640,11 +643,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 319 tests
+npm test                 # 327 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**732 backend tests (~6 s) and 319 frontend tests (~14 s).** No network, no
+**732 backend tests (~6 s) and 327 frontend tests (~14 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every

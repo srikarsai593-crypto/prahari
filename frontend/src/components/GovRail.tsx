@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Accessibility, Contrast, Globe, Volume2 } from 'lucide-react';
+import { Accessibility, Contrast, Globe } from 'lucide-react';
+import { AccessibilityStatement } from './AccessibilityStatement';
 import { applyTheme, loadTheme, nextTheme, saveTheme, type Theme } from '@/lib/theme';
 
 /**
@@ -124,11 +125,9 @@ export function GovRail() {
             Skip to content
           </a>
 
-          <span className="hidden lg:flex items-center gap-1.5 uppercase tracking-caps
-                           text-slate-400">
-            <Volume2 size={13} aria-hidden="true" />
-            Screen Reader
-          </span>
+          {/* Was a <span> that did nothing, sitting between two controls
+              that work. The support it names is real; see the component. */}
+          <AccessibilityStatement />
 
           <span className="flex items-center gap-1.5 uppercase tracking-caps text-slate-300">
             <Globe size={13} aria-hidden="true" />
