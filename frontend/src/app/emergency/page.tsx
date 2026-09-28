@@ -101,7 +101,7 @@ export default function EmergencyPage() {
       setFocusId((prev) => (prev && open.some((i) => i.id === prev) ? prev : open[0]?.id ?? null));
     } catch (e) {
       console.error('Failed to load incidents:', e);
-      addToast('Could not reach the station records — check the connection indicator above',
+      addToast('Could not reach the station — the figures below are the last ones received',
         'alert');
     } finally {
       setLoading(false);

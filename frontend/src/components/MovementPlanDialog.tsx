@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import dynamic from 'next/dynamic';
 import { AlertTriangle, CheckCircle2, Route, Undo2, X } from 'lucide-react';
 import { api, isQueued, queuedMessage } from '@/lib/api';
@@ -97,13 +98,10 @@ export function MovementPlanDialog({ person, stationId, onClose, onCreated }: Pr
       .catch(() => addToast('Could not load destinations', 'alert'));
   }, [addToast, station]);
 
-  // Escape closes the dialog — a modal that traps the operator is unusable
-  // during an incident.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Escape closes — a modal that traps the operator is unusable during an
+  // incident — and focus moves in, stays in, and returns to the control that
+  // opened it. Rendered only while open, so `open` is constant here.
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
 
   const destination = useMemo(
     () => destinations.find((d) => d.id === destinationId),
@@ -199,6 +197,7 @@ export function MovementPlanDialog({ person, stationId, onClose, onCreated }: Pr
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[65] bg-arctic-950/30 backdrop-blur-sm flex items-center
                  justify-center p-4"
       role="dialog"

@@ -132,7 +132,7 @@ export default function PersonnelPage() {
         return next;
       });
     } else {
-      addToast('Could not reach the station records — check the connection indicator above',
+      addToast('Could not reach the station — the figures below are the last ones received',
         'alert');
     }
     if (m.status === 'fulfilled') {

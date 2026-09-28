@@ -39,9 +39,23 @@ const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
   {
     key: 'Permissions-Policy',
-    // The console asks for none of these; saying so stops an embedded script
-    // from asking on its behalf.
-    value: 'geolocation=(), microphone=(), camera=(), payment=(), usb=()',
+    /*
+     * Everything the console does not use stays denied, so an embedded
+     * script cannot ask on its behalf.
+     *
+     * `camera=(self)` is the exception and it is load-bearing: the cargo
+     * page and field mode both open the rear camera to read a crate label.
+     * This header said `camera=()` — which was accurate when it was written
+     * and became wrong the moment the scanner shipped, silently disabling
+     * it for the whole origin in every browser. A policy listing a feature
+     * the product now depends on is worse than no policy, because it fails
+     * in a way that looks like a broken camera rather than a broken header.
+     *
+     * Geolocation stays denied on purpose. Field mode deliberately reports
+     * the station's last known position for an SOS rather than prompting
+     * for the handset's own — see the SOS screen for why.
+     */
+    value: 'geolocation=(), microphone=(), camera=(self), payment=(), usb=()',
   },
 ];
 

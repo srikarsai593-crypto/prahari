@@ -105,7 +105,12 @@ async function request<T = unknown>(
       return { queued: true, pending: true } as T;
     }
     throw new ApiError(
-      `Cannot reach the station right now (${description}). Check the connection indicator.`,
+      // Deliberately does not point at the link badge: that badge tracks the
+      // telemetry socket, and an HTTP read can fail while the socket is still
+      // up. Sending an operator to an indicator that contradicts the error is
+      // worse than saying nothing about it.
+      `Cannot reach the station right now (${description}). `
+      + 'Anything on screen is the last received, not the current state.',
       0, url);
   }
 

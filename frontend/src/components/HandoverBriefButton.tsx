@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ClipboardCheck, Copy, Download, FileText, Loader2, Printer, X } from 'lucide-react';
 import { useToast } from './Toast';
 import { downloadTextFile } from '@/lib/download';
 import { collectHandover, handoverFilename, renderHandover } from '@/lib/handover';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 
 /**
  * "Generate shift handover brief".
@@ -22,7 +23,6 @@ export function HandoverBriefButton({ station }: { station: string }) {
   const [busy, setBusy] = useState(false);
   const [brief, setBrief] = useState<{ text: string; at: Date } | null>(null);
   const [copied, setCopied] = useState(false);
-  const closeRef = useRef<HTMLButtonElement>(null);
 
   const generate = async () => {
     setBusy(true);
@@ -46,14 +46,12 @@ export function HandoverBriefButton({ station }: { station: string }) {
 
   const close = useCallback(() => { setBrief(null); setCopied(false); }, []);
 
-  // Escape closes, and focus lands on the dialog rather than staying behind it.
-  useEffect(() => {
-    if (!brief) return undefined;
-    closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [brief, close]);
+  // Escape, focus trap, and focus returned to the button on close. The
+  // trigger is named explicitly because it disables itself while reading the
+  // station, and a disabled control is blurred — so by the time the dialog
+  // opens there is no "previously focused element" left to infer.
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useDialogFocus<HTMLDivElement>(brief !== null, close, triggerRef);
 
   const copy = async () => {
     if (!brief) return;
@@ -93,7 +91,7 @@ export function HandoverBriefButton({ station }: { station: string }) {
 
   return (
     <>
-      <button type="button" onClick={() => void generate()} disabled={busy}
+      <button ref={triggerRef} type="button" onClick={() => void generate()} disabled={busy}
               className="btn-secondary text-13 shrink-0">
         {busy
           ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
@@ -103,6 +101,7 @@ export function HandoverBriefButton({ station }: { station: string }) {
 
       {brief && (
         <div
+          ref={dialogRef}
           className="fixed inset-0 z-[65] bg-arctic-950/30 backdrop-blur-sm flex items-center
                      justify-center p-4"
           role="dialog"
@@ -123,7 +122,7 @@ export function HandoverBriefButton({ station }: { station: string }) {
                   the relief, or hand them the file.
                 </p>
               </div>
-              <button ref={closeRef} type="button" onClick={close} data-compact
+              <button type="button" onClick={close} data-compact
                       aria-label="Close"
                       className="text-frost-muted hover:text-arctic-900 px-2 py-1 rounded-md
                                  hover:bg-frost-subtle transition-colors">

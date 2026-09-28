@@ -78,6 +78,9 @@ module reads the same truth.
 | **A headline figure is a total, not a filtered count** | The four KPIs read `0 · 1 · 0 · 10d` on a station carrying three traverses, four consignments and two stock rows inside their critical window — because each headline was the narrow count and the context was the footnote. They are the other way round now. Nothing is padded to avoid a zero: every filtered figure is still shown, underneath. "How many are on my books" is the question this page is opened with; "how many of those are under way" is the follow-up. |
 | **Every colour that carries text clears AA — and a test says so** | A sweep of the running console found the *default* theme failing WCAG AA in six places while the high-contrast theme it ships passed everywhere: `frost.muted` at 4.43:1 on a white card, `nominal` at 3.51, `alert` at 2.96, white-on-`arctic-600` at 4.10. Each token moved one step down its ramp — hues unchanged, only luminance. The dark bands went the *other* way, because the same "muted" value cannot serve a white card and a navy footer: darkening it to pass on one took it to 2.69:1 on the other. `lib/palette.test.ts` now asserts every pair, so this cannot drift back. |
 | **A `min-width: auto` grid item is a sideways scroll waiting to happen** | A table inside a grid column will not let that column shrink below the table's content width, however carefully the table's own wrapper sets `overflow-x-auto`. On the inventory page the effect was visible rather than theoretical: the category filter row spilled straight out through the card's rounded border on a handset. |
+| **A security header that outlived its premise** | `Permissions-Policy` said `camera=()` with a comment reading "the console asks for none of these". That was true when it was written and wrong from the moment the QR scanner shipped: it disabled the camera for the whole origin, so the cargo page's webcam scan and field mode's *Scan cargo* both failed in every browser — and failed looking like a broken camera rather than a broken header. `lib/headers.test.ts` now ties the policy to the code, granting only what something actually calls and denying the rest. Geolocation stays denied on purpose. |
+| **One request, however many readers** | Four components read the blizzard ΔT and each fetched it separately, so a page load made three identical round trips for one small object and every `blizzard_update` triggered three more at the same instant. The state is shared now: a caller that asks while a request is in flight joins it. That is the difference between 9 requests and 6 on the cargo page, on the link this console is built for. |
+| **A dialog gives focus back** | All four modals handled Escape and nothing else. Closing dropped focus onto `<body>`, so a keyboard operator was returned to the top of the document; two never moved focus *in*, leaving the first Tab walking the page behind the overlay; and none trapped Tab. One hook does all three. The handover button also has to name its trigger explicitly — it disables itself while reading the station, and a disabled control is blurred, so there is no previously-focused element left to infer. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -651,11 +654,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 345 tests
+npm test                 # 364 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**732 backend tests (~6 s) and 345 frontend tests (~14 s).** No network, no
+**732 backend tests (~6 s) and 364 frontend tests (~14 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -670,6 +673,9 @@ What they cover, and why these things in particular:
 
 | Area | What is pinned |
 |---|---|
+| Response headers | That the camera is granted to this origin because the scanner needs it, that everything unused stays denied, and that nothing in the source reaches for a permission the policy refuses |
+| Dialog keyboard behaviour | That focus moves in on open, wraps at both ends of the Tab order, never reaches the page behind the overlay, and returns to the opening control — after Escape as well as a click |
+| Shared station conditions | That four simultaneous readers produce one request, that a later reader renders the known figure without a flash, and that a dropped link leaves the last reading in place rather than blanking it |
 | The palette | That every text colour clears 4.5:1 against all three light surfaces, that white clears it on every solid fill, and that the dark-band colour clears it over the navy. Also that darkening for contrast has not collapsed green, amber and red towards each other — measured on hue, because contrast ratio between two colours of deliberately similar luminance says nothing |
 | HF radio encoding | That every character in a generated message is one ITA2 can carry, whatever went in — accents, `°`, `Δ`, em dashes and currency symbols all have a test. That a miscopied character *and* a transposed pair both change the check group. That a missing position is reported as `UNKNOWN`, never invented. That the check is computed over the body only, so re-sending the same content an hour later produces the same check |
 | The shift handover brief | That a source which fails is *named* rather than silently rendered as an empty section. That an open head-count shouts, and that "not yet counted" is distinguished from "nobody missing". That a crate which recovered from a cold-chain excursion still appears, while one whose gauge has simply not been read does not. That the temperature figures carry their "not a reading" labels |

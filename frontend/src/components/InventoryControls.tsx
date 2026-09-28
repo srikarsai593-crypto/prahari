@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import { CloudSnow, Users, X } from 'lucide-react';
 import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from './Toast';
@@ -200,16 +201,14 @@ export function CrossStationDialog({ itemName, homeStation, onClose }: CrossProp
     return () => { cancelled = true; };
   }, [itemName, addToast]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Escape, a focus trap, and focus returned to whatever opened this.
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
 
   const mixedUnits = (data?.units.length ?? 0) > 1;
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[65] bg-arctic-950/30 backdrop-blur-sm flex items-center
                  justify-center p-4"
       role="dialog"

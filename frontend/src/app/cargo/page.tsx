@@ -80,7 +80,7 @@ export default function CargoPage() {
     if (ship.status === 'fulfilled') {
       setShipments(Array.isArray(ship.value) ? ship.value : []);
     } else {
-      addToast('Could not reach the station records — check the connection indicator above',
+      addToast('Could not reach the station — the figures below are the last ones received',
         'alert');
     }
     if (inv.status === 'fulfilled') setStock(Array.isArray(inv.value) ? inv.value : []);

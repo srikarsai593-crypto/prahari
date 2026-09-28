@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Check, Minus, Volume2, X } from 'lucide-react';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 
 /**
  * Screen reader and accessibility statement.
@@ -111,17 +112,8 @@ const READERS = [
 
 export function AccessibilityStatement() {
   const [open, setOpen] = useState(false);
-  const closeRef = useRef<HTMLButtonElement>(null);
-
   const close = useCallback(() => setOpen(false), []);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
+  const dialogRef = useDialogFocus<HTMLDivElement>(open, close);
 
   return (
     <>
@@ -140,6 +132,7 @@ export function AccessibilityStatement() {
 
       {open && (
         <div
+          ref={dialogRef}
           className="fixed inset-0 z-[70] bg-arctic-950/40 backdrop-blur-sm flex items-center
                      justify-center p-4"
           role="dialog"
@@ -160,7 +153,7 @@ export function AccessibilityStatement() {
                   What this console supports, and what it does not.
                 </p>
               </div>
-              <button ref={closeRef} type="button" onClick={close} data-compact
+              <button type="button" onClick={close} data-compact
                       aria-label="Close"
                       className="text-frost-muted hover:text-arctic-900 px-2 py-1 rounded-md
                                  hover:bg-frost-subtle transition-colors shrink-0">
