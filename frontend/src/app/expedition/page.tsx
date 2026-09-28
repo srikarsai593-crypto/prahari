@@ -351,7 +351,7 @@ export default function ExpeditionPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── Planner ──────────────────────────────────────────────────────── */}
-        <div className="subview-card rounded-2xl p-7 lg:col-span-2 space-y-6">
+        <div className="subview-card rounded-2xl p-7 lg:col-span-2 min-w-0 space-y-6">
           <div>
             <h2 className="text-lg font-bold text-arctic-900 mb-1 flex items-center gap-2">
               <Wand2 size={18} className="text-arctic-600" aria-hidden="true" />
@@ -361,7 +361,13 @@ export default function ExpeditionPage() {
               Describe the traverse the way a commander would. Prahari fills in the form below;
               check every figure before saving.
             </p>
+            {/* The heading above is the visible label; naming the field from
+                it keeps the two in step rather than duplicating the words. */}
+            <label htmlFor="nl-request" className="sr-only">
+              Describe the traverse in your own words
+            </label>
             <textarea
+              id="nl-request"
               className="font-mono !text-13 resize-none"
               rows={3}
               placeholder="e.g. Schedule a geological survey to Schirmacher Oasis with 4 scientists for two weeks…"

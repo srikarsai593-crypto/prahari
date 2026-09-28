@@ -24,19 +24,19 @@
   --border-accent: rgba(2, 132, 199, 0.35);
 
   /* ── Action ─────────────────────────────────────────────────────────────── */
-  --accent: #0284c7;           /* Ocean / Sky Polar Blue */
-  --accent-hover: #0369a1;
+  --accent: #0369a1;           /* Ocean / Sky Polar Blue — AA under white text */
+  --accent-hover: #075985;
   --accent-tint: #e0f2fe;
   --accent-ring: #bae6fd;
 
   /* ── Text ───────────────────────────────────────────────────────────────── */
   --text: #0f172a;
-  --text-muted: #64748b;
+  --text-muted: #556070;
   --text-faint: #94a3b8;
   --text-on-dark: #e2e8f0;
 
   /* ── Status spectrum ────────────────────────────────────────────────────── */
-  --nominal: #059669;
+  --nominal: #047857;
   --nominal-fill: #10b981;
   --nominal-tint: #ecfdf5;
   --nominal-edge: #a7f3d0;
@@ -46,8 +46,8 @@
   --alert-tint: #fffbeb;
   --alert-edge: #fde68a;
 
-  --danger: #dc2626;
-  --danger-hover: #b91c1c;
+  --danger: #b91c1c;
+  --danger-hover: #991b1b;
   --danger-fill: #ef4444;
   --danger-tint: #fef2f2;
   --danger-edge: #fca5a5;

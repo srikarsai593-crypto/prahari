@@ -107,10 +107,11 @@ export default function RoutePlannerMap({
         }}
       />
 
-      <Marker position={[origin.lat, origin.lng]} icon={ORIGIN_ICON}>
+      <Marker position={[origin.lat, origin.lng]} icon={ORIGIN_ICON} title="Departure point">
         <Tooltip>Departure</Tooltip>
       </Marker>
-      <Marker position={[destination.lat, destination.lng]} icon={DESTINATION_ICON}>
+      <Marker position={[destination.lat, destination.lng]} icon={DESTINATION_ICON}
+              title={`Destination: ${destinationName}`}>
         <Tooltip>{destinationName}</Tooltip>
       </Marker>
 
@@ -119,6 +120,7 @@ export default function RoutePlannerMap({
           key={`${wp.lat},${wp.lng},${i}`}
           position={[wp.lat, wp.lng]}
           icon={WAYPOINT_ICON}
+          title={`Waypoint ${i + 1}`}
           draggable
           eventHandlers={{
             dragend: (e) => {

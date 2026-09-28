@@ -410,7 +410,9 @@ export default function ScenarioPage() {
         </span>
       </div>
 
-      {/* Steps grid */}
+      {/* Steps grid. The section heading is here so the step cards below can
+          stay at h3 without skipping a level under the page h1. */}
+      <h2 className="sr-only">Walkthrough steps</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         {steps.map((step) => {
           const status = stepStatus[step.num] || 'pending';

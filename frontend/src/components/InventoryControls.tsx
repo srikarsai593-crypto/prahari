@@ -95,10 +95,12 @@ export function ThermalLoadControl({ stationId, stationLabel, deltaT, onApplied 
 
   return (
     <div className="subview-card rounded-2xl p-5">
-      <h3 className="text-sm font-bold text-arctic-900 mb-1 flex items-center gap-2">
+      {/* h2: this is a top-level card on the inventory page, a sibling of
+          "Inventory Levels" — not a subsection of anything. */}
+      <h2 className="text-sm font-bold text-arctic-900 mb-1 flex items-center gap-2">
         <CloudSnow size={15} className="text-arctic-600" aria-hidden="true" />
         Blizzard Load
-      </h3>
+      </h2>
       <p className="text-2xs text-frost-muted mb-3">
         Colder weather means the station burns through supplies faster and cargo runs late.
         Setting the load here shortens every cover figure below and re-scores

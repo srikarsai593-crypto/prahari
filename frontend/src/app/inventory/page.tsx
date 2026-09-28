@@ -314,9 +314,12 @@ export default function InventoryPage() {
       {/* ── Exact Count Banner ────────────────────────────────────────────── */}
       <div className="subview-card rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="font-bold text-arctic-900 text-sm">
+          {/* h2, not h3: this card is a sibling of "Inventory Levels", and
+              the card above it is conditional — when it is absent a screen
+              reader jumped straight from the page h1 to an h3. */}
+          <h2 className="font-bold text-arctic-900 text-sm">
             Stock Check — <span className="capitalize">{countItem}</span> at {stationId}
-          </h3>
+          </h2>
           <p className="text-xs text-frost-muted mt-0.5">
             {selectedItem ? 'Counting the selected item.'
               : 'Select a row above to count a specific item.'}
@@ -342,7 +345,7 @@ export default function InventoryPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Table */}
-        <div className={`subview-card rounded-2xl p-6 ${selectedItem ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+        <div className={`subview-card rounded-2xl p-6 min-w-0 ${selectedItem ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
           <div className="flex justify-between items-center mb-5 flex-wrap gap-3">
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="text-base font-bold text-arctic-900">
@@ -350,7 +353,10 @@ export default function InventoryPage() {
               </h2>
               <HeadcountChip basis={headcount} />
             </div>
-            <div className="flex items-center gap-3">
+            {/* Wraps: the three category pills and Refresh come to 368px,
+                which does not fit a card on a 375px handset. Without this the
+                row pushed the whole page into a sideways scroll. */}
+            <div className="flex flex-wrap items-center gap-3">
               {/* Category only. The station comes from the header switcher, so
                   the table can never disagree with the badge above it. */}
               <div className="flex gap-1 bg-arctic-50 p-1 rounded-xl border border-arctic-200"

@@ -57,6 +57,19 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
    *  set on open, so a blackout declared mid-handshake needs this to close. */
   const wsRef = useRef<WebSocket | null>(null);
 
+/**
+ * Link-state chatter, development only.
+ *
+ * Connect/disconnect/retry lines are useful while building the offline
+ * behaviour and are noise in a deployed console — an operator who opens
+ * devtools during an outage should see faults, not a running commentary on
+ * the backoff timer. `warn` and `error` below stay unconditional, because
+ * those report something actually wrong.
+ */
+const trace = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== 'production') console.log(...args);
+};
+
   const connect = useCallback(() => {
     if (unmounted.current || blackout.current) return;
 
@@ -65,7 +78,7 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
 
     ws.onopen = () => {
       if (unmounted.current || blackout.current) { ws.close(); return; }
-      console.log('[WS] Connected');
+      trace('[WS] Connected');
       setConnected(true);
       retryDelay.current = RECONNECT_BASE_MS; // reset backoff on successful connect
       setSocket(ws);
@@ -92,8 +105,8 @@ export const WebSocketProvider = ({ children }: { children: React.ReactNode }) =
       setSocket(null);
       // A severed link the operator is holding open stays severed until they
       // close the drill; scheduling a retry here would fight them.
-      if (blackout.current) { console.log('[WS] Down — SATCOM blackout held'); return; }
-      console.log(`[WS] Disconnected — retrying in ${retryDelay.current}ms`);
+      if (blackout.current) { trace('[WS] Down — SATCOM blackout held'); return; }
+      trace(`[WS] Disconnected — retrying in ${retryDelay.current}ms`);
       // Exponential backoff reconnect
       retryTimer.current = setTimeout(() => {
         retryDelay.current = Math.min(retryDelay.current * 2, RECONNECT_MAX_MS);

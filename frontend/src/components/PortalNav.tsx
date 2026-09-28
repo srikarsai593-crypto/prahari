@@ -131,7 +131,7 @@ export function PortalNav() {
                         uppercase border rounded px-2 py-1 transition-colors
                         ${blackout
                           ? 'border-alert-edge bg-alert-tint text-alert'
-                          : 'border-frost-border text-frost-muted hover:text-arctic-100 '
+                          : 'border-frost-border text-slate-300 hover:text-white '
                             + 'hover:border-arctic-600'}`}
           >
             <SatelliteDish size={12} aria-hidden="true" />

@@ -76,6 +76,8 @@ module reads the same truth.
 | **A rung below the offline queue** | The queue assumes the link comes back. If the satellite terminal itself is down the queue holds forever, and Antarctic stations fall back to HF radio. Field mode used to tell an operator whose SOS could not be sent to "raise the alarm by radio" and hand them nothing — leaving somebody in trouble to compose a position report from memory. It now composes it: fixed field order, only characters ITA2 can carry, and a check group so a miscopied position is *known* to be miscopied. This is not compression — ITA2 is a narrower alphabet than ASCII, not a denser one — and the README says so rather than claiming otherwise. |
 | **A dead accessibility control is worse than none** | The utility rail carried "Screen Reader" as a `<span>` that did nothing, between two controls that work. The support it named was real — skip link, landmarks, `aria-live` on every alert, keyboard operation — so the label read as a control that was simply broken. It now opens a statement, and the statement lists what the console *cannot* do as prominently as what it can: the maps are not readable by a screen reader, there is no Hindi, and both say so. Someone deciding whether they can use this console needs the gaps more than the wins. |
 | **A headline figure is a total, not a filtered count** | The four KPIs read `0 · 1 · 0 · 10d` on a station carrying three traverses, four consignments and two stock rows inside their critical window — because each headline was the narrow count and the context was the footnote. They are the other way round now. Nothing is padded to avoid a zero: every filtered figure is still shown, underneath. "How many are on my books" is the question this page is opened with; "how many of those are under way" is the follow-up. |
+| **Every colour that carries text clears AA — and a test says so** | A sweep of the running console found the *default* theme failing WCAG AA in six places while the high-contrast theme it ships passed everywhere: `frost.muted` at 4.43:1 on a white card, `nominal` at 3.51, `alert` at 2.96, white-on-`arctic-600` at 4.10. Each token moved one step down its ramp — hues unchanged, only luminance. The dark bands went the *other* way, because the same "muted" value cannot serve a white card and a navy footer: darkening it to pass on one took it to 2.69:1 on the other. `lib/palette.test.ts` now asserts every pair, so this cannot drift back. |
+| **A `min-width: auto` grid item is a sideways scroll waiting to happen** | A table inside a grid column will not let that column shrink below the table's content width, however carefully the table's own wrapper sets `overflow-x-auto`. On the inventory page the effect was visible rather than theoretical: the category filter row spilled straight out through the card's rounded border on a handset. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -413,6 +415,12 @@ are re-pointed by hand in that block. The set was enumerated from the
 codebase, not guessed, and a component introducing a colour family not listed
 there will not follow the theme.
 
+Both themes are swept for contrast the same way, and both come back clean —
+see *The contrast sweep* under **Verifying a change**. The default theme did
+not start out that way: the sweep is what found it failing in six places
+while the high-contrast theme passed everywhere, which is the wrong way
+round for the theme most people actually use.
+
 The theme is applied by a small synchronous script at the top of `<body>`,
 before React. Without it, an operator who chose high contrast gets a
 full-screen flash of the pale default on every load — which is precisely what
@@ -643,11 +651,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 327 tests
+npm test                 # 345 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**732 backend tests (~6 s) and 327 frontend tests (~14 s).** No network, no
+**732 backend tests (~6 s) and 345 frontend tests (~14 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -662,6 +670,7 @@ What they cover, and why these things in particular:
 
 | Area | What is pinned |
 |---|---|
+| The palette | That every text colour clears 4.5:1 against all three light surfaces, that white clears it on every solid fill, and that the dark-band colour clears it over the navy. Also that darkening for contrast has not collapsed green, amber and red towards each other — measured on hue, because contrast ratio between two colours of deliberately similar luminance says nothing |
 | HF radio encoding | That every character in a generated message is one ITA2 can carry, whatever went in — accents, `°`, `Δ`, em dashes and currency symbols all have a test. That a miscopied character *and* a transposed pair both change the check group. That a missing position is reported as `UNKNOWN`, never invented. That the check is computed over the body only, so re-sending the same content an hour later produces the same check |
 | The shift handover brief | That a source which fails is *named* rather than silently rendered as an empty section. That an open head-count shouts, and that "not yet counted" is distinguished from "nobody missing". That a crate which recovered from a cold-chain excursion still appears, while one whose gauge has simply not been read does not. That the temperature figures carry their "not a reading" labels |
 | The display theme | That the standard console removes the `data-theme` attribute entirely rather than setting it to `"standard"` — the whole safety argument for the themed stylesheet rests on no selector matching. That blocked storage costs the default theme and not a crash |
@@ -763,10 +772,16 @@ console.table([...document.querySelectorAll('body *')].flatMap(el=>{
 }));
 ```
 
-It should print an empty table on every page. It is also how the two bugs
-this theme shipped with were found: the toggle's own label came out white on
-its yellow fill, and Leaflet's zoom buttons inherited a white foreground onto
-their hardcoded white background.
+It should print an empty table on every page, in **both** themes. It is how
+four separate defects were found: the toggle's own label came out white on
+its yellow fill; Leaflet's zoom buttons inherited a white foreground onto
+their hardcoded white background; the default palette failed in six places;
+and darkening the muted colour to fix that broke it over the navy footer, in
+the opposite direction.
+
+One flag is left standing and is not a defect: Leaflet renders its zoom
+controls as `<a href="#">`. They carry `aria-label`s, so they are named and
+operable; the markup is the library's, not this console's.
 
 ---
 

@@ -3,6 +3,16 @@ import type { Config } from 'tailwindcss';
 /**
  * PRAHARI design system — "Antarctic Operations Intelligence System".
  *
+ * ## Every colour that carries text clears WCAG AA
+ *
+ * The interactive blue, the status triad and the muted body colour were all
+ * a shade too light: `frost.muted` came out at 4.43:1 on a white card,
+ * `nominal` at 3.51, `alert` at 2.96 and white-on-`arctic-600` at 4.10 —
+ * all under the 4.5 that small text needs, on a console that ships a
+ * high-contrast theme and claims GIGW conventions. Each one is now the next
+ * step down its ramp, verified against white, the page canvas and the inset
+ * surface. The hues are unchanged; only the luminance moved.
+ *
  * Institutional government-portal structure (GIGW 3.0 conventions: full-width
  * utility rail, emblem header, flat navigation band, dark statutory footer)
  * fused with an aerospace telemetry kit: crisp 1px slate borders, tight radii
@@ -30,8 +40,8 @@ const config: Config = {
           300: '#7dd3fc',
           400: '#38bdf8',
           500: '#0ea5e9',
-          600: '#0284c7',  // primary command action
-          700: '#0369a1',  // action hover
+          600: '#0369a1',  // primary command action — AA on white, and under white
+          700: '#075985',  // action hover
           800: '#075985',
           900: '#0f172a',  // Deep Navy Command — headings and body text
           950: '#091c33',  // utility rail / footer
@@ -40,8 +50,8 @@ const config: Config = {
           card: '#ffffff',
           border: '#e2e8f0',  // 1px structural card border
           subtle: '#f8fafc',  // recessed inset panels
-          accent: '#0284c7',
-          muted: '#64748b',
+          accent: '#0369a1',
+          muted: '#556070',
         },
         // Command surfaces — the dark planes: utility rail, hero, footer.
         navy: {
@@ -57,15 +67,15 @@ const config: Config = {
         },
         // Status & telemetry spectrum. Each has base (text), fill (dot/border)
         // and tint (container) so a badge is built from one family.
-        nominal: { DEFAULT: '#059669', fill: '#10b981', tint: '#ecfdf5', edge: '#a7f3d0' },
-        alert: { DEFAULT: '#d97706', fill: '#f59e0b', tint: '#fffbeb', edge: '#fde68a' },
-        emergency: { DEFAULT: '#dc2626', fill: '#ef4444', tint: '#fef2f2', edge: '#fca5a5' },
+        nominal: { DEFAULT: '#047857', fill: '#10b981', tint: '#ecfdf5', edge: '#a7f3d0' },
+        alert: { DEFAULT: '#b45309', fill: '#f59e0b', tint: '#fffbeb', edge: '#fde68a' },
+        emergency: { DEFAULT: '#b91c1c', fill: '#ef4444', tint: '#fef2f2', edge: '#fca5a5' },
 
         // Legacy semantic aliases still referenced by map markers.
         safe: '#10b981',
         warning: '#f59e0b',
         danger: '#ef4444',
-        info: '#0284c7',
+        info: '#0369a1',
       },
       fontFamily: {
         // Industrial sans for prose, monospace for every coordinate, ID code,

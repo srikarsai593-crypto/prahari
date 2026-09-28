@@ -104,8 +104,12 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
   return (
     <ToastContext.Provider value={{ addToast, dismissToast }}>
       {children}
-      <div className="fixed top-4 right-4 z-[60] flex flex-col gap-2 max-w-sm w-full
-                      pointer-events-none"
+      {/* Pinned to both edges on a phone rather than given a fixed width.
+          `max-w-sm w-full` is 384px, which is wider than a 375px handset —
+          the rail hung off the side and dragged the page into a sideways
+          scroll. From `sm` up it goes back to a right-hand column. */}
+      <div className="fixed top-4 left-4 right-4 z-[60] flex flex-col gap-2
+                      sm:left-auto sm:w-full sm:max-w-sm pointer-events-none"
            role="status" aria-live="polite">
         {toasts.map((toast) => {
           const Icon = toastIcon[toast.type];

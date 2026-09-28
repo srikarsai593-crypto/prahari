@@ -47,7 +47,7 @@ export function PortalFooter() {
             Earth Sciences, Government of India.
           </p>
           <p className="mt-4 font-mono text-xs leading-relaxed text-slate-400">
-            <span className="text-slate-500">Nodal Agency:</span>{' '}
+            <span className="text-slate-400">Nodal Agency:</span>{' '}
             <span className="text-white font-semibold">
               NCPOR, Headland Sada, Vasco da Gama, Goa – 403804
             </span>
@@ -97,7 +97,7 @@ export function PortalFooter() {
                 <Coordinate lat={s.lat} lng={s.lng} /> — {s.region}
               </li>
             ))}
-            <li className="pt-1 text-slate-500">
+            <li className="pt-1 text-slate-400">
               Published station coordinates.
             </li>
           </ul>
@@ -119,7 +119,7 @@ export function PortalFooter() {
           <p className="min-w-0 font-mono tracking-caps flex flex-wrap items-center
                         justify-center gap-x-3 gap-y-1 shrink-0">
             <span>OFFLINE-FIRST STATION CONSOLE</span>
-            <span className="text-slate-600" aria-hidden="true">|</span>
+            <span className="text-slate-400" aria-hidden="true">|</span>
             <span>KEEPS WORKING WHEN THE LINK DROPS</span>
           </p>
         </div>

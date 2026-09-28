@@ -62,13 +62,13 @@ export function GovRail() {
             <span aria-hidden="true" className="text-13 leading-none">☬</span>
             <span className="hidden sm:inline">भारत सरकार</span>
           </span>
-          <span className="text-slate-600 shrink-0" aria-hidden="true">|</span>
+          <span className="text-slate-400 shrink-0" aria-hidden="true">|</span>
           <span className="uppercase tracking-caps text-white shrink-0">Government of India</span>
-          <span className="hidden md:inline text-slate-600" aria-hidden="true">|</span>
+          <span className="hidden md:inline text-slate-400" aria-hidden="true">|</span>
           <span className="hidden md:inline uppercase tracking-caps truncate">
             Ministry of Earth Sciences
           </span>
-          <span className="hidden xl:inline text-slate-600" aria-hidden="true">|</span>
+          <span className="hidden xl:inline text-slate-400" aria-hidden="true">|</span>
           <span className="hidden xl:inline uppercase tracking-caps truncate text-slate-400">
             NCPOR · National Centre for Polar &amp; Ocean Research
           </span>

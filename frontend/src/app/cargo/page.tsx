@@ -311,7 +311,7 @@ export default function CargoPage() {
       </PageHeader>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 min-w-0 space-y-6">
           {/* ── Create ───────────────────────────────────────────────────── */}
           <div className="subview-card rounded-2xl p-7">
             <h2 className="text-lg font-bold text-arctic-900 mb-1 flex items-center gap-2">
@@ -622,7 +622,13 @@ export default function CargoPage() {
               </button>
             </div>
             <div className="mt-3 flex gap-2">
-              <input type="text" placeholder="Manual barcode ID" value={manualCode}
+              {/* A placeholder is not a label: it disappears on the first
+                  keystroke and screen readers are not required to announce it. */}
+              <label htmlFor="manual-barcode" className="sr-only">
+                Barcode ID from the manifest
+              </label>
+              <input type="text" id="manual-barcode"
+                     placeholder="Manual barcode ID" value={manualCode}
                      onChange={(e) => setManualCode(e.target.value)}
                      onKeyDown={(e) => { if (e.key === 'Enter') void handleManualScan(); }}
                      className="flex-1" />

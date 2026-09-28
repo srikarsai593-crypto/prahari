@@ -191,6 +191,11 @@ export default function MapViewInner({
             key={p.id}
             position={[p.current_lat!, p.current_lng!]}
             icon={createPulseIcon(getStatusColor(p.effective_status ?? p.status))}
+            // `title`, not `alt`: these are divIcons, and Leaflet only puts
+            // `alt` on an <img> icon, so it is silently dropped here. Leaflet
+            // makes every marker keyboard-focusable, and six identical
+            // unnamed buttons is a worse failure than the map being visual.
+            title={`${p.name}, ${(p.effective_status ?? p.status).replace(/_/g, ' ')}`}
           >
             <Popup>
               <div className="font-bold">{p.name}</div>
