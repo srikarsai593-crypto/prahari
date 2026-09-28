@@ -4,7 +4,8 @@ import type {
   Expedition, ExpeditionInput, ExpeditionStatus, InventoryItem, Geofence, MovementPlan, AppEvent,
   ParsedExpedition, FeasibilityResult, ShipmentStatusTransition, StationWeatherResult,
   ExactCount, StockCommandResult, StationConditions, MovementPlanInput,
-  StationCounts, StationResetResult, Telemetry, IncidentSop, HeadcountBasis, StockAlert,
+  StationCounts, StationResetResult, DemoSeasonResult, Telemetry, IncidentSop,
+  HeadcountBasis, StockAlert,
   CrossStationStock, SessionState,
 } from './types';
 
@@ -39,6 +40,19 @@ export class ApiError extends Error {
 export interface QueuedResult { queued: true; pending: true }
 export const isQueued = (v: unknown): v is QueuedResult =>
   typeof v === 'object' && v !== null && (v as QueuedResult).queued === true;
+
+/**
+ * What to tell the operator when a write was parked instead of sent.
+ *
+ * A queued mutation resolves to the marker above, not to a server response, so
+ * a caller that goes straight on to read fields off it reports "undefined
+ * consignment(s) re-scored" — or throws, where it reaches into a nested
+ * object. Either way the operator is told the write did something it has not
+ * done yet. Every mutation whose toast quotes its own result checks
+ * `isQueued` first and says this instead.
+ */
+export const queuedMessage = (what: string) =>
+  `${what} held on this console — it will be sent when the link returns.`;
 
 function extractMessage(data: unknown, status: number): string {
   if (typeof data === 'string' && data) return data;
@@ -354,4 +368,8 @@ export const api = {
   resetStation: (scope: 'operational' | 'all' = 'operational') =>
     request<StationResetResult>(`${BASE}/admin/reset`,
       jsonOptions('POST', { confirm: 'RESET', scope }), 'reset station'),
+  /** Restores the baseline, then plants a season on all three stations. */
+  loadDemoSeason: () =>
+    request<DemoSeasonResult>(`${BASE}/admin/demo-season`,
+      jsonOptions('POST', {}), 'load demonstration season'),
 };

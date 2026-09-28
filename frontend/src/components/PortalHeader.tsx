@@ -77,7 +77,7 @@ export function PortalHeader() {
               <StationSwitcher value={stationId} onChange={setStationId} ready={ready} />
             </div>
             <p className="text-13 text-arctic-900 font-semibold mt-1 truncate">
-              National Antarctic Operations Intelligence &amp; Logistics Grid
+              Antarctic Station Operations &amp; Logistics
             </p>
             <p className="hidden sm:block text-xs text-frost-muted font-mono mt-0.5 truncate">
               Ministry of Earth Sciences · Government of India{ready && ` · ${station.region}`}

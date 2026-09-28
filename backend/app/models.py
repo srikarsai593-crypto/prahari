@@ -429,7 +429,14 @@ class ResetRequest(BaseModel):
     """Demo reset. `confirm` must be the literal string so an accidental POST
     cannot wipe a station's operational record."""
     confirm: Literal['RESET']
-    scope: Literal['operational', 'all'] = 'operational' 
+    scope: Literal['operational', 'all'] = 'operational'
+
+
+class DemoSeasonRequest(BaseModel):
+    """Load the demonstration season. It restores the baseline first, so no
+    confirm token is required beyond the credentials every write carries -
+    what it clears, the reset endpoint would clear anyway."""
+    clear_events: bool = False 
 
 
 class AssetUpdateRequest(BaseModel):

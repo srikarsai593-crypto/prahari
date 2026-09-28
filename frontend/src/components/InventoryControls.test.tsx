@@ -70,7 +70,21 @@ describe('HeadcountChip', () => {
     render(<HeadcountChip basis={{ station: 'Maitri', headcount: 6,
                                    nominal_headcount: 6, factor: 1 }} />);
     expect(screen.getByText(/6 crew/)).toBeInTheDocument();
-    expect(screen.getByText(/1\.00× baseline/)).toBeInTheDocument();
+  });
+
+  it('gives the multiplier only when the rates have actually moved', () => {
+    /**
+     * At the nominal headcount the factor is 1, and printing "1.00x" is the
+     * loudest thing on a chip that is reporting nothing has changed.
+     */
+    const { container: nominal } = render(
+      <HeadcountChip basis={{ station: 'Maitri', headcount: 6,
+                              nominal_headcount: 6, factor: 1 }} />);
+    expect(nominal.textContent).not.toMatch(/×/);
+
+    render(<HeadcountChip basis={{ station: 'Maitri', headcount: 12,
+                                   nominal_headcount: 6, factor: 2 }} />);
+    expect(screen.getByText(/2\.00× the usual/)).toBeInTheDocument();
   });
 
   it('marks an over-occupied station differently from an empty one', () => {
@@ -109,14 +123,14 @@ describe('ThermalLoadControl', () => {
     const { rerender } = withToasts(
       <ThermalLoadControl stationId="Maitri" stationLabel="Maitri Base"
                           deltaT={0} onApplied={vi.fn()} />);
-    expect(screen.getByLabelText(/thermal delta/i)).toHaveValue('0');
+    expect(screen.getByLabelText(/blizzard load/i)).toHaveValue('0');
 
     rerender(
       <ToastProvider>
         <ThermalLoadControl stationId="Maitri" stationLabel="Maitri Base"
                             deltaT={26} onApplied={vi.fn()} />
       </ToastProvider>);
-    await waitFor(() => expect(screen.getByLabelText(/thermal delta/i)).toHaveValue('26'));
+    await waitFor(() => expect(screen.getByLabelText(/blizzard load/i)).toHaveValue('26'));
   });
 
   it('applies a preset straight to the station', async () => {
@@ -144,6 +158,24 @@ describe('ThermalLoadControl', () => {
     await userEvent.click(screen.getByRole('button', { name: /apply to station/i }));
 
     expect(await screen.findByText(/no longer viable/i)).toBeInTheDocument();
+  });
+
+  it('does not claim a re-score that is still sitting in the offline queue', async () => {
+    /**
+     * A queued mutation resolves to the queue marker, not to a server
+     * response. Reading `affected` and `delayed` off it printed "undefined
+     * consignment(s) re-scored, undefined delayed" — a figure the operator had
+     * no way to tell from a real one.
+     */
+    vi.spyOn(api, 'applyStationWeather').mockResolvedValue(
+      { queued: true, pending: true } as never);
+    withToasts(<ThermalLoadControl stationId="Maitri" stationLabel="Maitri Base"
+                                   deltaT={0} onApplied={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /apply to station/i }));
+
+    expect(await screen.findByText(/held on this console/i)).toBeInTheDocument();
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
   });
 
   it('says when the station has never reported a reading', () => {

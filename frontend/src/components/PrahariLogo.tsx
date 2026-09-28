@@ -1,17 +1,25 @@
 /**
- * The PRAHARI mark — a six-armed snowflake that turns slowly inside a
- * breathing halo.
+ * The PRAHARI mark — a six-armed snowflake inside a thin halo ring.
  *
- * The spin and the halo live in globals.css (`snowSpin`, `haloBreath`) so they
- * can be switched off wholesale under `prefers-reduced-motion`. Both are
- * decorative, so the whole thing is hidden from assistive technology and the
- * surrounding link carries the accessible name.
+ * It holds still. An organisational emblem that rotates continuously is the
+ * one thing on an operations page that never stops moving, and it competes
+ * with the telemetry beside it. Hovering turns it once, as acknowledgement
+ * that the mark is a link; that hover lives in globals.css so it can be
+ * switched off under `prefers-reduced-motion`. The mark is decorative, so it
+ * is hidden from assistive technology and the surrounding link carries the
+ * accessible name.
  */
 
 export interface PrahariLogoProps {
   /** Rendered size of the snowflake in px. The halo scales with it. */
   size?: number;
-  /** Colour of the snowflake — inherits `currentColor` by default. */
+  /**
+   * Classes for the mark as a whole — colour, and any responsive visibility.
+   *
+   * These land on the wrapper, not on the `<svg>`. On the svg, a `hidden
+   * sm:block` from the caller hid the snowflake and left its halo behind, so
+   * the dashboard hero rendered a bare ring on every phone.
+   */
   className?: string;
   /** Drop the halo ring (tight spaces, e.g. inside the header's navy square). */
   halo?: boolean;
@@ -20,13 +28,13 @@ export interface PrahariLogoProps {
 export function PrahariLogo({ size = 56, className = '', halo = true }: PrahariLogoProps) {
   return (
     <span
-      className="snowflake-hero-wrapper"
+      className={`snowflake-hero-wrapper ${className}`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
       {halo && <span className="snowflake-halo" />}
       <svg
-        className={`snowflake-svg-element ${className}`}
+        className="snowflake-svg-element"
         width={size}
         height={size}
         fill="none"

@@ -52,6 +52,8 @@ module reads the same truth.
 | **Enough fuel is not the same as sparable fuel** | Readiness asks both whether a traverse can be loaded *and* whether what is left behind outlasts it at the current burn rate. Weather does not take litres out of the tank — it raises the rate they leave it — so the first question alone is blind to the conditions a traverse would depart into. |
 | **Alert state is a column, the log is history** | Whether a row is in alert is stored on the row. Deriving it by scanning the audit log meant the dashboard banner got slower every time anything was logged anywhere in the station. |
 | **Station facts read once per scoring run** | The fuel row, the roster and the inbound cargo are identical for every traverse departing the same base, and re-scoring runs after every write that moves station conditions. |
+| **The database outlives the container** | A hosted filesystem is ephemeral: a SQLite file inside the application directory is wiped by every deploy and every idle spin-down, and the console comes back on the bare seed. `PRAHARI_DB_PATH` puts it on a mounted disk, which is the difference between a station record and a scratchpad. |
+| **An empty console says so** | The seed plants crew, stock and geofences but no consignments or incidents, because those are what an exercise creates. A dashboard of zeroes is indistinguishable from a backend that is down, so it says which it is and offers the one call that fills it. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -118,6 +120,14 @@ deploy needs four values. Render prompts for each on a blueprint sync.
 | `PRAHARI_CORS_PROJECT` | Your Vercel project name, e.g. `prahari` — only needed if preview deployments should work too |
 | `PRAHARI_ALLOW_DEMO_KEY` | `false` (already set in the blueprint) |
 
+The blueprint also asks for a **1 GB disk at `/var/data`**, with
+`PRAHARI_DB_PATH=/var/data/prahari.db`. This is the difference between a
+station that remembers what it was told and one that forgets on every deploy.
+A disk needs a paid instance type; to stay on the free tier, delete the `plan`
+and `disk` blocks and `PRAHARI_DB_PATH` from `render.yaml` and accept that the
+record resets on restart — `POST /admin/demo-season` puts a populated season
+back in one call.
+
 **Vercel** (console): `NEXT_PUBLIC_COMMANDER_KEY` is **no longer used** — the
 console holds no credential. Nothing needs to be set there beyond the backend
 URL your `next.config.ts` rewrites point at.
@@ -139,10 +149,11 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 ```
 
-Set `PRAHARI_API_KEY` in `backend/.env` and the **same value** as
-`NEXT_PUBLIC_COMMANDER_KEY` in `frontend/.env.local`. `GEMINI_API_KEY` is
-optional — without it the chain falls back to Ollama, then to regex, and the UI
-says so.
+Set `PRAHARI_API_KEY` in `backend/.env` — that is the key you sign in with.
+The console holds no credential of its own, so `frontend/.env.local` only
+matters if the backend is not on `localhost:8000`. `GEMINI_API_KEY` is
+optional: without it the chain falls back to Ollama, then to regex, and the UI
+says which one ran.
 
 ### 2. Backend
 
@@ -163,7 +174,21 @@ and every telemetry figure) are fetched and self-hosted by `next/font` at build
 time, so a running console makes no font request to a CDN — which matters when
 the station link drops. Nothing to install.
 
-### 4. The guided demo
+### 4. Put something on it
+
+A freshly seeded station has crew, stock and geofences but nothing in flight,
+so Cargo and Emergency open empty. **Load demo season** — on the dashboard
+while the station is idle, and always on `/scenario` — plants a mid-season
+picture across all three bases: consignments part-way along their run, one
+convoy already overdue, a crewed traverse short on fuel at Maitri, and a closed
+incident on the record. It restores the baseline first, so it is safe to click
+twice, and it announces itself in the audit log as synthetic.
+
+```bash
+curl -X POST localhost:8000/admin/demo-season -H 'X-Commander-Key: <your key>'
+```
+
+### 5. The guided demo
 
 Open <http://localhost:3000/scenario> — a ten-step walkthrough that exercises all
 five modules end to end, including a geofence violation and an offline
@@ -231,6 +256,7 @@ next step, and nothing above is a substitute for them.
 | `PRAHARI_ALLOW_DEMO_KEY` | Defaults to `true`, right for `npm run dev` and wrong for anything with a public hostname. The blueprint sets `false`, so a hosted backend with no key **refuses to boot** rather than coming up open. |
 | `PRAHARI_PUBLIC_READS` | Defaults to `false`. Setting it serves the roster, with live field positions, to anyone who knows the URL. |
 | `PRAHARI_SESSION_SECRET` | Optional. Without it the secret derives from the commander key, which ties session lifetime to key rotation. Set it if you want sessions to survive a rotation. |
+| `PRAHARI_DB_PATH` | Defaults to the application directory, which a hosted deploy replaces wholesale — every restart loses the station's whole operational record. Point it at a mounted disk. |
 | `PRAHARI_CORS_ORIGINS` | Defaults to localhost only, so a hosted console is refused by the browser until this names it. Set it to the console's own URL. |
 | `PRAHARI_CORS_PROJECT` | Your Vercel project name. Also admits that project's *preview* deployments, whose hostnames change per branch and so cannot be listed exactly. Scoped to your project alone. |
 | `PRAHARI_CORS_ORIGIN_REGEX` | Escape hatch for a console that is not on Vercel. Overrides the project pattern. |
@@ -252,15 +278,20 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 116 tests
+npm test                 # 147 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**435 backend tests (~30 s) and 116 frontend tests (~4 s).** No network and no
-shared state: each backend test gets its own throwaway SQLite file, and the LLM
-chain is stubbed so every parse falls through to the deterministic regex rules.
-A test that reached Gemini would be slow, cost money, need a key, and — worst of
-all — give a different answer on a different day.
+**486 backend tests (~4 s) and 147 frontend tests (~2 s).** No network, no
+shared state and no ambient credentials: each backend test gets its own
+throwaway SQLite file, the environment is cleared so a developer's own
+`backend/.env` cannot change the result, and the LLM chain is stubbed so every
+parse falls through to the deterministic regex rules. A test that reached
+Gemini would be slow, cost money, need a key, and — worst of all — give a
+different answer on a different day.
+
+Both suites, plus the typecheck and the production build, run on every push
+and every pull request (`.github/workflows/ci.yml`).
 
 What they cover, and why these things in particular:
 
@@ -274,20 +305,23 @@ What they cover, and why these things in particular:
 | `test_expeditions` | Readiness scoring, crew commitment, the fuel ledger and the resupply recommender. |
 | `test_shipments` | The scan chain, unit-safe restock, weather risk and overdue convoy detection. |
 | `test_cascade` | The cross-module chain — that a write anywhere reaches the module counting on it, and that the alarm announces a crossing rather than a state. |
-| `test_platform` | Credentials, CORS, audit-log ordering and reset hygiene. |
+| `test_platform` | Credentials, CORS, audit-log ordering, reset hygiene, and where the database file is allowed to live. |
+| `test_demo` | The demonstration season: that it reaches every station, is made of real records, does not stack on a second run, leaves the store at its seeded figures, and says it is synthetic. |
 | `test_models` | The bounds that make a malformed LLM parse degrade to rules instead of being believed. |
 | `test_session` | Signed sessions, the sign-in rate limit, the read gate and the security headers. |
 | `test_performance` | Queries per request, not wall-clock: the shapes that were linear in the data and invisible at seed size. |
 | `geo.test.ts` | The console's own hazard check, and that it agrees with the backend to the metre. |
 | `offlineQueue.test.ts` | Work recorded during an outage: that it survives, replays in order, and is not discarded when a session lapses. |
 | `SessionProvider.test.tsx` | The sign-in gate, and that the key is never retained after it is used. |
+| `DemoSeasonButton.test.tsx` | That the season cannot be loaded by accident, and reports what it planted. |
+| `useInventory.test.tsx` | The stock-command preview, including that a queued command is never offered as one to confirm. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count. Twenty-seven known bugs — a flat criticality rule, bearing by the
+line count. Thirty-seven known bugs — a flat criticality rule, bearing by the
 flat approximation, deviation measured to waypoints, an incident closable over
 a missing person, a stock delta that carries its sign, an unverified session
-signature, a roster that re-queries every plan — are reintroduced one at a time
-and the suite must fail on each:
+signature, a roster that re-queries every plan, a database back inside the
+container — are reintroduced one at a time and the suite must fail on each:
 
 ```bash
 cd backend
@@ -299,19 +333,22 @@ python -m tests.mutations --list
 A mutation that survives is a test that does not really exist. Three survived
 the first run and all three were gaps in the tests rather than in the code.
 CI runs it weekly rather than per-commit: it runs the whole suite once per
-mutation, so it costs roughly twenty-seven times a normal run.
+mutation, so it costs roughly thirty-seven times a normal run.
 
 ---
 
 ## 🧪 Verifying a change
 
 ```bash
-cd frontend && npm run typecheck && npm run build
+cd backend && pytest
 ```
 
 ```bash
-cd backend && python -c "from app.main import app; print('ok')"
+cd frontend && npm run typecheck && npm test && npm run build
 ```
+
+The build is the real frontend gate: `tsc --noEmit` does not catch a server
+component importing a browser-only module, which only fails at prerender.
 
 ---
 

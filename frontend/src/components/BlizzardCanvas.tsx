@@ -40,10 +40,16 @@ interface Particle {
   radius?: number;
 }
 
-/** One particle per ~2600 px² of hero, clamped so a tablet stays light. */
-const MIN_PARTICLES = 28;
-const MAX_PARTICLES = 90;
-const AREA_PER_PARTICLE = 2600;
+/**
+ * One particle per ~5200 px² of hero, clamped so a tablet stays light.
+ *
+ * Halved from the original density. The drift is atmosphere behind the hero
+ * copy, not weather the operator is meant to read, and at the old count it
+ * was busy enough to pull the eye off the headline it sits under.
+ */
+const MIN_PARTICLES = 14;
+const MAX_PARTICLES = 45;
+const AREA_PER_PARTICLE = 5200;
 
 function particleCount(w: number, h: number): number {
   return Math.max(MIN_PARTICLES, Math.min(MAX_PARTICLES, Math.round((w * h) / AREA_PER_PARTICLE)));

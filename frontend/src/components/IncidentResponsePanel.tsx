@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   CheckSquare, ChevronUp, Radio, Square, TriangleAlert, Undo2,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from './Toast';
 import type { Incident, IncidentSop, NearbyAsset } from '@/lib/types';
 
@@ -96,6 +96,7 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
     setSavingRadius(true);
     try {
       const res = await api.updateIncident(incident.id, { affected_radius_m: radius });
+      if (isQueued(res)) return addToast(queuedMessage('Perimeter change'), 'info');
       const count = res.accountability;
       addToast(count
         ? `Perimeter now ${(radius / 1000).toFixed(1)} km — ${count.unaccounted} of `

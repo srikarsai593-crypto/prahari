@@ -4,7 +4,7 @@ import {
   Wand2, ClipboardCheck, Play, CheckCircle2, XCircle, Users, UserPlus, X,
   Timer, TrendingDown, Truck,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
@@ -206,6 +206,7 @@ export default function ExpeditionPage() {
     setRescoringId(exp.id);
     try {
       const res = await api.rescoreExpedition(exp.id);
+      if (isQueued(res)) return addToast(queuedMessage('Re-score'), 'info');
       const short = res.feasibility?.items?.filter((i) => !i.ok).map((i) => i.label) ?? [];
       addToast(short.length === 0
         ? `${exp.name} re-scored — ${res.feasibility.readiness_score}% ready`
@@ -315,6 +316,7 @@ export default function ExpeditionPage() {
     setBusyId(exp.id);
     try {
       const updated = await api.updateExpeditionStatus(exp.id, to);
+      if (isQueued(updated)) return addToast(queuedMessage('Status change'), 'info');
       const notes = updated.notes?.length ? ` — ${updated.notes.join('; ')}` : '';
       addToast(`${exp.name} ${STATUS_LABEL[updated.status] ?? updated.status}${notes}`,
         to === 'cancelled' ? 'warning' : 'success');

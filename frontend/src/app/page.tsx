@@ -15,6 +15,7 @@ import { PrahariLogo } from '@/components/PrahariLogo';
 import BlizzardCanvasLoader from '@/components/BlizzardCanvasLoader';
 import { EventTimeline } from '@/components/EventTimeline';
 import { StandingAlerts } from '@/components/StandingAlerts';
+import { DemoSeasonButton } from '@/components/DemoSeasonButton';
 import { PanelBoundary } from '@/components/PanelBoundary';
 import { useToast } from '@/components/Toast';
 import type {
@@ -126,6 +127,26 @@ export default function Dashboard() {
     ]);
     if (REFRESH_ON.has(lastMessage.type)) void load();
   }, [lastMessage, load]);
+
+  /**
+   * Nothing operational has been recorded at this station yet.
+   *
+   * The seed gives every station crew, stock and geofences, but consignments,
+   * incidents and movement plans are what an exercise creates. A console
+   * opened for the first time therefore shows an empty Cargo board and an
+   * empty Emergency page, which is exactly what a console whose backend is
+   * down shows. Saying which of the two it is — and offering the one click
+   * that fills it — is the difference between a quiet station and an apparent
+   * outage.
+   *
+   * Expeditions are deliberately not part of the test: the seed plants one
+   * draft traverse, so including them would mean this never fired on the
+   * console it exists for.
+   */
+  const isUnused = !loading
+    && data.shipments.length === 0
+    && data.incidents.length === 0
+    && data.plans.length === 0;
 
   // ── Derived module state — every figure below traces to a real record ──────
   const m = useMemo(() => {
@@ -343,15 +364,21 @@ export default function Dashboard() {
           </span>
 
           <div className="mt-5 flex items-center gap-5">
-            <PrahariLogo size={56} className="text-arctic-400 hidden sm:block" />
+            {/* Responsive visibility goes on a wrapper, not on the mark:
+                `.snowflake-hero-wrapper` sets `display: inline-flex` after
+                Tailwind's utilities in the stylesheet, so `hidden` on the mark
+                itself loses and the ring stays behind on a phone. */}
+            <span className="hidden sm:block">
+              <PrahariLogo size={56} className="text-arctic-400" />
+            </span>
             <h1 className="text-3xl sm:text-[2.75rem] font-extrabold tracking-tight text-white
                            leading-tight">
               Welcome to PRAHARI Antarctic Operations
             </h1>
           </div>
           <p className="mt-3 max-w-3xl text-15 leading-relaxed text-slate-300">
-            Unified real-time logistics intelligence, traverse passage clearances, life-support
-            resource tracking and field safety protocols under the aegis of NCPOR &amp; MoES.
+            Plan traverses, track inbound cargo, watch supplies and account for everyone in
+            the field — for Maitri, Bharati and Himadri, from one console.
           </p>
 
           {/* Universal lookup */}
@@ -410,13 +437,34 @@ export default function Dashboard() {
         </PanelBoundary>
       )}
 
+      {ready && isUnused && (
+        <section className="portal-card p-5 flex flex-col sm:flex-row sm:items-center
+                            justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-15 font-bold uppercase tracking-caps text-arctic-900">
+              No operations recorded at {station.label}
+            </h2>
+            <p className="text-13 text-frost-muted mt-1.5 max-w-2xl">
+              The roster, the store and the geofences are in place. Nothing has been
+              dispatched, planned or declared yet, so the figures below are genuinely
+              zero rather than missing. Load a season to fill every module, or start
+              from the guided walkthrough.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <DemoSeasonButton onLoaded={load} />
+            <Link href="/scenario" className="btn-secondary text-13">Walkthrough</Link>
+          </div>
+        </section>
+      )}
+
       {/* ── Operational status ───────────────────────────────────────────── */}
       <section aria-labelledby="status-heading">
         <h2 id="status-heading" className="section-heading mb-1">
           {ready ? `${station.label} Operational Status` : 'Station Operational Status'}
         </h2>
         <p className="text-13 text-frost-muted mb-4 ml-[18px]">
-          Live figures for the active station. Values refresh on station broadcast, not on a timer.
+          Live figures for {ready ? station.label : 'the active station'}.
         </p>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -445,11 +493,10 @@ export default function Dashboard() {
       {/* ── Core services ────────────────────────────────────────────────── */}
       <section aria-labelledby="modules-heading">
         <h2 id="modules-heading" className="section-heading mb-1">
-          Station Core Services &amp; Operational Modules
+          Station Modules
         </h2>
         <p className="text-13 text-frost-muted mb-4 ml-[18px]">
-          The five areas this station runs day to day. Every figure below is read from the
-          station&apos;s own records.
+          The five areas this station runs day to day.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -499,7 +546,7 @@ export default function Dashboard() {
       {/* ── Live operations ──────────────────────────────────────────────── */}
       <section aria-labelledby="ops-heading">
         <h2 id="ops-heading" className="section-heading mb-4">
-          Live Field Telemetry &amp; Emergency Posture
+          Field Positions &amp; Emergency Status
         </h2>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">

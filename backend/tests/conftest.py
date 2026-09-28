@@ -12,6 +12,12 @@ Two properties every test in this suite depends on:
   costs money, needs a key, and — worst of all — gives a different answer on a
   different day, which is the opposite of what a regression suite is for.
   `llm_backed` opts a test back in to a scripted model response.
+
+* **No ambient credentials.** `app.main` loads `backend/.env` at import, so a
+  developer with a real `PRAHARI_API_KEY` in it ran a different suite from CI:
+  the demo key was disabled underneath tests that assert it is offered. The
+  environment is cleared for every test, and a test that cares about a
+  configured key sets one itself.
 """
 
 import sys
@@ -38,6 +44,15 @@ def clean_rate_limits():
     yield
     ratelimit.login_attempts.reset()
     ratelimit.write_requests.reset()
+
+
+@pytest.fixture(autouse=True)
+def clean_credentials(monkeypatch):
+    """Run against a station with no key configured, whatever the developer's
+    own .env says. Tests that need a configured key set one explicitly."""
+    for name in ('PRAHARI_API_KEY', 'PRAHARI_COMMANDER_KEY', 'PRAHARI_SESSION_SECRET'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('PRAHARI_ALLOW_DEMO_KEY', 'true')
 
 
 def _drop_cached_connections() -> None:

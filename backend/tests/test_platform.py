@@ -6,7 +6,7 @@ whether a feature works.
 
 import pytest
 
-from app import auth
+from app import auth, database
 from app.routes.incidents import SOP_PLAYBOOKS
 
 
@@ -61,6 +61,7 @@ class TestWriteProtection:
         ('patch', '/inventory/inv-fuel', {'quantity': 1}),
         ('patch', '/inventory/inv-fuel/policy', {'safety_stock_days': 10}),
         ('post', '/admin/reset', {'confirm': 'RESET'}),
+        ('post', '/admin/demo-season', {}),
     ])
     def test_a_write_without_the_key_is_refused(self, station, method, url, body):
         response = getattr(station.client, method)(url, json=body)
@@ -371,6 +372,30 @@ class TestStationProfile:
             'station': 'Himadri', 'personnel_required': 1, 'fuel_required_l': 1})
         beds = next(i for i in result['items'] if i['label'] == 'Beds at Base')
         assert str(recorded) in beds['detail']
+
+
+class TestDatabaseLocation:
+    """A hosted container's filesystem is ephemeral. A database inside the
+    application directory is wiped by every deploy and every restart, taking
+    the station's whole operational record with it."""
+
+    def test_it_defaults_to_the_application_directory(self, monkeypatch):
+        monkeypatch.delenv('PRAHARI_DB_PATH', raising=False)
+        assert database.resolve_db_path() == database.DEFAULT_DB_PATH
+
+    def test_it_can_be_moved_onto_a_mounted_disk(self, tmp_path, monkeypatch):
+        target = tmp_path / 'var' / 'data' / 'prahari.db'
+        monkeypatch.setenv('PRAHARI_DB_PATH', str(target))
+        assert database.resolve_db_path() == str(target)
+
+    def test_the_directory_is_created_because_a_mount_point_may_be_bare(
+            self, tmp_path, monkeypatch):
+        """SQLite will not create intermediate directories, so a disk mounted
+        at /var/data with no folder inside it fails to open at boot."""
+        target = tmp_path / 'var' / 'data' / 'prahari.db'
+        monkeypatch.setenv('PRAHARI_DB_PATH', str(target))
+        database.resolve_db_path()
+        assert target.parent.is_dir()
 
 
 class TestServiceSurface:

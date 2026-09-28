@@ -200,12 +200,10 @@ export default function InventoryPage() {
         <h2 className="text-base font-bold text-arctic-900 mb-1 flex items-center gap-2">
           <Terminal size={16} className="text-arctic-600" aria-hidden="true" /> Stock Command
         </h2>
-        <p className="text-xs text-frost-muted mb-1">
-          Write the change the way you would say it — e.g. &quot;Removed 4 thermal blankets from
-          Shed 2&quot; — and check it before it is applied.
-        </p>
-        <p className="text-xs font-mono font-bold text-arctic-800 mb-3">
-          Applies to {station.label} stock only.
+        <p className="text-xs text-frost-muted mb-3">
+          Write the change in plain words — for example &quot;Removed 4 thermal blankets from
+          Shed 2&quot;. You will see what it will do before anything is saved. Applies to
+          {' '}{station.label} only.
         </p>
         <div className="flex gap-3">
           <input
@@ -314,8 +312,8 @@ export default function InventoryPage() {
             Stock Check — <span className="capitalize">{countItem}</span> at {stationId}
           </h3>
           <p className="text-xs text-frost-muted mt-0.5">
-            A straight count of what is on the shelf, never an estimate —
-            {selectedItem ? ' counting the selected item.' : ' select a row to count a specific item.'}
+            {selectedItem ? 'Counting the selected item.'
+              : 'Select a row above to count a specific item.'}
           </p>
         </div>
         <div className="flex items-center gap-4">

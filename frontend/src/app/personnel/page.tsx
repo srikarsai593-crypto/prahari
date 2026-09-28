@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Map, Radio, Square, RotateCw, Plus, Siren, AlertTriangle, UserCheck,
 } from 'lucide-react';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, isQueued, queuedMessage } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
 import { useWebSocket } from '@/components/WebSocketProvider';
@@ -262,6 +262,7 @@ export default function PersonnelPage() {
       + 'starts an accountability check across the station.')) return;
     try {
       const res = await api.triggerSOS(person.id);
+      if (isQueued(res)) return addToast(queuedMessage('SOS'), 'alert');
       addToast(`SOS raised for ${person.name} — ${res.unaccounted} unaccounted in zone`, 'alert');
       void loadAll();
     } catch (e) {

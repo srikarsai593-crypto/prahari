@@ -4,7 +4,7 @@ import {
   Package, RotateCw, Upload, Camera, Square, CloudSnow, Satellite, TriangleAlert,
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
@@ -147,6 +147,10 @@ export default function CargoPage() {
         destination_station: stationId,
         eta_hours: form.eta_hours.trim() === '' ? undefined : Number(form.eta_hours),
       });
+      if (isQueued(res)) {
+        setForm(emptyForm());
+        return addToast(queuedMessage(`${form.item_name}`), 'info');
+      }
       const route = form.origin_station
         ? `${form.origin_station} → ${station.label}`
         : `resupply → ${station.label}`;
@@ -165,6 +169,7 @@ export default function CargoPage() {
     if (!code.trim()) return;
     try {
       const res = await api.scanBarcode(code.trim());
+      if (isQueued(res)) return addToast(queuedMessage('Scan'), 'info');
       addToast(`${res.barcode_id}: ${res.old_status} → ${res.new_status}`,
         res.new_status === 'unloaded' ? 'success' : 'info');
       void load();
@@ -227,6 +232,7 @@ export default function CargoPage() {
     setApplyingWeather(true);
     try {
       const res = await api.applyStationWeather(stationId, deltaTInput);
+      if (isQueued(res)) return addToast(queuedMessage('Blizzard load'), 'info');
       addToast(
         res.affected === 0
           ? `ΔT +${res.delta_t}°C recorded at ${station.label} — no active consignments to re-score`
@@ -267,6 +273,7 @@ export default function CargoPage() {
     setPinging(shipmentId);
     try {
       const res = await api.requestBeaconPing(shipmentId);
+      if (isQueued(res)) return addToast(queuedMessage('Beacon interrogation'), 'info');
       addToast(`Beacon interrogation logged for ${barcode} — `
         + (res.hours_overdue != null ? `overdue by ${res.hours_overdue}h, ` : '')
         + (res.last_scanned_at
@@ -309,8 +316,7 @@ export default function CargoPage() {
               <Package size={18} className="text-arctic-600" aria-hidden="true" /> Create Shipment
             </h2>
             <p className="text-xs text-frost-muted mb-4">
-              Register a crate coming into <strong>{station.label}</strong>. Say which supply it
-              restocks and unloading will add it to the store automatically.
+              Register a crate coming into <strong>{station.label}</strong>.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -362,7 +368,7 @@ export default function CargoPage() {
                 <p className="text-2xs text-frost-muted mt-1">
                   {selectedStock
                     ? `Added to ${selectedStock.name} at ${station.label} when the crate is unloaded.`
-                    : 'Choose a supply above to have this added to the store automatically.'}
+                    : 'Pick a supply above to add this to the store on arrival.'}
                 </p>
               </div>
               <div>
@@ -386,8 +392,8 @@ export default function CargoPage() {
                       late: at the nominal fourteen-day sea leg nothing is ever
                       overdue inside a drill. A negative value backdates the
                       ETA so the stalled-convoy path can be exercised. */}
-                  Blank uses the {TRANSIT_DAYS}-day sea leg. A negative value backdates the ETA,
-                  so the crate registers as an overdue convoy for a drill.
+                  Leave blank for the usual {TRANSIT_DAYS}-day sea crossing.
+                  A negative number marks the crate already overdue.
                 </p>
               </div>
 
@@ -610,8 +616,8 @@ export default function CargoPage() {
                       onClick={handleManualScan}>Scan</button>
             </div>
             <p className="text-2xs text-frost-muted mt-3 leading-relaxed">
-              Each scan moves the crate one step along: dispatched, in transit, arrived, then
-              unloaded. Unloading adds its contents to {station.label} stock.
+              Each scan moves the crate one step: dispatched, in transit, arrived, unloaded.
+              Unloading adds its contents to {station.label} stock.
             </p>
           </div>
 
@@ -622,12 +628,12 @@ export default function CargoPage() {
               Blizzard Load — {station.label}
             </h2>
             <p className="text-xs text-frost-muted mb-4">
-              Record how cold it is getting. Everything still on its way here is re-assessed for
-              delay, and stock is expected to go faster in the same conditions.
+              Record how cold it is getting. Inbound crates are re-checked for delay and
+              supplies are expected to run down faster.
             </p>
 
             <label htmlFor="cg-dt">
-              Thermal delta — <span className="text-arctic-700 font-bold">ΔT +{deltaTInput}°C</span>
+              Blizzard load — <span className="text-arctic-700 font-bold">ΔT +{deltaTInput}°C</span>
             </label>
             <input id="cg-dt" type="range" min="0" max="60" value={deltaTInput}
                    onChange={(e) => setDeltaTInput(parseInt(e.target.value, 10))}

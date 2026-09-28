@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { CloudSnow, Users, X } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from './Toast';
 import { STATIONS } from '@/lib/stations';
 import type {
@@ -73,6 +73,7 @@ export function ThermalLoadControl({ stationId, stationLabel, deltaT, onApplied 
     setApplying(true);
     try {
       const res = await api.applyStationWeather(stationId, next);
+      if (isQueued(res)) return addToast(queuedMessage('Blizzard load'), 'info');
       const degraded = res.degraded_expeditions ?? [];
       addToast(
         `${stationLabel} blizzard load ΔT +${next}°C — ${res.affected} consignment(s) re-scored, `
@@ -96,15 +97,16 @@ export function ThermalLoadControl({ stationId, stationLabel, deltaT, onApplied 
     <div className="subview-card rounded-2xl p-5">
       <h3 className="text-sm font-bold text-arctic-900 mb-1 flex items-center gap-2">
         <CloudSnow size={15} className="text-arctic-600" aria-hidden="true" />
-        Simulate Thermal Blizzard Load
+        Blizzard Load
       </h3>
       <p className="text-2xs text-frost-muted mb-3">
-        depletion rate = burn rate × (1 + β × ΔT). Raising ΔT shortens the cover on everything
-        the station burns to stay warm — and re-scores {stationLabel}&apos;s inbound cargo with it.
+        Colder weather means the station burns through supplies faster and cargo runs late.
+        Setting the load here shortens every cover figure below and re-scores
+        {' '}{stationLabel}&apos;s inbound crates.
       </p>
 
       <label htmlFor="inv-dt" className="overline">
-        Thermal delta — ΔT +{value}°C
+        Blizzard load — ΔT +{value}°C
       </label>
       <input id="inv-dt" type="range" min={0} max={30} value={value}
              onChange={(e) => setValue(parseInt(e.target.value, 10))} />
@@ -139,10 +141,19 @@ export function ThermalLoadControl({ stationId, stationLabel, deltaT, onApplied 
 }
 
 // ── Headcount basis chip ────────────────────────────────────────────────────
+/**
+ * What the depletion rates below are scaled against.
+ *
+ * The multiplier is shown only when it is not 1 — at the station's nominal
+ * headcount "1.00x baseline" is a number that says nothing happened, and it
+ * was the loudest thing on the chip. When a traverse party arrives and the
+ * rates really do move, that is exactly when the factor is worth reading.
+ */
 export function HeadcountChip({ basis }: { basis: HeadcountBasis | null }) {
   if (!basis) return null;
   const elevated = basis.factor > 1.01;
   const reduced = basis.factor < 0.99;
+  const scaled = elevated || reduced;
   return (
     <span
       data-compact
@@ -156,7 +167,8 @@ export function HeadcountChip({ basis }: { basis: HeadcountBasis | null }) {
                       : 'bg-arctic-50 border-arctic-200 text-arctic-700'}`}
     >
       <Users size={11} aria-hidden="true" />
-      Burn basis: {basis.headcount} crew ({basis.factor.toFixed(2)}× baseline)
+      Rates assume {basis.headcount} crew on station
+      {scaled && ` — ${basis.factor.toFixed(2)}× the usual`}
     </span>
   );
 }

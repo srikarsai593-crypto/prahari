@@ -480,3 +480,9 @@ export interface StationResetResult {
   cleared: StationCounts;
   now: StationCounts;
 }
+
+export interface DemoSeasonResult {
+  status: string;
+  created: { shipments: number; expeditions: number; incidents: number };
+  now: StationCounts;
+}
