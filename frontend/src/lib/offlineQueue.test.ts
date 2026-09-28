@@ -222,6 +222,93 @@ describe('replaying when the link returns', () => {
   });
 });
 
+describe('replay protection', () => {
+  it('sends the entry id as an idempotency key', async () => {
+    /**
+     * The case this covers is a write the station received and acted on
+     * whose response never came back. Without a key, replaying it issues the
+     * stock a second time.
+     */
+    enqueue();
+    const key = offlineQueue.getPending()[0].id;
+    const fetchSpy = stubFetch(() => ({ status: 200 }));
+
+    await offlineQueue.flush();
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)['Idempotency-Key']).toBe(key);
+  });
+
+  it('keeps the same key across a failed attempt and its retry', async () => {
+    /** A new key on each attempt would defeat the whole mechanism. */
+    enqueue();
+    const key = offlineQueue.getPending()[0].id;
+
+    stubFetch(() => { throw new Error('network down'); });
+    await offlineQueue.flush();
+    expect(offlineQueue.getPending()[0].id).toBe(key);
+
+    const retry = stubFetch(() => ({ status: 200 }));
+    await offlineQueue.flush();
+    const init = retry.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)['Idempotency-Key']).toBe(key);
+  });
+
+  it('gives every entry a distinct key', () => {
+    for (let i = 0; i < 25; i += 1) enqueue(`change ${i}`);
+    const ids = offlineQueue.getPending().map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('following the browser link state', () => {
+  it('arms the queue the moment the browser reports no network', () => {
+    /**
+     * Until now the first write after an outage was always spent discovering
+     * it: the queue only armed on a fetch that had already failed.
+     */
+    const stop = offlineQueue.watchBrowserConnectivity();
+    window.dispatchEvent(new Event('offline'));
+    expect(offlineQueue.isOffline).toBe(true);
+    stop();
+  });
+
+  it('drains when the browser comes back', async () => {
+    const stop = offlineQueue.watchBrowserConnectivity();
+    window.dispatchEvent(new Event('offline'));
+    enqueue();
+    const fetchSpy = stubFetch(() => ({ status: 200 }));
+
+    window.dispatchEvent(new Event('online'));
+    await vi.waitFor(() => expect(offlineQueue.pendingCount).toBe(0));
+    expect(fetchSpy).toHaveBeenCalled();
+    stop();
+  });
+
+  it('does not overrule an operator holding the link down', async () => {
+    /**
+     * A blackout is a demonstration. The browser noticing that wifi is fine
+     * must not end it half way through.
+     */
+    const stop = offlineQueue.watchBrowserConnectivity();
+    await offlineQueue.setBlackout(true);
+
+    window.dispatchEvent(new Event('online'));
+
+    expect(offlineQueue.isBlackout).toBe(true);
+    expect(offlineQueue.isOffline).toBe(true);
+    await offlineQueue.setBlackout(false);
+    stop();
+  });
+
+  it('stops listening when the console unmounts it', () => {
+    const stop = offlineQueue.watchBrowserConnectivity();
+    stop();
+    window.dispatchEvent(new Event('offline'));
+    expect(offlineQueue.isOffline).toBe(false);
+  });
+});
+
 describe('subscribers', () => {
   it('are told when the queue changes so the console can show the count', () => {
     const listener = vi.fn();

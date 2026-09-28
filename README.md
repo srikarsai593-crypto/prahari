@@ -54,6 +54,14 @@ module reads the same truth.
 | **Station facts read once per scoring run** | The fuel row, the roster and the inbound cargo are identical for every traverse departing the same base, and re-scoring runs after every write that moves station conditions. |
 | **The database outlives the container** | A hosted filesystem is ephemeral: a SQLite file inside the application directory is wiped by every deploy and every idle spin-down, and the console comes back on the bare seed. `PRAHARI_DB_PATH` puts it on a mounted disk, which is the difference between a station record and a scratchpad. |
 | **An empty console says so** | The seed plants crew, stock and geofences but no consignments or incidents, because those are what an exercise creates. A dashboard of zeroes is indistinguishable from a backend that is down, so it says which it is and offers the one call that fills it. |
+| **A measured burn rate beside the planned one** | `base_burn_rate` is what the station was *provisioned* to consume, and nothing had ever checked it against what the station actually used — while `days_of_cover` is built entirely on top of it. Every stock movement now lands in the audit log with a signed delta and a reason (`app/stock_ledger.py`), and the observed rate is derived from that. A station burning 40% more diesel than planned has a cover figure that is 40% optimistic, and nothing else on the page said so. |
+| **What counts as consumption is narrow** | A stocktake correction is a measurement being put right; a transfer is stock moving house. Counting either would make the observed rate a record of paperwork. Only a recorded usage and fuel loaded onto a departing traverse are burn. |
+| **Cold chain catches the failure before the breach** | A threshold tells you a vaccine was ruined; the rate of change tells you a compressor has stopped while the crate is still inside its band. Both are checked. An excursion counts up *on the row*, because the question on arrival is "was it ever out of band" and a crate that recovered reads as fine otherwise. |
+| **Every temperature names its source** | Prahari has no sensors. A reading is either a gauge someone read or a logger that was downloaded, and the API requires `source` on every one. A console that could not tell the two apart would be presenting a typed figure as telemetry. |
+| **Tamper-evident audit log** | Each entry is a SHA-256 over its own fields *and* the previous entry's hash, so an altered or deleted row breaks every link after it. `GET /events/verify` turns "every action is on the record" from an assurance into arithmetic a sceptic can check. It is evident, not proof — see the honesty matrix. |
+| **Idempotency keys on replay** | The case the offline queue cannot detect on its own is a write the station received and acted on whose response never came back. Without a key, replaying it issues the stock twice. Each queue entry carries its own key for its whole life, so a retry is recognisable as the same intent. |
+| **Five stages, not two** | `open` and `resolved` could not tell an incident nobody had seen apart from one with a snowcat already on the ice, which during a callout is the only difference that matters. Each stage is timestamped as it is entered, so a debrief can say how long acknowledgement and dispatch took. Committing an asset moves the stage by itself — a lifecycle nobody updates is a dropdown, not a record. |
+| **Assets ranked on capability, not just distance** | Distance alone sent the nearest snowcat to a casualty while a helicopter with a medic sat eight minutes further out. Range is judged on the *round trip*, because the asset has to come back. Fuel is scored as reserve rather than tank level: there is nothing to choose between 82% and 100% for a two-kilometre callout. Every component of the score is returned, because a commander overruling a ranking mid-emergency needs to see what it weighed. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -66,6 +74,12 @@ module reads the same truth.
 2. **📦 Cargo Tracking** — QR-driven status chain
    (`dispatched → in_transit → arrived → unloaded`). Unloading replenishes the
    matching inventory item. Blizzard ΔT re-scores risk and pushes the ETA.
+   Medical and food consignments carry a **temperature band** and are checked
+   two ways: against the band, and against the rate they are moving — a reefer
+   whose compressor has stopped is still inside its band for the first hour.
+   Excursions are counted on the crate, so one that recovered still reports
+   that it was out of band, and an excursion re-scores the station through the
+   same cascade a delay does.
 3. **🔋 Dynamic Inventory** — `days_of_cover = quantity / (base_burn_rate × crew_factor × (1 + β × ΔT))`,
    recomputed live against the station's blizzard load *and* the crew currently
    on station. The ΔT slider sits on the Inventory page itself, so the formula
@@ -74,7 +88,10 @@ module reads the same truth.
    fuel"*): the command is parsed, previewed, and only written on confirm, always
    scoped to the console's active station. An ambiguous item comes back as
    clickable candidates rather than a dead-end error. `GET /inventory/cross-station`
-   answers "does another base have this?" in one query.
+   answers "does another base have this?" in one query. Every movement is
+   recorded with a signed delta and a reason, which is what makes the
+   **measured burn rate** — shown beside the planned one — a reading of the
+   station's own record rather than a second guess.
 4. **📍 Personnel Routing** — Sign in first: the roster carries live positions
    for everyone in the field and is not served anonymously. Authorise a
    movement plan on a **map**: click to
@@ -91,7 +108,12 @@ module reads the same truth.
    rescue assets are **dispatched and released** from the same panel, and both
    severity and perimeter can be changed on a live incident — widening the
    radius re-runs the head-count against the new circle instead of forcing a
-   resolve-and-redeclare that discards the count.
+   resolve-and-redeclare that discards the count. A response moves through
+   **five stages** — declared, acknowledged, responding, contained, resolved —
+   each timestamped as it is entered, and committing an asset advances the
+   stage by itself. Assets are ranked on **capability**: distance, fuel in
+   reserve, whether the round trip is within range, and whether a medic is
+   aboard, with every component of the score shown.
 
 ### The cross-module chain
 
@@ -196,6 +218,42 @@ queue-and-flush cycle.
 
 ---
 
+## 🔍 What is measured, and what is not
+
+Prahari runs on a laptop with no sensor network attached. Everything below is
+either something the station recorded, something Prahari worked out from what
+it recorded, or a figure that stands in for hardware that is not there. The
+distinction matters more than any single feature: a console that cannot tell
+you which is which is one you cannot act on.
+
+| Fact on screen | Where it comes from | Honest? |
+|---|---|---|
+| Station coordinates | Published NCPOR positions, hard-coded and matching the geofence table | **Real** |
+| Distances, bearings, route deviation | Computed by great-circle maths from those coordinates | **Derived** — real arithmetic on real positions |
+| Daylight state, seasonal normals | Solar declination from the station's own latitude (Cooper's equation) and published climatological normals | **Derived / reference** — never presented as a thermometer reading |
+| Stock quantities | What an operator recorded, plus what unloading a consignment added | **Real** — entered, not sensed |
+| Days of cover | `quantity / (burn rate × crew factor × weather factor)` | **Derived** |
+| Planned burn rate | A configured constant per item | **Assumption** — the console now says so by showing the measured rate beside it |
+| Measured burn rate | Derived from consumption movements in the audit log | **Derived from real records**, and withheld entirely until there is enough history to divide by |
+| Crew positions | Seeded, then advanced by the GPS playback | **Simulated** — no GPS hardware exists; the movement is a replay of an authorised route |
+| Blizzard ΔT | Typed by an operator on the slider | **Simulated input** — Prahari has no meteorological feed, and the header shows ΔT rather than inventing an air temperature |
+| Cargo temperature | Typed by an operator, or entered from a handheld logger read-out | **Recorded** — `source` is stored and shown on every reading; there is no live probe |
+| Cargo risk score | Weather ΔT and priority | **Derived** from a simulated input |
+| Consignment ETA | Nominal fourteen-day sea leg, pushed by weather | **Modelled** — there is no vessel tracking |
+| Overdue detection | The clock against the stored ETA | **Derived** — real time, modelled ETA |
+| Beacon ping | Records that the station *asked*, and returns the last facts it holds | **Honest stub** — the response says outright that there is no satellite link |
+| Asset fuel, range, seats, medic | Seeded capability figures per asset | **Reference data** — not telemetry from the vehicles |
+| Head-counts and accountability | Personnel status, which an operator sets | **Real** — as accurate as the last check-in |
+| Audit chain | SHA-256 over each entry and the one before it | **Real, and tamper-*evident*** — a writer with database access could recompute the whole chain. Not tamper-proof, and `/events/verify` says so in its own response |
+| Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran | **Real**, and the UI never claims AI when a regex did the work |
+| The demonstration season | Synthetic records planted by `/admin/demo-season` | **Synthetic**, and the audit log says so in the entry that creates it |
+
+What Prahari does **not** have, and does not pretend to: a satellite link, a
+meteorological feed, GPS hardware, temperature probes, vehicle telemetry, or a
+directory of real emergency contacts.
+
+---
+
 ## 🧯 Drills
 
 Two switches exist so the failure paths can be exercised without waiting for a
@@ -244,6 +302,24 @@ service. Within that shape, it is now closed by default.
   microphone. Authenticated API responses are `no-store, private`, so the next
   operator through a shared proxy is not served the last one's roster.
 
+- **Work done offline replays exactly once.** Each queued mutation carries an
+  `Idempotency-Key` for the life of that entry, so the write the station
+  received and acted on — but whose response never came back — is recognised
+  on retry rather than applied twice. The key is scoped to the method and
+  path; a key reused on another endpoint is refused rather than answered from
+  the wrong record.
+- **The console survives a reload during an outage.** A service worker caches
+  the application shell, the build assets and the map tiles, so a refresh with
+  the link down gets the console rather than a browser error page and the map
+  keeps its tiles instead of going blank. The API is never cached: stock
+  levels, positions and accountability counts are precisely the figures an
+  operator must not be shown a stale copy of.
+- **The queue follows the browser, not only the operator.** `navigator.onLine`
+  going false arms it immediately, so the first write after a real outage is
+  no longer spent discovering it. Coming back only triggers a drain — an
+  interface being up says nothing about whether the station is reachable, and
+  the drain is what proves it. A deliberate blackout is never lifted this way.
+
 **What it is still not.** One credential means one identity: the audit log can
 say *what* a commander did and not *which* commander. Per-user accounts are the
 next step, and nothing above is a substitute for them.
@@ -278,11 +354,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 147 tests
+npm test                 # 168 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**486 backend tests (~4 s) and 147 frontend tests (~2 s).** No network, no
+**609 backend tests (~5 s) and 168 frontend tests (~2 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -306,6 +382,12 @@ What they cover, and why these things in particular:
 | `test_shipments` | The scan chain, unit-safe restock, weather risk and overdue convoy detection. |
 | `test_cascade` | The cross-module chain — that a write anywhere reaches the module counting on it, and that the alarm announces a crossing rather than a state. |
 | `test_platform` | Credentials, CORS, audit-log ordering, reset hygiene, and where the database file is allowed to live. |
+| `test_audit_chain` | That each entry commits to the one before it, that an edited, deleted or inserted row is caught, and that the endpoint states what it does *not* promise. |
+| `test_burn_rate` | What counts as consumption and what does not, and the two ways the measured rate refuses to guess — too few movements, too little elapsed time. |
+| `test_coldchain` | Band breaches in both directions, rate of change catching a failure before the breach, and that a crate which recovered still reports its excursion. |
+| `test_idempotency` | That a replayed write lands once, that two identical writes without keys both land, and that a refusal is not remembered. |
+| `test_incident_lifecycle` | The stages, that a response cannot roll backwards, that dispatch advances it, and that the head-count rule survives having five stages instead of two. |
+| `test_asset_ranking` | Each factor in the score, the round-trip range check, and that the ranking follows the incident type. |
 | `test_demo` | The demonstration season: that it reaches every station, is made of real records, does not stack on a second run, leaves the store at its seeded figures, and says it is synthetic. |
 | `test_models` | The bounds that make a malformed LLM parse degrade to rules instead of being believed. |
 | `test_session` | Signed sessions, the sign-in rate limit, the read gate and the security headers. |
@@ -314,14 +396,18 @@ What they cover, and why these things in particular:
 | `offlineQueue.test.ts` | Work recorded during an outage: that it survives, replays in order, and is not discarded when a session lapses. |
 | `SessionProvider.test.tsx` | The sign-in gate, and that the key is never retained after it is used. |
 | `DemoSeasonButton.test.tsx` | That the season cannot be loaded by accident, and reports what it planted. |
+| `ColdChainCell.test.tsx` | That a recovered crate still shows its excursion, that a typed reading is recorded as manual, and that unmonitored cargo renders nothing. |
+| `serviceWorker.test.ts` | That the cache never installs in front of the dev server, and that a console whose cache will not install still boots. |
 | `useInventory.test.tsx` | The stock-command preview, including that a queued command is never offered as one to confirm. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count. Thirty-seven known bugs — a flat criticality rule, bearing by the
+line count. Fifty-three known bugs — a flat criticality rule, bearing by the
 flat approximation, deviation measured to waypoints, an incident closable over
-a missing person, a stock delta that carries its sign, an unverified session
-signature, a roster that re-queries every plan, a database back inside the
-container — are reintroduced one at a time and the suite must fail on each:
+a missing person, an unverified session signature, a database back inside the
+container, an audit chain that no longer links, a stocktake counted as
+consumption, a cold chain that only checks the threshold, a replayed write
+applied twice, assets ranked by distance alone — are reintroduced one at a
+time and the suite must fail on each:
 
 ```bash
 cd backend
@@ -331,9 +417,12 @@ python -m tests.mutations --list
 ```
 
 A mutation that survives is a test that does not really exist. Three survived
-the first run and all three were gaps in the tests rather than in the code.
+the first run and all three were gaps in the tests rather than in the code;
+three more surfaced when this batch was added, one of which was a genuine bug
+— a query listing the five stage names by hand, which counted an incident
+still holding the legacy `open` value as closed.
 CI runs it weekly rather than per-commit: it runs the whole suite once per
-mutation, so it costs roughly thirty-seven times a normal run.
+mutation, so it costs roughly fifty-three times a normal run.
 
 ---
 

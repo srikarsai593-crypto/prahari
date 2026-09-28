@@ -3,10 +3,10 @@ import type {
   Personnel, Incident, Accountability, NearbyAsset, Shipment, ShipmentInput,
   Expedition, ExpeditionInput, ExpeditionStatus, InventoryItem, Geofence, MovementPlan, AppEvent,
   ParsedExpedition, FeasibilityResult, ShipmentStatusTransition, StationWeatherResult,
-  ExactCount, StockCommandResult, StationConditions, MovementPlanInput,
+  ExactCount, StockCommandResult, StationConditions, MovementPlanInput, TemperatureResult,
   StationCounts, StationResetResult, DemoSeasonResult, Telemetry, IncidentSop,
   HeadcountBasis, StockAlert,
-  CrossStationStock, SessionState,
+  CrossStationStock, SessionState, IncidentStatus,
 } from './types';
 
 const BASE = '/api';
@@ -303,8 +303,10 @@ export const api = {
    * one — which discards the running head-count and the audit trail with it.
    * Widening the radius re-runs accountability against the new circle.
    */
+  /** Move an incident's stage, severity or perimeter. `open` is still
+   *  accepted by the backend and normalises to `declared`. */
   updateIncident: (id: string, body: {
-    status?: 'open' | 'resolved'; severity?: Incident['severity'];
+    status?: IncidentStatus | 'open'; severity?: Incident['severity'];
     affected_radius_m?: number;
   }) =>
     request<Incident & { notes?: string[];
@@ -360,6 +362,13 @@ export const api = {
       station: params?.station,
       limit: params?.limit ? String(params.limit) : undefined,
     })}`),
+
+  /** Record a temperature against a temperature-controlled consignment.
+   *  `source` is required by the backend: Prahari has no sensor network, and
+   *  a typed figure must not be stored as though it were telemetry. */
+  recordTemperature: (shipmentId: string, tempC: number, source: 'manual' | 'logger') =>
+    request<TemperatureResult>(`${BASE}/shipments/${shipmentId}/temperature`,
+      jsonOptions('POST', { temp_c: tempC, source }), 'record temperature'),
 
   // ── Station housekeeping ───────────────────────────────────────────────────
   /** What a reset would clear — shown before the operator confirms. */

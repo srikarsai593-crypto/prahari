@@ -17,6 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
+from . import idempotency
 from .seed import seed_data
 from .ws_manager import manager
 from .auth import DEMO_KEY, SESSION_COOKIE, get_expected_key, identify, reads_are_public
@@ -140,6 +141,12 @@ _SECURITY_HEADERS = {
     'X-Frame-Options': 'DENY',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), payment=()',
 }
+
+
+# Ordering matters: middleware added later runs first, so the replay guard
+# sits *outside* the header layer and a replayed response still gets the
+# security headers on its way out.
+app.middleware('http')(idempotency.replay_guard)
 
 
 @app.middleware('http')

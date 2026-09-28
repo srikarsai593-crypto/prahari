@@ -81,7 +81,7 @@ MUTATIONS: list[Mutation] = [
     # ── Emergency accountability ────────────────────────────────────────────
     Mutation('incident resolvable while someone is unaccounted for',
              'app/routes/incidents.py',
-             "if body.status == 'resolved' and (row['unaccounted_count'] or 0) > 0:",
+             "if target == lifecycle.RESOLVED and (row['unaccounted_count'] or 0) > 0:",
              'if False:'),
     Mutation('reset forgets asset commitments again',
              'app/routes/admin.py',
@@ -240,6 +240,85 @@ MUTATIONS: list[Mutation] = [
              'app/demo.py',
              "'priority': 'normal', 'eta_hours': -26, 'scans': 1},",
              "'priority': 'normal', 'eta_hours': 26, 'scans': 1},"),
+
+    # ── The audit chain ─────────────────────────────────────────────────────
+    Mutation('entries no longer link to the one before them',
+             'app/events.py',
+             '    prev_hash = head_hash(db)',
+             '    prev_hash = GENESIS_HASH'),
+    Mutation('the digest ignores the metadata',
+             'app/events.py',
+             "        'metadata': metadata,\n        'station': station,",
+             "        'station': station,"),
+    Mutation('verification passes over an unhashed entry',
+             'app/events.py',
+             "        if not stored:\n            return {'ok': False,",
+             "        if False:\n            return {'ok': False,"),
+
+    # ── Observed burn rate ──────────────────────────────────────────────────
+    Mutation('a stocktake correction counts as consumption',
+             'app/stock_ledger.py',
+             'CONSUMING_REASONS = (REASON_COMMAND, REASON_EXPEDITION_DRAW)',
+             'CONSUMING_REASONS = (REASON_COMMAND, REASON_EXPEDITION_DRAW, '
+             'REASON_CORRECTION, REASON_TRANSFER_OUT)'),
+    Mutation('a rate is inferred from a single movement',
+             'app/stock_ledger.py',
+             'MIN_MOVEMENTS = 2', 'MIN_MOVEMENTS = 0'),
+    Mutation('the observation window ends at the last draw, not now',
+             'app/stock_ledger.py',
+             "        elapsed_days = (now.timestamp() - entry['first']) / 86400",
+             "        elapsed_days = (entry['last'] - entry['first']) / 86400"),
+    Mutation('restocks count as negative burn',
+             'app/stock_ledger.py',
+             'or delta >= 0:', 'or delta == 0:'),
+
+    # ── Cold chain ──────────────────────────────────────────────────────────
+    Mutation('only the threshold is checked, never the rate of change',
+             'app/coldchain.py',
+             "    drifting = drift is not None and abs(drift) >= RATE_OF_CHANGE_LIMIT_C_PER_H",
+             '    drifting = False'),
+    Mutation('a crate that recovered forgets it was ever out of band',
+             'app/routes/shipments.py',
+             "    excursions = int(shipment.get('excursion_count') or 0) + "
+             "(1 if verdict['excursion'] else 0)",
+             "    excursions = 1 if verdict['excursion'] else 0"),
+    Mutation('a reading below the band is treated as fine',
+             'app/coldchain.py',
+             "    if temp_min is not None and temp_c < temp_min:",
+             '    if False:'),
+
+    # ── Replay protection ───────────────────────────────────────────────────
+    Mutation('a replayed write is applied a second time',
+             'app/idempotency.py',
+             '    if seen:\n        return Response(content=seen[\'body\']',
+             '    if False:\n        return Response(content=seen[\'body\']'),
+    Mutation('a refusal is remembered and replayed back for ever',
+             'app/idempotency.py',
+             '    if 200 <= response.status_code < 300:',
+             '    if True:'),
+    # The console's half of replay protection — that the queue reuses an
+    # entry's id as its key across retries — is pinned in
+    # frontend/src/lib/offlineQueue.test.ts. This harness runs pytest, so a
+    # mutation there would survive for the wrong reason.
+
+    # ── Incident lifecycle and asset ranking ────────────────────────────────
+    Mutation('a response can be rolled backwards through its stages',
+             'app/incident_lifecycle.py',
+             '    if rank(target) < rank(current):',
+             '    if False:'),
+    Mutation('committing an asset leaves the incident unstarted',
+             'app/routes/incidents.py',
+             '        if lifecycle.rank(incident[\'status\']) < '
+             'lifecycle.rank(lifecycle.RESPONDING):',
+             '        if False:'),
+    Mutation('assets are ranked by distance alone again',
+             'app/routes/incidents.py',
+             "    results.sort(key=lambda x: (-x['suitability'], x['distance_m']))",
+             "    results.sort(key=lambda x: x['distance_m'])"),
+    Mutation('range is judged one way, ignoring the trip home',
+             'app/routes/incidents.py',
+             '    needed_km = (distance_m / 1000) * 2',
+             '    needed_km = distance_m / 1000'),
 ]
 
 

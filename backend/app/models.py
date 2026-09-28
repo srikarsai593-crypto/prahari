@@ -127,6 +127,20 @@ class ShipmentCreate(BaseModel):
     # Negative values backdate the ETA, which is the only way to exercise the
     # overdue-convoy path without waiting a fortnight for a real one to slip.
     eta_hours: Optional[float] = Field(default=None, ge=-8760, le=8760)
+    # Cold chain. Left unset, medical and food consignments take the default
+    # band for their category and everything else is not temperature
+    # controlled — see app/coldchain.py. Send explicit values to override,
+    # including a band on a category that has none by default.
+    temp_min: Optional[float] = Field(default=None, ge=-90, le=60)
+    temp_max: Optional[float] = Field(default=None, ge=-90, le=60)
+
+    @field_validator('temp_max')
+    @classmethod
+    def _band_is_the_right_way_round(cls, temp_max, info):
+        temp_min = info.data.get('temp_min')
+        if temp_max is not None and temp_min is not None and temp_max <= temp_min:
+            raise ValueError('temp_max must be above temp_min')
+        return temp_max
 
     @field_validator('destination_station')
     @classmethod
@@ -378,7 +392,10 @@ class IncidentUpdateRequest(BaseModel):
     accountability count and the audit trail that goes with it.
 
     Every field is optional; send only what changed."""
-    status: Optional[Literal['open', 'resolved']] = None
+    # 'open' is the legacy word and normalises to 'declared'; see
+    # app/incident_lifecycle.py for what each stage means.
+    status: Optional[Literal['open', 'declared', 'acknowledged', 'responding',
+                             'contained', 'resolved']] = None
     severity: Optional[Severity] = None
     affected_radius_m: Optional[float] = Field(default=None, gt=0, le=500_000)
 
@@ -423,6 +440,19 @@ class SyncReportRequest(BaseModel):
     dropped: int = Field(default=0, ge=0, le=100_000)
     pending: int = Field(default=0, ge=0, le=100_000)
     station: Optional[Station] = None
+
+
+class TemperatureReading(BaseModel):
+    """One temperature observation for a consignment.
+
+    `source` is required and has no default. Prahari has no sensor network:
+    a reading is either something an operator read off a gauge or something a
+    handheld logger reported, and a console that could not tell the two apart
+    would be presenting a typed figure as telemetry.
+    """
+    temp_c: float = Field(ge=-90, le=60)
+    source: Literal['manual', 'logger'] = 'manual'
+    note: Optional[str] = Field(default=None, max_length=200)
 
 
 class ResetRequest(BaseModel):

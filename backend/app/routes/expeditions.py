@@ -13,6 +13,8 @@ from ..ratelimit import guard_write
 from ..auth import require_key, require_reader
 from ..timeutil import utc_now, utc_now_iso, to_utc_iso
 from ..cascade import propagate_station_change
+from ..stock_ledger import (record_movement, REASON_EXPEDITION_DRAW,
+                            REASON_EXPEDITION_RETURN)
 
 # Reads are gated at the router, so a route added later inherits the gate
 # instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
@@ -686,8 +688,14 @@ async def update_expedition_status(expedition_id: str, body: ExpeditionStatusReq
                     detail=f'{station} holds {have:,.0f} L of fuel and this traverse needs '
                            f'{fuel_needed:,.0f} L.')
             remaining = fuel_row['quantity'] - fuel_needed
-            db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?',
-                       (remaining, utc_now_iso(), fuel_row['id']))
+            # Fuel loaded onto a departing traverse is fuel the station will
+            # burn, so it counts towards the observed rate.
+            await record_movement(
+                db, dict(fuel_row), remaining, reason=REASON_EXPEDITION_DRAW,
+                actor='expedition_system',
+                message=(f'{fuel_needed:,.0f} L of fuel drawn for "{row["name"]}" at '
+                         f'{station} ({remaining:,.0f} L left in store)'),
+                related_id=expedition_id)
             notes.append(f'{fuel_needed:,.0f} L of fuel drawn ({remaining:,.0f} L left in store)')
 
         # The crew are out on the traverse.
@@ -703,8 +711,12 @@ async def update_expedition_status(expedition_id: str, body: ExpeditionStatusReq
             fuel_row = _station_fuel_row(db, station)
             if fuel_row is not None:
                 restored = fuel_row['quantity'] + fuel_needed
-                db.execute('UPDATE inventory_items SET quantity = ?, updated_at = ? WHERE id = ?',
-                           (restored, utc_now_iso(), fuel_row['id']))
+                await record_movement(
+                    db, dict(fuel_row), restored, reason=REASON_EXPEDITION_RETURN,
+                    actor='expedition_system',
+                    message=(f'{fuel_needed:,.0f} L of fuel returned to store at {station} '
+                             f'after "{row["name"]}" was called off'),
+                    related_id=expedition_id)
                 notes.append(f'{fuel_needed:,.0f} L of fuel returned to store')
         elif current == 'active' and new_status == 'completed' and fuel_needed > 0:
             notes.append(f'{fuel_needed:,.0f} L of fuel consumed')

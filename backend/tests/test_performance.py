@@ -152,6 +152,28 @@ class TestStockAlertBanner:
                                                          station='Maitri'))
 
 
+class TestObservedBurnRate:
+    """The observed rate is derived from the audit log, which is the one
+    growing table in the station. Reading it per row would make listing the
+    store slower every time anything was logged."""
+
+    def test_the_log_is_read_once_per_station_not_once_per_row(self, traced_station):
+        traced_station.queries.reset()
+        traced_station.get('/inventory?station=Maitri')
+
+        # Five stock rows at Maitri, one station: one pass over the log.
+        assert traced_station.queries.matching('from events') <= 1, (
+            'the observed burn rate is re-reading the audit log per stock row')
+
+    def test_the_alerts_endpoint_still_never_touches_the_log(self, traced_station):
+        """Alerts answer "which rows are in alert" and must stay off the log
+        even now that a sibling endpoint reads it."""
+        traced_station.set_weather(30)
+        traced_station.queries.reset()
+        traced_station.get('/inventory/alerts?station=Maitri')
+        assert traced_station.queries.matching('from events') == 0
+
+
 class TestCascadeFanOut:
     def test_station_facts_are_read_once_for_every_traverse(self, traced_station):
         """The fuel row, the roster and the inbound cargo are the same for

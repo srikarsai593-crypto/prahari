@@ -413,6 +413,17 @@ export default function InventoryPage() {
                       <td className="py-3 metric text-arctic-800">{item.quantity} {item.unit}</td>
                       <td className="py-3 metric font-normal text-frost-muted">
                         {typeof item.depletion_rate === 'number' ? `${item.depletion_rate.toFixed(1)}` : '—'}
+                        {/* Only when the station's own record disagrees with
+                            the planned rate. In line with plan is the normal
+                            case and needs no badge. */}
+                        {item.observed_vs_configured?.ratio != null
+                          && item.observed_vs_configured.ratio >= 1.25 && (
+                          <span title={item.observed_vs_configured.verdict}
+                                className="ml-2 px-1.5 py-0.5 rounded border border-alert-edge
+                                           bg-alert-tint text-alert text-2xs font-bold">
+                            {item.observed_vs_configured.ratio.toFixed(1)}× measured
+                          </span>
+                        )}
                       </td>
                       <td className="py-3">
                         {typeof item.days_of_cover === 'number' ? (
@@ -526,7 +537,16 @@ export default function InventoryPage() {
               </div>
 
               {[
-                { label: 'Normal Use', val: selectedItem.base_burn_rate != null ? `${selectedItem.base_burn_rate} ${selectedItem.unit ?? ''} / day` : 'n/a' },
+                { label: 'Planned Use', val: selectedItem.base_burn_rate != null ? `${selectedItem.base_burn_rate} ${selectedItem.unit ?? ''} / day` : 'n/a' },
+                /* The configured rate is a provisioning assumption. This is
+                   what the station's own record says it actually used, and
+                   the gap between them is how wrong the cover figure is. */
+                { label: 'Measured Use',
+                  val: selectedItem.observed_burn?.rate != null
+                    ? `${selectedItem.observed_burn.rate.toFixed(1)} ${selectedItem.unit ?? ''}`
+                      + ` / day (${selectedItem.observed_burn.movements} movements,`
+                      + ` ${selectedItem.observed_burn.observed_days.toFixed(0)}d)`
+                    : 'not yet measured' },
                 { label: 'Crew Load',
                   val: selectedItem.headcount_factor != null
                     && selectedItem.effective_base_rate != null

@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from './Toast';
-import type { Incident, IncidentSop, NearbyAsset } from '@/lib/types';
+import type { Incident, IncidentSop, IncidentStatus, NearbyAsset } from '@/lib/types';
+import { INCIDENT_STAGES, STAGE_LABEL } from '@/lib/types';
 
 /**
  * Everything the commander can actually *do* about an open incident.
@@ -40,8 +41,9 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
   const [radius, setRadius] = useState(incident.affected_radius_m);
   const [savingRadius, setSavingRadius] = useState(false);
   const [escalating, setEscalating] = useState(false);
+  const [advancing, setAdvancing] = useState<IncidentStatus | null>(null);
 
-  const resolved = incident.status !== 'open';
+  const resolved = incident.status === 'resolved';
 
   const loadSop = useCallback(async () => {
     try {
@@ -92,6 +94,27 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
     } finally { setEscalating(false); }
   };
 
+  /**
+   * Move the response to a later stage.
+   *
+   * The stages are timestamped as they are entered, so this is what makes the
+   * debrief able to say how long the station took to acknowledge and how long
+   * to get moving. The backend refuses a backwards move and refuses `resolved`
+   * while anyone is unaccounted for; both come back as a plain sentence.
+   */
+  const advanceTo = async (stage: IncidentStatus) => {
+    setAdvancing(stage);
+    try {
+      const res = await api.updateIncident(incident.id, { status: stage });
+      if (isQueued(res)) return addToast(queuedMessage('Stage change'), 'info');
+      addToast(`${incident.id} — ${STAGE_LABEL[stage].toLowerCase()}`,
+               stage === 'resolved' ? 'success' : 'info');
+      onChanged();
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Could not move the response on', 'alert');
+    } finally { setAdvancing(null); }
+  };
+
   const saveRadius = async () => {
     setSavingRadius(true);
     try {
@@ -127,6 +150,43 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
           <span className="capitalize">{incident.type.replace('_', ' ')}</span> ·{' '}
           <span className="font-mono">{incident.id}</span>
         </p>
+      </div>
+
+      {/* ── Response stage ─────────────────────────────────────────────── */}
+      <div>
+        <span className="overline block mb-2">Response Stage</span>
+        <ol className="flex flex-wrap items-center gap-1.5">
+          {INCIDENT_STAGES.map((stage) => {
+            const reached = INCIDENT_STAGES.indexOf(stage)
+              <= INCIDENT_STAGES.indexOf(incident.status as IncidentStatus);
+            const current = incident.status === stage;
+            const offered = incident.next_stages?.includes(stage) ?? false;
+            return (
+              <li key={stage}>
+                <button
+                  type="button"
+                  data-compact
+                  disabled={!offered || advancing !== null}
+                  onClick={() => void advanceTo(stage)}
+                  title={offered ? `Move this response to ${STAGE_LABEL[stage].toLowerCase()}`
+                    : current ? 'Current stage' : 'Not available from the current stage'}
+                  className={`px-2.5 py-1 rounded-full border text-2xs font-semibold
+                              font-mono tracking-caps uppercase transition-colors ${
+                    current ? 'bg-arctic-600 border-arctic-600 text-white'
+                      : reached ? 'bg-arctic-50 border-arctic-200 text-arctic-800'
+                        : offered ? 'bg-white border-frost-border text-arctic-800 '
+                          + 'hover:border-arctic-600'
+                          : 'bg-frost-subtle border-frost-border text-frost-muted'}`}
+                >
+                  {advancing === stage ? '…' : STAGE_LABEL[stage]}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+        {incident.stage_description && (
+          <p className="text-2xs text-frost-muted mt-2">{incident.stage_description}</p>
+        )}
       </div>
 
       {/* ── SOP checklist ──────────────────────────────────────────────── */}
@@ -259,7 +319,11 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
 
       {/* ── Asset dispatch ─────────────────────────────────────────────── */}
       <div className="pt-4 border-t border-frost-border">
-        <span className="overline block mb-2">Nearest Assets</span>
+        {/* "Nearest" was the whole ranking, and it sent the closest snowcat
+            to a casualty while a helicopter with a medic sat eight minutes
+            further out. Distance is still first on the row; it is no longer
+            the only thing deciding the order. */}
+        <span className="overline block mb-2">Best-Suited Assets</span>
         {assets.length === 0 ? (
           <p className="text-2xs text-frost-muted">No assets in range.</p>
         ) : (
@@ -279,7 +343,17 @@ export function IncidentResponsePanel({ incident, assets, onChanged }: Props) {
                       </div>
                       <div className="text-2xs text-frost-muted capitalize">
                         {asset.type} · {asset.distance_m} m away
+                        {asset.eta_minutes != null && ` · ~${asset.eta_minutes} min`}
+                        {asset.fuel_pct != null && ` · ${asset.fuel_pct}% fuel`}
                       </div>
+                      {/* Why the ranking placed it here. A commander
+                          overruling the order needs to see what it weighed. */}
+                      {asset.notes && asset.notes.length > 0 && (
+                        <div className={`text-2xs mt-1 ${asset.out_of_range
+                          ? 'text-emergency font-semibold' : 'text-frost-muted'}`}>
+                          {asset.notes.join(' · ')}
+                        </div>
+                      )}
                     </div>
                     <span data-compact
                           className={`shrink-0 px-2 py-0.5 rounded-full border text-2xs

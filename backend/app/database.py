@@ -54,7 +54,12 @@ def init_db():
         -- (a system or cross-station event) and is shown on every console.
         -- Without this the Maitri dashboard listed Bharati's activity.
         station TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        -- Tamper-evidence. entry_hash is SHA-256 over this row's fields plus
+        -- prev_hash, so removing or editing any historical row breaks every
+        -- link after it. See app/events.py and GET /events/verify.
+        prev_hash TEXT,
+        entry_hash TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_events_module_seq ON events(module, seq DESC);
     CREATE TABLE IF NOT EXISTS expeditions (
@@ -98,6 +103,14 @@ def init_db():
         risk_score INTEGER DEFAULT 0,
         delay_reason TEXT,
         last_scanned_at DATETIME,
+        -- Cold chain. NULL bands mean the consignment is not temperature
+        -- controlled; see app/coldchain.py.
+        temp_min REAL,
+        temp_max REAL,
+        last_temp_c REAL,
+        last_temp_at TEXT,
+        last_temp_source TEXT,
+        excursion_count INTEGER DEFAULT 0,
         updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
     CREATE TABLE IF NOT EXISTS inventory_items (
@@ -155,7 +168,13 @@ def init_db():
         location_lng REAL,
         affected_radius_m REAL DEFAULT 5000,
         severity TEXT DEFAULT 'medium',
-        status TEXT DEFAULT 'open',
+        -- See app/incident_lifecycle.py. 'open' is still accepted from
+        -- callers and normalises to 'declared'.
+        status TEXT DEFAULT 'declared',
+        acknowledged_at TEXT,
+        responding_at TEXT,
+        contained_at TEXT,
+        resolved_at TEXT,
         expected_count INTEGER,
         confirmed_safe_count INTEGER DEFAULT 0,
         unaccounted_count INTEGER,
@@ -195,6 +214,19 @@ def init_db():
         -- bug on this branch, and foreign_keys=ON is already set.
         FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+        -- Replay protection for the offline queue. See app/idempotency.py:
+        -- the case this exists for is a write the station received and acted
+        -- on whose response never made it back, which the console cannot
+        -- distinguish from one that never arrived.
+        key TEXT PRIMARY KEY,
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        body TEXT,
+        created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
     CREATE TABLE IF NOT EXISTS emergency_assets (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -231,6 +263,13 @@ def _run_migrations(conn) -> None:
 
     # Station-scoped audit log — see the events table definition above.
     _add_column(conn, 'events', 'station', 'TEXT')
+
+    # The audit chain. Rows written before it exists keep NULL hashes, and
+    # verification reports the first of them as the point the record stops
+    # being anchored — which is true, and better than back-filling hashes
+    # that would assert an integrity nobody actually checked at the time.
+    _add_column(conn, 'events', 'prev_hash', 'TEXT')
+    _add_column(conn, 'events', 'entry_hash', 'TEXT')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_events_station_seq ON events(station, seq DESC)')
 
     # Shipment payload and routing — see the shipments table definition above.
@@ -240,10 +279,33 @@ def _run_migrations(conn) -> None:
     _add_column(conn, 'shipments', 'origin_station', 'TEXT')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_shipments_dest ON shipments(destination_station)')
 
+    # Cold chain. Most cargo has no temperature it must be kept at, so a NULL
+    # band means "not temperature-controlled" rather than "no limits" — see
+    # app/coldchain.py. excursion_count is carried on the row because the
+    # question on arrival is "was it ever out of band", not "is it now", and a
+    # crate that recovered reads as fine without it.
+    _add_column(conn, 'shipments', 'temp_min', 'REAL')
+    _add_column(conn, 'shipments', 'temp_max', 'REAL')
+    _add_column(conn, 'shipments', 'last_temp_c', 'REAL')
+    _add_column(conn, 'shipments', 'last_temp_at', 'TEXT')
+    _add_column(conn, 'shipments', 'last_temp_source', 'TEXT')
+    _add_column(conn, 'shipments', 'excursion_count', 'INTEGER DEFAULT 0')
+
     # Incidents carry the station whose response radius they fell in when they
     # were declared, so the roster that owns them is recorded rather than
     # recomputed from coordinates on every read.
     _add_column(conn, 'incidents', 'station', 'TEXT')
+
+    # Response lifecycle. 'open' and 'resolved' could not tell an incident
+    # nobody had seen apart from one with a snowcat already on the ice, which
+    # during a callout is the only difference that matters. See
+    # app/incident_lifecycle.py; each stage stamps the moment it was entered,
+    # so the debrief can say how long acknowledgement and dispatch took.
+    for _stage_column in ('acknowledged_at', 'responding_at', 'contained_at', 'resolved_at'):
+        _add_column(conn, 'incidents', _stage_column, 'TEXT')
+    # Rows written before the lifecycle existed carry the old word. It means
+    # "declared and not yet picked up", which is exactly the first stage.
+    conn.execute("UPDATE incidents SET status = 'declared' WHERE status = 'open'")
 
     # Home station — see the personnel table definition above.
     _add_column(conn, 'personnel', 'station', "TEXT NOT NULL DEFAULT 'Maitri'")
@@ -285,6 +347,16 @@ def _run_migrations(conn) -> None:
     # a snowcat was out but not what it was out for, so releasing it was a
     # guess and two incidents could each believe they had it.
     _add_column(conn, 'emergency_assets', 'assigned_incident_id', 'TEXT')
+
+    # What makes an asset the right one, beyond being nearest. Ranking by
+    # distance alone sent the closest snowcat to a casualty when a helicopter
+    # with a medic aboard was eight minutes further out — see
+    # app/routes/incidents.py: score_assets.
+    _add_column(conn, 'emergency_assets', 'fuel_pct', 'REAL DEFAULT 100')
+    _add_column(conn, 'emergency_assets', 'range_km', 'REAL')
+    _add_column(conn, 'emergency_assets', 'speed_kmh', 'REAL')
+    _add_column(conn, 'emergency_assets', 'seats', 'INTEGER')
+    _add_column(conn, 'emergency_assets', 'medic_aboard', 'INTEGER DEFAULT 0')
 
     # Expedition readiness is continuous, not a figure frozen at planning time.
     # baseline_readiness_score is what the traverse was approved against;
@@ -369,21 +441,34 @@ def _seed_emergency_assets(conn) -> None:
     # re-seeding would duplicate every Maitri asset rather than match it.
     conn.execute("DELETE FROM emergency_assets WHERE id NOT LIKE 'ast-%'")
 
+    # Capability, not just position. A medical kit cached at the station has
+    # no range and carries nobody; a helicopter is fast, carries a medic and
+    # runs out of fuel quickly. Ranking a callout needs all of it.
     assets = [
-        # id, name, type, lat, lng, station, status
-        ('ast-mai-cat',  'Snowcat Alpha',        'vehicle',   -70.770, 11.740, 'Maitri',  'available'),
-        ('ast-mai-sled', 'Emergency Sled',       'equipment', -70.780, 11.760, 'Maitri',  'available'),
-        ('ast-mai-med',  'Medical Kit Station',  'medical',   -70.767, 11.735, 'Maitri',  'available'),
-        ('ast-mai-heli', 'Rescue Helicopter',    'aircraft',  -70.765, 11.725, 'Maitri',  'standby'),
-        ('ast-bha-cat',  'Snowcat Bravo',        'vehicle',   -69.410, 76.190, 'Bharati', 'available'),
-        ('ast-bha-med',  'Medical Kit Bharati',  'medical',   -69.407, 76.187, 'Bharati', 'available'),
-        ('ast-bha-boat', 'Rescue Boat Larsemann', 'vessel',   -69.401, 76.180, 'Bharati', 'standby'),
-        ('ast-him-atv',  'Arctic ATV',           'vehicle',    78.925, 11.930, 'Himadri', 'available'),
-        ('ast-him-med',  'Medical Kit Himadri',  'medical',    78.923, 11.923, 'Himadri', 'available'),
+        # id, name, type, lat, lng, station, status,
+        #   fuel %, range km, speed km/h, seats, medic aboard
+        ('ast-mai-cat',  'Snowcat Alpha',        'vehicle',   -70.770, 11.740, 'Maitri',  'available',  82, 180,  20,  6, 0),
+        ('ast-mai-sled', 'Emergency Sled',       'equipment', -70.780, 11.760, 'Maitri',  'available', 100,  40,  12,  2, 0),
+        ('ast-mai-med',  'Medical Kit Station',  'medical',   -70.767, 11.735, 'Maitri',  'available', 100,   0,   0,  0, 1),
+        ('ast-mai-heli', 'Rescue Helicopter',    'aircraft',  -70.765, 11.725, 'Maitri',  'standby',    64, 420, 200,  5, 1),
+        ('ast-bha-cat',  'Snowcat Bravo',        'vehicle',   -69.410, 76.190, 'Bharati', 'available',  91, 180,  20,  6, 0),
+        ('ast-bha-med',  'Medical Kit Bharati',  'medical',   -69.407, 76.187, 'Bharati', 'available', 100,   0,   0,  0, 1),
+        ('ast-bha-boat', 'Rescue Boat Larsemann', 'vessel',   -69.401, 76.180, 'Bharati', 'standby',    77, 120,  35,  8, 0),
+        ('ast-him-atv',  'Arctic ATV',           'vehicle',    78.925, 11.930, 'Himadri', 'available',  88,  90,  35,  2, 0),
+        ('ast-him-med',  'Medical Kit Himadri',  'medical',    78.923, 11.923, 'Himadri', 'available', 100,   0,   0,  0, 1),
     ]
     conn.executemany(
         'INSERT OR IGNORE INTO emergency_assets '
-        '(id, name, type, lat, lng, station, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        '(id, name, type, lat, lng, station, status, fuel_pct, range_km, speed_kmh, '
+        'seats, medic_aboard) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         assets
     )
+    # Rows seeded before these columns existed have NULLs where the capability
+    # should be. Backfill from the same table above rather than leaving the
+    # ranking to guess, which it would do by scoring them unreachable.
+    for row in assets:
+        conn.execute(
+            'UPDATE emergency_assets SET fuel_pct = ?, range_km = ?, speed_kmh = ?, '
+            'seats = ?, medic_aboard = ? WHERE id = ? AND range_km IS NULL',
+            (row[7], row[8], row[9], row[10], row[11], row[0]))
     conn.commit()

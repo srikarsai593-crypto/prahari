@@ -66,7 +66,8 @@ export default function EmergencyPage() {
   }, [station, ready]);
 
   const openIncidents = useMemo(
-    () => incidents.filter((i) => i.status === 'open'), [incidents]);
+    () => incidents.filter((i) => i.is_active ?? i.status !== 'resolved'),
+    [incidents]);
   const visibleIncidents = showResolved ? incidents : openIncidents;
   const focusIncident = useMemo(
     () => incidents.find((i) => i.id === focusId) ?? null, [incidents, focusId]);
@@ -96,7 +97,7 @@ export default function EmergencyPage() {
 
       // Keep the current focus if it is still open; otherwise fall back to the
       // newest open incident, never to a resolved one.
-      const open = list.filter((i) => i.status === 'open');
+      const open = list.filter((i) => i.is_active ?? i.status !== 'resolved');
       setFocusId((prev) => (prev && open.some((i) => i.id === prev) ? prev : open[0]?.id ?? null));
     } catch (e) {
       console.error('Failed to load incidents:', e);

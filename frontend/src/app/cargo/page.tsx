@@ -7,6 +7,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
+import { ColdChainCell } from '@/components/ColdChainCell';
 import { useStation } from '@/components/StationProvider';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useStationConditions } from '@/lib/useStationConditions';
@@ -479,12 +480,13 @@ export default function CargoPage() {
                       <th className="pb-3 font-semibold">Contents</th>
                       <th className="pb-3 font-semibold">Status</th>
                       <th className="pb-3 font-semibold">Risk</th>
+                      <th className="pb-3 font-semibold">Cold chain</th>
                       <th className="pb-3 font-semibold sr-only">Convoy</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-arctic-50">
                     {shipments.length === 0 ? (
-                      <tr><td colSpan={6} className="py-8 text-center text-frost-muted text-13">
+                      <tr><td colSpan={7} className="py-8 text-center text-frost-muted text-13">
                         No consignments routed to {station.label}. Register one above.
                       </td></tr>
                     ) : shipments.map((s) => (
@@ -534,6 +536,12 @@ export default function CargoPage() {
                             {s.risk_score > 70 ? 'Severe' : s.risk_score > 40 ? 'Elevated' : 'Low'}
                             {' '}({s.risk_score}%)
                           </span>
+                        </td>
+                        {/* Most cargo is not temperature controlled, so most
+                            rows render a dash here rather than a reassuring
+                            "no reading" against a crate of spares. */}
+                        <td className="py-3" onClick={(e) => e.stopPropagation()}>
+                          <ColdChainCell shipment={s} onRecorded={() => void load()} />
                         </td>
                         <td className="py-3 text-right">
                           {s.is_overdue && (

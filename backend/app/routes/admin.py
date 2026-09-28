@@ -23,6 +23,7 @@ from ..ratelimit import guard_write
 from ..auth import require_key, require_reader
 from ..seed import seed_data, PERSONNEL, STATION_ORIGINS
 from ..conditions import set_delta_t
+from .. import incident_lifecycle as lifecycle
 from ..demo import load_demo_season
 
 # Reads are gated at the router, so a route added later inherits the gate
@@ -43,8 +44,10 @@ def operational_counts():
     counts = {t: db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
               for t in OPERATIONAL_TABLES}
     counts['events'] = db.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+    placeholders = ','.join('?' * len(lifecycle.ACTIVE_STATUSES_SQL))
     counts['open_incidents'] = db.execute(
-        "SELECT COUNT(*) FROM incidents WHERE status = 'open'").fetchone()[0]
+        f'SELECT COUNT(*) FROM incidents WHERE status IN ({placeholders})',
+        lifecycle.ACTIVE_STATUSES_SQL).fetchone()[0]
     return counts
 
 

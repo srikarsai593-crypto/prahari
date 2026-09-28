@@ -40,6 +40,17 @@ export interface FlushResult {
 
 const NOTHING_TO_FLUSH: FlushResult = { flushed: 0, failed: 0, dropped: 0 };
 
+/** Identifier for a queued entry, reused as its Idempotency-Key on replay. */
+export function newEntryId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch { /* insecure context — fall through */ }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    + `-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /**
  * Durable queue for mutations made while the station link is down.
  *
@@ -136,13 +147,56 @@ class OfflineQueue {
     return this.setOffline(on);
   }
 
+  /**
+   * Follow the browser's own view of connectivity.
+   *
+   * Until now the queue was armed only by an explicit blackout or by a fetch
+   * that had already failed — so the first write after a real outage was
+   * always spent discovering it, and an operator who pulled the network cable
+   * saw the console carry on as though nothing had happened.
+   *
+   * `navigator.onLine` is a weak signal in one direction and a strong one in
+   * the other: false reliably means there is no network, while true only
+   * means an interface is up and says nothing about whether the station is
+   * reachable. So going offline is trusted and acted on immediately; coming
+   * back only triggers a drain, and the drain itself is what proves the link.
+   *
+   * A deliberate blackout is never lifted by this. An operator holding the
+   * link down for a demonstration should not be overruled by the browser
+   * noticing that wifi is fine.
+   */
+  watchBrowserConnectivity(): () => void {
+    if (typeof window === 'undefined') return () => {};
+
+    const goOffline = () => { if (!this._isOffline) void this.setOffline(true); };
+    const goOnline = () => {
+      if (this._blackout) return;
+      void this.setOffline(false);
+    };
+
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    // The page may have loaded while already disconnected, in which case
+    // neither event will ever fire.
+    if (navigator.onLine === false) goOffline();
+
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+    };
+  }
+
   enqueue(url: string, options: RequestInit, description: string) {
     if (this.queue.length >= MAX_QUEUE_LENGTH) {
       console.warn('Offline queue full — dropping oldest entry');
       this.queue.shift();
     }
     this.queue.push({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      // The idempotency key the replay will carry, so it must be unique
+      // across consoles and across reloads rather than merely unlikely to
+      // collide. crypto.randomUUID where available; the fallback keeps the
+      // queue working in an insecure context or an old browser.
+      id: newEntryId(),
       url,
       method: (options.method || 'POST').toUpperCase(),
       body: typeof options.body === 'string' ? options.body : undefined,
@@ -183,7 +237,11 @@ class OfflineQueue {
         try {
           const response = await fetch(req.url, {
             method: req.method,
-            headers,
+            // The entry's own id, stable for the life of the entry, so the
+            // station can tell a retry from a second intent. The case this
+            // covers is a write it received and acted on whose response never
+            // came back: without a key, replaying it issues the stock twice.
+            headers: { ...headers, 'Idempotency-Key': req.id },
             // The session cookie rides on this. Without it every replay is
             // anonymous, and a 401 in the branch below would discard the
             // operator's offline work as "permanently rejected".

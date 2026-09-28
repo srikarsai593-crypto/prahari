@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from typing import Optional
 from ..database import get_db
-from ..events import log_event
+from ..events import log_event, verify_chain, head_hash
 from ..ratelimit import guard_write
 from ..auth import require_key, require_reader
 from ..models import Station, SyncReportRequest
@@ -57,6 +57,29 @@ def list_events(module: str = None,
                 pass
         result.append(d)
     return result
+
+@router.get('/verify')
+def verify_audit_chain():
+    """Recompute the audit chain and report where, if anywhere, it breaks.
+
+    The console's claim is that every action is on the record. This is what
+    turns that from an assurance into something a sceptic can check in front
+    of you: each row commits to the one before it, so an edited or deleted
+    entry is arithmetic, not opinion.
+
+    Declared here rather than inferred: it is tamper-*evident*, not
+    tamper-proof. Whoever can write the database file can recompute the whole
+    chain; what this catches is a row changed or dropped in place.
+    """
+    result = verify_chain()
+    return {
+        **result,
+        'head': result.get('head') or head_hash(),
+        'guarantee': 'tamper-evident: an altered or removed entry breaks every '
+                     'link after it. Not tamper-proof — a writer with database '
+                     'access could recompute the chain.',
+    }
+
 
 # There is deliberately no general-purpose POST here. The audit log is written
 # by the modules that own each action, never by the browser: a client-writable

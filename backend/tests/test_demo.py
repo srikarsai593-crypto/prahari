@@ -91,6 +91,16 @@ class TestTheSeasonIsOperationallyPlausible:
         detail = seasoned.json('get', f'/incidents/{incident["id"]}')
         assert detail['sop_tasks'] and all(t['done'] for t in detail['sop_tasks'])
 
+    def test_a_temperature_controlled_crate_carries_its_history(self, seasoned):
+        """A crate back inside its band reads as fine unless the excursion
+        it had in transit is still on the record — which is the case an
+        operator most needs to see on arrival."""
+        board = seasoned.json('get', '/shipments?station=Maitri')
+        medical = next(s for s in board if s['item_name'] == 'Medical Supplies')
+        assert medical['cold_chain']['monitored'] is True
+        assert medical['cold_chain']['state'] == 'within'
+        assert medical['cold_chain']['excursion_count'] == 1
+
     def test_maitri_carries_a_standing_blizzard_load(self, seasoned):
         """Otherwise the depletion formula is visibly multiplying by one."""
         current = seasoned.json('get', '/shipments/delta-t/current')['stations']

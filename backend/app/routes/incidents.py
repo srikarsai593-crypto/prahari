@@ -4,7 +4,8 @@ from ..database import get_db
 from typing import Optional
 
 from ..models import (IncidentCreate, IncidentUpdateRequest, AssetUpdateRequest,
-                      AssetDeployRequest, IncidentTaskRequest, PowerFailureRequest, Station)
+                      AssetDeployRequest, IncidentTaskRequest, PowerFailureRequest, Station,
+                      IncidentType)
 from ..seed import STATION_ORIGINS
 from ..events import log_event
 from ..ws_manager import manager
@@ -12,6 +13,7 @@ from ..geo import haversine_distance
 from ..ratelimit import guard_write
 from ..auth import require_key, require_reader
 from ..timeutil import utc_now_iso, to_utc_iso
+from .. import incident_lifecycle as lifecycle
 
 # Reads are gated at the router, so a route added later inherits the gate
 # instead of quietly shipping open. PRAHARI_PUBLIC_READS opens them again.
@@ -95,6 +97,26 @@ def _sop_tasks(db, incident_id: str, incident_type: str) -> list[dict]:
             for r in rows]
 
 
+def _with_stage(row) -> dict:
+    """An incident plus what its stage means and whether it is still live.
+
+    The word alone does not tell an operator that `contained` is not `closed`,
+    and every console would otherwise have to keep its own copy of that.
+    """
+    d = dict(row)
+    d['created_at'] = to_utc_iso(d.get('created_at'))
+    for field in ('acknowledged_at', 'responding_at', 'contained_at', 'resolved_at'):
+        if field in d:
+            d[field] = to_utc_iso(d[field])
+    d['status'] = lifecycle.normalise(d.get('status'))
+    d['is_active'] = lifecycle.is_active(d['status'])
+    d['stage_description'] = lifecycle.DESCRIPTIONS.get(d['status'])
+    d['next_stages'] = [stage for stage in lifecycle.LIFECYCLE
+                        if lifecycle.can_transition(d['status'], stage)[0]
+                        and stage != d['status']]
+    return d
+
+
 def _within_station(station: str, lat, lng) -> bool:
     origin = STATION_ORIGINS.get(station)
     if origin is None or lat is None or lng is None:
@@ -119,13 +141,120 @@ def _owning_station(lat, lng) -> str | None:
     return nearest if nearest_distance <= STATION_RESPONSE_RADIUS_M else None
 
 
-def get_nearby_assets(db, lat: float, lng: float, limit: int = 10) -> list:
-    """Assets ranked by great-circle distance. Coordinates come from the DB."""
+# How much each factor is worth when ranking a callout. Distance dominates,
+# because on the ice it usually should — but not to the exclusion of
+# everything else, which is what ranking by distance alone amounted to.
+ASSET_WEIGHTS = {
+    'proximity': 0.45,
+    'fuel': 0.20,
+    'reach': 0.20,      # can it get there and back on what it has
+    'medic': 0.15,
+}
+
+# Beyond this an asset is far enough that the difference between 60 km and
+# 70 km stops mattering to the ranking.
+FAR_M = 50_000
+
+# At or above this, an asset is simply fuelled and gets full marks. Ranking
+# 82% below 100% for a short callout is a distinction without a difference.
+COMFORTABLE_FUEL = 0.5
+
+
+def score_asset(asset: dict, distance_m: float, *, needs_medic: bool) -> dict:
+    """How suitable this asset is for this callout, and why.
+
+    Distance alone sent the nearest snowcat to a casualty while a helicopter
+    with a medic aboard sat eight minutes further out — and it ranked a
+    vehicle on a quarter tank above one that was fuelled and ten metres
+    behind it.
+
+    Every component is returned alongside the score. A commander overruling a
+    ranking needs to see what it was weighing, and a number with no workings
+    is one nobody should act on during an emergency.
+    """
+    proximity = max(0.0, 1.0 - min(distance_m, FAR_M) / FAR_M)
+    fuel_pct = asset.get('fuel_pct')
+    raw_fuel = (float(fuel_pct) / 100) if fuel_pct is not None else 0.5
+    # Reserve, not tank level. Above the comfortable mark there is nothing to
+    # choose between 82% and 100% for a two-kilometre callout, and scoring
+    # them apart ranked a full sled 1.3 km away above the snowcat parked
+    # outside. Below it, every point matters. Whether the fuel is enough for
+    # *this* trip is a separate question, answered by `reach`.
+    fuel = min(1.0, raw_fuel / COMFORTABLE_FUEL)
+
+    # Range is what it can do on a full tank, so the distance it can actually
+    # cover now is that scaled by what is in it. Doubled because the asset has
+    # to come back, which is the half of the trip a range figure omits.
+    range_km = float(asset.get('range_km') or 0)
+    reachable_km = range_km * raw_fuel
+    needed_km = (distance_m / 1000) * 2
+    if range_km <= 0:
+        # Static kit — a medical cache does not travel. Not unreachable, just
+        # not scored on reach.
+        reach = 0.0
+        out_of_range = distance_m > 0
+    else:
+        reach = 1.0 if needed_km <= reachable_km else max(0.0, reachable_km / max(needed_km, 1))
+        out_of_range = needed_km > reachable_km
+
+    medic = 1.0 if asset.get('medic_aboard') else 0.0
+    weights = dict(ASSET_WEIGHTS)
+    if not needs_medic:
+        # On a fire or a structural callout a medic aboard is not the
+        # deciding factor; redistributing keeps the score comparable across
+        # incident types instead of capping non-medical responses at 0.85.
+        weights['proximity'] += weights.pop('medic')
+        medic = 0.0
+
+    score = (weights.get('proximity', 0) * proximity
+             + weights['fuel'] * fuel
+             + weights['reach'] * reach
+             + weights.get('medic', 0) * medic)
+
+    eta_minutes = None
+    speed = float(asset.get('speed_kmh') or 0)
+    if speed > 0:
+        eta_minutes = round((distance_m / 1000) / speed * 60)
+
+    reasons = []
+    if asset.get('medic_aboard') and needs_medic:
+        reasons.append('medic aboard')
+    if out_of_range and range_km > 0:
+        reasons.append(f'beyond its round-trip range on {fuel_pct:g}% fuel')
+    elif range_km <= 0 and distance_m > 0:
+        reasons.append('static kit — cannot travel to the scene')
+    if raw_fuel < 0.35:
+        reasons.append(f'low fuel ({fuel_pct:g}%)')
+
+    return {
+        'suitability': round(score, 3),
+        'eta_minutes': eta_minutes,
+        'out_of_range': out_of_range,
+        'factors': {'proximity': round(proximity, 3), 'fuel': round(fuel, 3),
+                    'reach': round(reach, 3), 'medic': medic},
+        'notes': reasons,
+    }
+
+
+def get_nearby_assets(db, lat: float, lng: float, limit: int = 10,
+                      incident_type: str = None) -> list:
+    """Assets ranked by how suitable they are, not only by how near they are.
+
+    `distance_m` is still reported and still the largest single factor — a
+    commander reads it first and should be able to. What changed is that it
+    is no longer the only one.
+    """
+    needs_medic = incident_type in ('medical', 'structural', None)
     rows = db.execute("SELECT * FROM emergency_assets WHERE status != 'unavailable'").fetchall()
-    results = [{**dict(r), 'updated_at': to_utc_iso(r['updated_at']),
-                'distance_m': round(haversine_distance(lat, lng, r['lat'], r['lng']))}
-               for r in rows]
-    results.sort(key=lambda x: x['distance_m'])
+    results = []
+    for r in rows:
+        asset = {**dict(r), 'updated_at': to_utc_iso(r['updated_at'])}
+        asset['distance_m'] = round(haversine_distance(lat, lng, r['lat'], r['lng']))
+        asset.update(score_asset(asset, asset['distance_m'], needs_medic=needs_medic))
+        results.append(asset)
+    # Best first; distance breaks a tie, because between two equally suitable
+    # assets the nearer one is the answer.
+    results.sort(key=lambda x: (-x['suitability'], x['distance_m']))
     return results[:limit]
 
 
@@ -167,7 +296,12 @@ def list_incidents(status: str = None,
     db = get_db()
     query = 'SELECT * FROM incidents'
     params = []
-    if status:
+    if status == 'open':
+        # The legacy filter, and still the useful question: everything a
+        # commander has not finished with, whatever stage it reached.
+        query += f' WHERE status IN ({",".join("?" * len(lifecycle.ACTIVE_STATUSES_SQL))})'
+        params.extend(lifecycle.ACTIVE_STATUSES_SQL)
+    elif status:
         query += ' WHERE status = ?'
         params.append(status)
     query += ' ORDER BY created_at DESC LIMIT ?'
@@ -177,7 +311,7 @@ def list_incidents(status: str = None,
         rows = [r for r in rows
                 if (r['station'] == station if r['station']
                     else _within_station(station, r['location_lat'], r['location_lng']))]
-    return [{**dict(r), 'created_at': to_utc_iso(r['created_at'])} for r in rows]
+    return [_with_stage(r) for r in rows]
 
 
 # NOTE: static sub-routes MUST be declared before /{incident_id}, otherwise
@@ -231,8 +365,16 @@ async def simulate_power_failure(body: PowerFailureRequest = PowerFailureRequest
 
 @router.get('/nearby-assets/search')
 def search_nearby_assets(lat: float = Query(ge=-90, le=90),
-                         lng: float = Query(ge=-180, le=180)):
-    return get_nearby_assets(get_db(), lat, lng)
+                         lng: float = Query(ge=-180, le=180),
+                         incident_type: Optional[IncidentType] = None):
+    """Assets ranked for a callout at this position.
+
+    `incident_type` decides whether a medic aboard counts. On a fuel fire it
+    is not what makes one snowcat better than another, and weighting it
+    anyway would rank a medical cache above the vehicle that can actually
+    get there.
+    """
+    return get_nearby_assets(get_db(), lat, lng, incident_type=incident_type)
 
 
 @router.get('/assets')
@@ -286,7 +428,7 @@ async def dispatch_asset(asset_id: str, body: AssetDeployRequest):
                               (body.incident_id,)).fetchone()
         if not incident:
             raise HTTPException(status_code=404, detail='Incident not found')
-        if incident['status'] != 'open':
+        if not lifecycle.is_active(incident['status']):
             raise HTTPException(status_code=409,
                                 detail='That incident is closed - nothing to deploy to.')
         if row['status'] == 'unavailable':
@@ -305,6 +447,13 @@ async def dispatch_asset(asset_id: str, body: AssetDeployRequest):
                    'lat = ?, lng = ?, updated_at = ? WHERE id = ?',
                    ('deployed', body.incident_id, incident['location_lat'],
                     incident['location_lng'], now, asset_id))
+        # Committing an asset *is* responding. Leaving the stage at
+        # 'declared' while a snowcat is on the ice would make the lifecycle a
+        # dropdown nobody remembers to update rather than a record of what
+        # happened.
+        if lifecycle.rank(incident['status']) < lifecycle.rank(lifecycle.RESPONDING):
+            db.execute('UPDATE incidents SET status = ?, responding_at = ? WHERE id = ?',
+                       (lifecycle.RESPONDING, now, body.incident_id))
         db.commit()
         label = str(incident['type']).replace('_', ' ')
         await log_event('emergency',
@@ -380,13 +529,15 @@ def get_incident(incident_id: str):
     row = db.execute('SELECT * FROM incidents WHERE id = ?', (incident_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail='Incident not found')
-    d = dict(row)
-    d['created_at'] = to_utc_iso(d['created_at'])
+    d = _with_stage(row)
     expected, safe, unaccounted, personnel = compute_accountability(
         db, d['location_lat'], d['location_lng'], d['affected_radius_m'])
     d.update({'expected_count': expected, 'confirmed_safe_count': safe,
               'unaccounted_count': unaccounted, 'personnel_in_zone': personnel,
-              'nearby_assets': get_nearby_assets(db, d['location_lat'], d['location_lng']),
+              # Ranked for *this* incident's type: a medic aboard decides a
+              # medical callout and is beside the point on a fuel fire.
+              'nearby_assets': get_nearby_assets(db, d['location_lat'], d['location_lng'],
+                                                 incident_type=d['type']),
               'sop_tasks': _sop_tasks(db, incident_id, d['type'])})
     return d
 
@@ -404,7 +555,8 @@ async def create_incident(data: IncidentCreate):
         'severity, status, expected_count, confirmed_safe_count, unaccounted_count, station, '
         'created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (inc_id, data.type, data.location_lat, data.location_lng, data.affected_radius_m,
-         data.severity, 'open', expected, safe, unaccounted, station, utc_now_iso())
+         data.severity, lifecycle.DECLARED, expected, safe, unaccounted, station,
+         utc_now_iso())
     )
     db.commit()
 
@@ -422,7 +574,8 @@ async def create_incident(data: IncidentCreate):
                                       'confirmed_safe': safe, 'unaccounted': unaccounted,
                                       'personnel': personnel_list}})
 
-    return {'id': inc_id, 'status': 'open', 'station': station, 'expected_count': expected,
+    return {'id': inc_id, 'status': lifecycle.DECLARED, 'station': station,
+            'expected_count': expected,
             'confirmed_safe_count': safe, 'unaccounted_count': unaccounted,
             'personnel_in_zone': personnel_list, **data.model_dump()}
 
@@ -438,7 +591,13 @@ async def update_incident(incident_id: str, body: IncidentUpdateRequest):
         raise HTTPException(status_code=422,
                             detail='Send at least one of status, severity or affected_radius_m.')
 
-    if body.status == 'resolved' and (row['unaccounted_count'] or 0) > 0:
+    target = lifecycle.normalise(body.status)
+    if target is not None:
+        allowed, why = lifecycle.can_transition(row['status'], target)
+        if not allowed:
+            raise HTTPException(status_code=409, detail=why)
+
+    if target == lifecycle.RESOLVED and (row['unaccounted_count'] or 0) > 0:
         # Closing an incident while people are still unaccounted for is exactly
         # the failure this module exists to prevent.
         raise HTTPException(
@@ -448,7 +607,7 @@ async def update_incident(incident_id: str, body: IncidentUpdateRequest):
         )
 
     label = str(row['type']).replace('_', ' ')
-    status = body.status or row['status']
+    status = target or lifecycle.normalise(row['status'])
     severity = body.severity or row['severity']
     radius = body.affected_radius_m if body.affected_radius_m is not None \
         else row['affected_radius_m']
@@ -473,13 +632,27 @@ async def update_incident(incident_id: str, body: IncidentUpdateRequest):
 
     db.execute('UPDATE incidents SET status = ?, severity = ?, affected_radius_m = ? '
                'WHERE id = ?', (status, severity, radius, incident_id))
+    # Stamp the moment the stage was entered. Every stage the response passed
+    # through keeps its own timestamp, so a debrief can say how long the
+    # station took to acknowledge and how long to get moving — which is the
+    # question asked after every callout and the one a single status column
+    # could never answer.
+    stage_column = lifecycle.STAGE_TIMESTAMP.get(status)
+    if stage_column and status != lifecycle.normalise(row['status']):
+        db.execute(f'UPDATE incidents SET {stage_column} = ? WHERE id = ?',
+                   (utc_now_iso(), incident_id))
     db.commit()
 
-    if body.status is not None and status != row['status']:
-        action = (f'Incident {incident_id} ({label}) resolved - everyone accounted for'
-                  if status == 'resolved'
-                  else f'Incident {incident_id} ({label}) reopened')
-        await log_event('emergency', action, 'commander', incident_id, station=row['station'])
+    if target is not None and status != lifecycle.normalise(row['status']):
+        if status == lifecycle.RESOLVED:
+            action = f'Incident {incident_id} ({label}) resolved - everyone accounted for'
+        elif lifecycle.normalise(row['status']) == lifecycle.RESOLVED:
+            action = f'Incident {incident_id} ({label}) reopened - back to responding'
+        else:
+            action = (f'Incident {incident_id} ({label}) '
+                      f'{lifecycle.normalise(row["status"])} -> {status}')
+        await log_event('emergency', action, 'commander', incident_id,
+                        {'stage': status}, station=row['station'])
     if notes:
         await log_event('emergency',
                         f'Incident {incident_id} ({label}) updated: {"; ".join(notes)}',
@@ -494,7 +667,7 @@ async def update_incident(incident_id: str, body: IncidentUpdateRequest):
     if accountability:
         await manager.broadcast({'type': 'accountability_update',
                                  'data': {'incident_id': incident_id, **accountability}})
-    if escalated_to_critical and status == 'open':
+    if escalated_to_critical and lifecycle.is_active(status):
         # A critical escalation is not a card update: it is the thing that puts
         # the full-width red banner on every console in the station.
         await manager.broadcast({'type': 'alert',
