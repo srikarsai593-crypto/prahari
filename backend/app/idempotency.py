@@ -23,6 +23,12 @@ Deliberately scoped:
   would make a transient station failure permanent for that entry.
 * **The key is scoped to the method and path**, so the same key arriving at a
   different endpoint is a client bug rather than a cache hit.
+* **Sign-in is excluded.** Only the status and body are recorded, not the
+  response headers — replaying a login would therefore answer
+  `{"authenticated": true}` with no `Set-Cookie`, leaving the console
+  convinced it had signed in and holding no session. Nothing sends a key to
+  `/auth` today, because only the offline queue sends keys and sign-in is
+  never queued; this is here so that stays true if that changes.
 """
 
 import json
@@ -35,6 +41,9 @@ from .database import get_db
 RETENTION_SECONDS = 14 * 24 * 3600
 
 MUTATING_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
+
+# Paths whose response is more than its body. See the note above.
+EXCLUDED_PREFIXES = ('/auth',)
 HEADER = 'idempotency-key'
 # A key is an opaque client token. Cap it so a hostile client cannot use the
 # table as storage.
@@ -77,7 +86,9 @@ async def replay_guard(request, call_next):
     from starlette.responses import Response
 
     key = (request.headers.get(HEADER) or '').strip()
-    if request.method not in MUTATING_METHODS or not key:
+    if (request.method not in MUTATING_METHODS
+            or not key
+            or request.url.path.startswith(EXCLUDED_PREFIXES)):
         return await call_next(request)
     if len(key) > MAX_KEY_LENGTH:
         return Response(

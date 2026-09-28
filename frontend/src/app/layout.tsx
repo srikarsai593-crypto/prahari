@@ -50,6 +50,11 @@ export const metadata: Metadata = {
     'Offline-first logistics and safety command centre for Indian polar research stations. '
     + 'Expedition planning, cargo tracking, inventory depletion, personnel routing and '
     + 'emergency accountability in one console.',
+  // Installable: with the offline cache already in place, a console pinned to
+  // a station laptop's home screen opens without a browser chrome and works
+  // through an outage. The manifest is the only thing that was missing.
+  manifest: '/manifest.webmanifest',
+  appleWebApp: { capable: true, title: 'PRAHARI', statusBarStyle: 'black-translucent' },
 };
 
 export const viewport: Viewport = {

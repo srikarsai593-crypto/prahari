@@ -100,6 +100,24 @@ class TestItStaysOutOfTheWay:
         assert response.status_code == 400
 
 
+class TestSignInIsExcluded:
+    def test_a_replayed_login_still_issues_a_session(self, station):
+        """Only the status and body are recorded, not the headers. A replayed
+        login would otherwise answer `authenticated: true` with no Set-Cookie
+        and leave the console convinced it had signed in holding no session.
+        """
+        from app.auth import get_expected_key
+        body = {'key': get_expected_key()}
+
+        first = station.client.post('/auth/login', headers=_key('login'), json=body)
+        station.client.cookies.clear()
+        second = station.client.post('/auth/login', headers=_key('login'), json=body)
+
+        assert first.status_code == second.status_code == 200
+        assert 'set-cookie' in {h.lower() for h in second.headers}
+        assert second.headers.get('Idempotent-Replay') is None
+
+
 class TestFailuresAreNotRemembered:
     def test_a_rejected_write_can_be_retried_with_the_same_key(self, station):
         """Replaying a refusal back at the client would make a transient

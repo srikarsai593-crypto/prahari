@@ -165,6 +165,19 @@ class TestObservedBurnRate:
         assert traced_station.queries.matching('from events') <= 1, (
             'the observed burn rate is re-reading the audit log per stock row')
 
+    def test_the_log_read_is_bounded_by_the_observation_window(self, traced_station):
+        """Reading every inventory event the station has ever logged and
+        discarding the old ones in Python is a full scan that grows for the
+        life of the station — on the page an operator refreshes most."""
+        traced_station.queries.reset()
+        traced_station.get('/inventory?station=Maitri')
+
+        reads = [s for s in traced_station.queries.statements
+                 if 'from events' in s.lower()]
+        assert reads, 'expected the observed rate to read the log'
+        assert all('created_at >=' in s for s in reads), (
+            'the observation window is being applied after the read, not in SQL')
+
     def test_the_alerts_endpoint_still_never_touches_the_log(self, traced_station):
         """Alerts answer "which rows are in alert" and must stay off the log
         even now that a sibling endpoint reads it."""

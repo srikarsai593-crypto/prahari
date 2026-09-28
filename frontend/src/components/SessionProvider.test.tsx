@@ -13,12 +13,16 @@ import type { SessionState } from '@/lib/types';
  */
 
 const signedOut: SessionState = {
-  authenticated: false, actor: null, via: null,
+  authenticated: false, actor: null, role: null, via: null, can_write: false,
+  observer_enabled: false,
   public_reads: false, demo_key_enabled: true, demo_key: 'prahari-demo-2026',
   server_time: '2026-09-27T10:00:00.000Z',
 };
 const signedIn: SessionState = { ...signedOut, authenticated: true, actor: 'commander',
-                                 via: 'session' };
+                                 role: 'commander', can_write: true, via: 'session' };
+const observing: SessionState = { ...signedOut, authenticated: true, actor: 'observer',
+                                  role: 'observer', can_write: false, via: 'session',
+                                  observer_enabled: true };
 
 function Console() {
   const { authenticated, state } = useSession();
@@ -144,6 +148,88 @@ describe('signing in', () => {
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
     expect(screen.queryByText(/public demo key/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('observer access', () => {
+  const offering: SessionState = { ...signedOut, observer_enabled: true };
+
+  it('is not offered where the station does not allow it', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(signedOut);
+    renderGate();
+    await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /enter as observer/i }))
+      .not.toBeInTheDocument();
+  });
+
+  it('opens a read-only console without the key', async () => {
+    /** Someone handed the link is otherwise met by a key prompt and a
+     *  console correctly refusing to show them anything. */
+    vi.spyOn(api, 'session').mockResolvedValueOnce(offering).mockResolvedValue(observing);
+    vi.spyOn(api, 'enterAsObserver').mockResolvedValue({
+      authenticated: true, actor: 'observer', role: 'observer', can_write: false,
+    });
+    renderGate();
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: /enter as observer/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: /enter as observer/i }));
+
+    await waitFor(() => expect(screen.getByText('console for observer')).toBeInTheDocument());
+    expect(api.enterAsObserver).toHaveBeenCalled();
+  });
+
+  it('says plainly that it changes nothing', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(offering);
+    renderGate();
+    await waitFor(() => expect(screen.getByText(/read-only/i)).toBeInTheDocument());
+    expect(screen.getByText(/change nothing/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a station that refuses rather than hanging', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(offering);
+    vi.spyOn(api, 'enterAsObserver')
+      .mockRejectedValue(new Error('This station does not offer observer access.'));
+    renderGate();
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: /enter as observer/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: /enter as observer/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/does not offer observer/i);
+  });
+});
+
+describe('what a session may do', () => {
+  function Permissions() {
+    const { canWrite, isObserver } = useSession();
+    return <p>{`write=${canWrite} observer=${isObserver}`}</p>;
+  }
+  const renderPermissions = () => render(
+    <SessionProvider><Permissions /></SessionProvider>,
+  );
+
+  it('reports a commander as able to write', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(signedIn);
+    renderPermissions();
+    await waitFor(() => expect(
+      screen.getByText('write=true observer=false')).toBeInTheDocument());
+  });
+
+  it('reports an observer as signed in and unable to write', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(observing);
+    renderPermissions();
+    await waitFor(() => expect(
+      screen.getByText('write=false observer=true')).toBeInTheDocument());
+  });
+
+  it('assumes it may not write until the station has answered', async () => {
+    /** A console that has not heard back must not offer a control the
+     *  station is going to refuse. */
+    vi.spyOn(api, 'session').mockRejectedValue(new Error('unreachable'));
+    renderPermissions();
+    await waitFor(() => expect(
+      screen.getByText('write=false observer=false')).toBeInTheDocument());
   });
 });
 

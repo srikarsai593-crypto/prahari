@@ -152,6 +152,10 @@ export const api = {
   login: (key: string) =>
     request<{ authenticated: boolean; actor: string; expires_at: number }>(
       `${BASE}/auth/login`, jsonOptions('POST', { key }), 'sign in'),
+  /** Take a read-only session without the key, where the station offers one. */
+  enterAsObserver: () =>
+    request<{ authenticated: boolean; actor: string; role: string; can_write: boolean }>(
+      `${BASE}/auth/observer`, jsonOptions('POST'), 'enter as observer'),
   logout: () =>
     request<{ authenticated: boolean }>(`${BASE}/auth/logout`, jsonOptions('POST'), 'sign out'),
 

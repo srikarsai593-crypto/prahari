@@ -22,7 +22,13 @@ interface SessionContextValue {
    *  screen at an operator who is already signed in. */
   ready: boolean;
   authenticated: boolean;
+  /** Whether this session may change the station's record. An observer is
+   *  signed in and cannot write; the console asks this before offering any
+   *  control that would be refused. */
+  canWrite: boolean;
+  isObserver: boolean;
   signIn: (key: string) => Promise<void>;
+  enterAsObserver: () => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -31,7 +37,10 @@ const SessionContext = createContext<SessionContextValue>({
   state: null,
   ready: false,
   authenticated: false,
+  canWrite: false,
+  isObserver: false,
   signIn: async () => {},
+  enterAsObserver: async () => {},
   signOut: async () => {},
   refresh: async () => {},
 });
@@ -62,6 +71,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   }, [refresh]);
 
+  const enterAsObserver = useCallback(async () => {
+    await api.enterAsObserver();
+    await refresh();
+  }, [refresh]);
+
   const signOut = useCallback(async () => {
     try {
       await api.logout();
@@ -86,10 +100,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     state,
     ready,
     authenticated: state?.authenticated ?? false,
+    // Defaults to false: a console that has not heard back must not offer a
+    // control the station is going to refuse.
+    canWrite: state?.can_write ?? false,
+    isObserver: state?.role === 'observer',
     signIn,
+    enterAsObserver,
     signOut,
     refresh,
-  }), [state, ready, signIn, signOut, refresh]);
+  }), [state, ready, signIn, enterAsObserver, signOut, refresh]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

@@ -573,7 +573,8 @@ async def score_feasibility(req: FeasibilityRequest, log: bool = True,
                         station=req.station)
 
     return FeasibilityResponse(items=items, readiness_score=readiness_score,
-                               readiness_breakdown=breakdown)
+                               readiness_breakdown=breakdown,
+                               readiness_weights=READINESS_WEIGHTS)
 
 
 @router.post('/{expedition_id}/rescore', dependencies=[Depends(require_key), Depends(guard_write)])

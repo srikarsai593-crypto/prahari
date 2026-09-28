@@ -35,12 +35,27 @@ const MAX_TILES = 600;
 
 const OFFLINE_FALLBACK = '/';
 
+/**
+ * Every module route, precached on install.
+ *
+ * Falling back to `/` for any route would serve the dashboard's shell under
+ * a `/cargo` URL — the router then hydrates the wrong page while the address
+ * bar says otherwise, which is a worse answer than an error. The route list
+ * is fixed and small, so each one gets its own shell and an operator who has
+ * never opened Cargo online still gets Cargo offline.
+ */
+const ROUTES = [
+  '/', '/expedition', '/cargo', '/inventory', '/personnel', '/emergency', '/scenario',
+];
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(SHELL_CACHE)
-      .then((cache) => cache.addAll([OFFLINE_FALLBACK]))
-      // A failed precache must not leave the worker uninstalled for ever;
-      // runtime caching will pick the shell up on the first navigation.
+      // Individually, not addAll: one route failing to precache must not
+      // discard the other six.
+      .then((cache) => Promise.all(
+        ROUTES.map((route) => cache.add(route).catch(() => undefined)),
+      ))
       .catch(() => undefined)
       .then(() => self.skipWaiting()),
   );
@@ -111,7 +126,10 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.origin === self.location.origin
-      && (url.pathname.startsWith('/_next/static/') || url.pathname.startsWith('/fonts/'))) {
+      && (url.pathname.startsWith('/_next/static/')
+          || url.pathname.startsWith('/fonts/')
+          || url.pathname === '/manifest.webmanifest'
+          || url.pathname === '/icon.svg')) {
     event.respondWith(cacheFirst(request, ASSET_CACHE));
     return;
   }

@@ -7,6 +7,7 @@ import {
 import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
+import { ReadinessBreakdown } from '@/components/ReadinessBreakdown';
 import { useStation } from '@/components/StationProvider';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { STATIONS } from '@/lib/stations';
@@ -508,6 +509,14 @@ export default function ExpeditionPage() {
                   {item.resupply && <ResupplyPanel resupply={item.resupply} />}
                 </div>
               ))}
+
+              {/* The line items say what is short. They do not say what is
+                  holding the number down — a traverse can be 62% ready with
+                  nothing flagged, and the commander authorising it should be
+                  able to see which factor cost the points. */}
+              <div className="mt-3 pt-3 border-t border-black/10">
+                <ReadinessBreakdown result={feasibility} />
+              </div>
             </div>
           )}
 

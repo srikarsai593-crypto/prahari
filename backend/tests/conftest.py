@@ -50,7 +50,8 @@ def clean_rate_limits():
 def clean_credentials(monkeypatch):
     """Run against a station with no key configured, whatever the developer's
     own .env says. Tests that need a configured key set one explicitly."""
-    for name in ('PRAHARI_API_KEY', 'PRAHARI_COMMANDER_KEY', 'PRAHARI_SESSION_SECRET'):
+    for name in ('PRAHARI_API_KEY', 'PRAHARI_COMMANDER_KEY', 'PRAHARI_SESSION_SECRET',
+                 'PRAHARI_ALLOW_OBSERVER', 'PRAHARI_PUBLIC_READS'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('PRAHARI_ALLOW_DEMO_KEY', 'true')
 

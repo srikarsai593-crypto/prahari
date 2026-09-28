@@ -11,8 +11,9 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from ..auth import (DEMO_KEY, SESSION_COOKIE, SESSION_TTL_SECONDS, get_expected_key,
-                    identify, issue_session, reads_are_public, require_commander)
+from ..auth import (COMMANDER, DEMO_KEY, OBSERVER, SESSION_COOKIE, SESSION_TTL_SECONDS,
+                    get_expected_key, identify, issue_session, observer_enabled,
+                    reads_are_public, require_identity)
 from ..events import log_event
 from ..models import LoginRequest
 from ..ratelimit import guard_login, login_attempts
@@ -57,8 +58,16 @@ def read_session_state(request: Request):
     return {
         'authenticated': identity is not None,
         'actor': identity.get('sub') if identity else None,
+        'role': identity.get('role') if identity else None,
         'via': identity.get('via') if identity else None,
+        # What this caller may actually do. The console reads this rather than
+        # inferring it from the role name, so adding a role later does not
+        # mean hunting for every place the browser guessed at permissions.
+        'can_write': bool(identity) and identity.get('role') != OBSERVER,
         'public_reads': reads_are_public(),
+        # Whether this station will hand out a read-only session without the
+        # key, so the sign-in screen knows whether to offer the button.
+        'observer_enabled': observer_enabled(),
         # So the sign-in screen can offer the demo key rather than making
         # someone go and find it. Sent only when it is genuinely the active
         # key, in which case it is public by definition - it is printed in the
@@ -100,8 +109,47 @@ async def login(request: Request, response: Response, body: LoginRequest):
     return {'authenticated': True, 'actor': 'commander', 'expires_at': expires_at}
 
 
-@router.post('/logout', dependencies=[Depends(require_commander)])
-async def logout(response: Response):
+@router.post('/observer')
+async def enter_as_observer(request: Request, response: Response):
+    """Take a read-only session without the commander key.
+
+    Someone handed the link — an evaluator, a visiting scientist, anyone who
+    should see the station without being able to change it — otherwise meets
+    a key prompt and a console that is, correctly, refusing to show them
+    anything. This is the middle ground: a real, expiring, named session that
+    can read everything and write nothing, and that the audit log can
+    attribute.
+
+    Off unless PRAHARI_ALLOW_OBSERVER is set, because the roster carries live
+    positions for people in the field and whether that is shareable is a
+    decision for whoever runs the station, not a default.
+    """
+    if not observer_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='This station does not offer observer access. Sign in with the '
+                   'commander key, or set PRAHARI_ALLOW_OBSERVER=true on the backend '
+                   'to open a read-only view.')
+
+    token, expires_at = issue_session(actor=OBSERVER, role=OBSERVER)
+    _set_session_cookie(request, response, token)
+    await log_event('system', 'Observer opened a read-only view of the station console',
+                    OBSERVER)
+    return {'authenticated': True, 'actor': OBSERVER, 'role': OBSERVER,
+            'can_write': False, 'expires_at': expires_at}
+
+
+@router.post('/logout', dependencies=[Depends(require_identity)])
+async def logout(request: Request, response: Response):
+    """Any signed-in caller can sign out.
+
+    Gated on identity rather than on write access: an observer who could not
+    end their own session would be stuck in a read-only console with no way
+    back to the sign-in screen.
+    """
+    identity = identify(request) or {}
+    actor = identity.get('sub') or COMMANDER
     response.delete_cookie(SESSION_COOKIE, path='/')
-    await log_event('system', 'Commander signed out of the station console', 'commander')
+    await log_event('system', f'{actor.capitalize()} signed out of the station console',
+                    actor)
     return {'authenticated': False}

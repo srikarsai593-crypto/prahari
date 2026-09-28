@@ -103,13 +103,23 @@ def observed_burn_rates(db, station: str, *, now=None,
     """
     from .timeutil import utc_now
 
+    from datetime import timedelta
+
     now = now or utc_now()
     since = now.timestamp() - window_days * 86400
 
+    # The window is applied in SQL, not after the fact. Reading every
+    # inventory event the station has ever logged and discarding the old ones
+    # in Python is a full scan that grows for the life of the station — on
+    # every listing of the store, which is the page an operator refreshes
+    # most. `created_at` is ISO-8601 with a fixed-width UTC offset, so it
+    # sorts lexicographically in the same order as it does chronologically
+    # and a string comparison is a correct bound.
+    cutoff = (now - timedelta(days=window_days)).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
     rows = db.execute(
         "SELECT metadata, created_at FROM events "
         "WHERE module = 'inventory' AND station = ? AND metadata IS NOT NULL "
-        'ORDER BY seq ASC', (station,)).fetchall()
+        'AND created_at >= ? ORDER BY seq ASC', (station, cutoff)).fetchall()
 
     observed: dict[str, dict] = {}
     for row in rows:

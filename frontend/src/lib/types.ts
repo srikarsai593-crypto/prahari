@@ -46,10 +46,19 @@ export interface Telemetry {
  *  The console never holds the commander key - only whether it currently has a
  *  valid session. The key is exchanged once at sign-in for an httpOnly cookie
  *  that page script cannot read. */
+export type StationRole = 'commander' | 'observer';
+
 export interface SessionState {
   authenticated: boolean;
   actor: string | null;
+  role: StationRole | null;
   via: 'session' | 'api_key' | null;
+  /** What this caller may do. Read this rather than inferring it from the
+   *  role name — adding a role later must not mean hunting for every place
+   *  the browser guessed at permissions. */
+  can_write: boolean;
+  /** Whether this station hands out read-only sessions without the key. */
+  observer_enabled: boolean;
   /** True on a kiosk deployment where reads are served anonymously. */
   public_reads: boolean;
   /** So the sign-in screen can offer the demo key where it is in use. */
@@ -505,6 +514,9 @@ export interface FeasibilityResult {
   items: FeasibilityLineItem[];
   readiness_score: number;
   readiness_breakdown: Record<string, number>;
+  /** The weights the breakdown was combined with, so the console can show
+   *  contributions without keeping a second copy that would drift. */
+  readiness_weights?: Record<string, number>;
 }
 
 export type ToastType = 'success' | 'warning' | 'alert' | 'info';

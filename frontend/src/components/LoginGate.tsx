@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { KeyRound, Loader2, ShieldAlert } from 'lucide-react';
+import { Eye, KeyRound, Loader2, ShieldAlert } from 'lucide-react';
 import { useSession } from './SessionProvider';
 import { PrahariLogo } from './PrahariLogo';
 
@@ -12,9 +12,10 @@ import { PrahariLogo } from './PrahariLogo';
  * formality over a public page — the data behind it is the reason it is here.
  */
 export function LoginGate({ children }: { children: React.ReactNode }) {
-  const { ready, authenticated, state, signIn } = useSession();
+  const { ready, authenticated, state, signIn, enterAsObserver } = useSession();
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
+  const [observing, setObserving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Reads may be open on a kiosk deployment; there is nothing to gate then.
@@ -33,6 +34,18 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
       setError(cause instanceof Error ? cause.message : 'Sign-in failed.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const observe = async () => {
+    setObserving(true);
+    setError(null);
+    try {
+      await enterAsObserver();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not open a read-only view.');
+    } finally {
+      setObserving(false);
     }
   };
 
@@ -107,6 +120,23 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
                   className="btn-primary w-full mt-5 !py-2.5 tracking-caps uppercase text-13">
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
+
+          {/* Someone handed the link is otherwise met by a key prompt and a
+              console correctly refusing to show them anything. This is the
+              middle ground, and it is a real session rather than an open
+              door: read everything, change nothing. */}
+          {state?.observer_enabled && (
+            <div className="mt-5 pt-4 border-t border-white/10">
+              <button type="button" disabled={observing} onClick={() => void observe()}
+                      className="btn-secondary w-full !py-2.5 text-13">
+                <Eye size={14} aria-hidden="true" />
+                {observing ? 'Opening…' : 'Enter as observer'}
+              </button>
+              <p className="mt-2 text-2xs text-slate-400 leading-relaxed text-center">
+                Read-only. You will see every module and be able to change nothing.
+              </p>
+            </div>
+          )}
 
           {state?.demo_key_enabled && state.demo_key && (
             <div className="mt-5 pt-4 border-t border-white/10">

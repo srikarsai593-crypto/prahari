@@ -1,0 +1,14 @@
+{
+  "name": "PRAHARI — Antarctic Station Operations",
+  "short_name": "PRAHARI",
+  "description": "Station operations console for the Indian Antarctic Programme. Keeps working when the satellite link drops.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

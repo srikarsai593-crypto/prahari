@@ -148,6 +148,52 @@ class TestTheRecordsAreReal:
         assert 'synthetic' in announcement
 
 
+class TestSeedingOnBoot:
+    """A hosted station comes up empty after every deploy, and an empty
+    console is indistinguishable from a broken one."""
+
+    def _boot(self, db_path, monkeypatch, **env):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+        from tests.conftest import Station
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        with TestClient(app) as client:
+            return Station(client).json('get', '/admin/counts')
+
+    def test_an_empty_station_comes_up_with_a_season(
+            self, db_path, offline_llm, monkeypatch):
+        counts = self._boot(db_path, monkeypatch, PRAHARI_SEED_DEMO_ON_BOOT='true')
+        assert counts['shipments'] > 0
+
+    def test_it_stays_off_unless_asked(self, db_path, offline_llm, monkeypatch):
+        """A real station's console must never invent records."""
+        monkeypatch.delenv('PRAHARI_SEED_DEMO_ON_BOOT', raising=False)
+        counts = self._boot(db_path, monkeypatch)
+        assert counts['shipments'] == 0
+
+    def test_a_restart_does_not_plant_a_second_season(
+            self, db_path, offline_llm, monkeypatch):
+        """It fires only on an empty station, so it can never double the
+        board or overwrite what an operator recorded."""
+        first = self._boot(db_path, monkeypatch, PRAHARI_SEED_DEMO_ON_BOOT='true')
+        second = self._boot(db_path, monkeypatch, PRAHARI_SEED_DEMO_ON_BOOT='true')
+        assert second['shipments'] == first['shipments']
+
+    def test_it_leaves_an_operator_s_own_records_alone(
+            self, db_path, offline_llm, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+        from tests.conftest import Station
+        with TestClient(app) as client:
+            Station(client).ship(item_name='Operator Crate')
+
+        counts = self._boot(db_path, monkeypatch, PRAHARI_SEED_DEMO_ON_BOOT='true')
+        assert counts['shipments'] == 1, 'the boot seed planted over a real record'
+
+
 class TestRepeatability:
     def test_a_second_run_does_not_double_the_season(self, seasoned):
         first = seasoned.json('get', '/admin/counts')

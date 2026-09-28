@@ -77,10 +77,49 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
 
 
-def issue_session(actor: str = 'commander', ttl: int = None) -> tuple[str, int]:
-    """Return (token, expiry epoch seconds)."""
+# ── Roles ────────────────────────────────────────────────────────────────
+#
+# Two, not four. A role that grants nothing distinct is a dropdown, and
+# Commander/Logistics/Field would all currently resolve to "may write" —
+# naming them without enforcing them would make the console claim an access
+# model it does not have. What there genuinely is, is the difference between
+# someone who can change the station's record and someone who can only read
+# it, so that is what is modelled and enforced.
+COMMANDER = 'commander'
+OBSERVER = 'observer'
+
+# An observer may read everything a commander can and write nothing. The
+# roster carries live field positions, so this is still a credentialled
+# session rather than an open door — it is just one that cannot act.
+ROLES = (COMMANDER, OBSERVER)
+
+
+def observer_enabled() -> bool:
+    """Whether anyone may take a read-only session without the key.
+
+    Off by default, and deliberately separate from PRAHARI_PUBLIC_READS: that
+    one opens reads to anyone who knows the URL with no session at all. This
+    one issues a real, expiring, named session that the audit log can
+    attribute — which is the difference between "a demo is open" and "reads
+    are unauthenticated".
+    """
+    return os.getenv('PRAHARI_ALLOW_OBSERVER', 'false').lower() in {'1', 'true', 'yes'}
+
+
+def is_observer(identity: dict | None) -> bool:
+    return bool(identity) and identity.get('role') == OBSERVER
+
+
+def issue_session(actor: str = COMMANDER, ttl: int = None,
+                  role: str = None) -> tuple[str, int]:
+    """Return (token, expiry epoch seconds).
+
+    `role` rides inside the signed payload, so it cannot be edited by the
+    holder — an observer cannot promote themselves by changing a cookie.
+    """
+    role = role or (OBSERVER if actor == OBSERVER else COMMANDER)
     expires_at = int(time.time()) + (ttl or SESSION_TTL_SECONDS)
-    payload = _b64(json.dumps({'sub': actor, 'exp': expires_at},
+    payload = _b64(json.dumps({'sub': actor, 'exp': expires_at, 'role': role},
                               separators=(',', ':'), sort_keys=True).encode())
     signature = _b64(hmac.new(_session_secret(), payload.encode(), hashlib.sha256).digest())
     return f'{payload}.{signature}', expires_at
@@ -118,12 +157,15 @@ def identify(request: Request) -> dict | None:
 
     presented = request.headers.get('X-Commander-Key')
     if presented and hmac.compare_digest(presented, expected_key):
-        return {'sub': 'commander', 'via': 'api_key'}
+        return {'sub': COMMANDER, 'role': COMMANDER, 'via': 'api_key'}
 
     for token in (request.cookies.get(SESSION_COOKIE), _bearer(request)):
         claims = read_session(token)
         if claims:
-            return {**claims, 'via': 'session'}
+            # A token issued before roles existed has no claim. It was a
+            # commander session, and defaulting it to observer would sign
+            # working consoles out of their own writes on deploy.
+            return {**claims, 'role': claims.get('role', COMMANDER), 'via': 'session'}
     return None
 
 
@@ -150,6 +192,15 @@ async def require_commander(request: Request) -> dict:
                    'station key was rotated. Reads are unaffected.',
             headers={'WWW-Authenticate': 'Cookie'},
         )
+    if is_observer(identity):
+        # 403, not 401: the caller is who they say they are and signing in
+        # again will not help. The console reads the status to decide whether
+        # to offer a sign-in or explain the limit.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='You are viewing this station as an observer, which is read-only. '
+                   'Sign in with the commander key to change the record.',
+        )
     return identity
 
 
@@ -168,6 +219,23 @@ async def require_reader(request: Request) -> dict | None:
             detail='This station console requires sign-in. The roster carries live positions '
                    'for people in the field, so it is not served anonymously. Set '
                    'PRAHARI_PUBLIC_READS=true to open reads for a kiosk or public demo.',
+            headers={'WWW-Authenticate': 'Cookie'},
+        )
+    return identity
+
+
+async def require_identity(request: Request) -> dict:
+    """Dependency for actions any signed-in caller may take, whatever they may
+    write. Signing out is the case: an observer who could not end their own
+    session would be stuck in a read-only console with no way back."""
+    if get_expected_key() is None:
+        raise _no_key_configured()
+
+    identity = identify(request)
+    if identity is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Not signed in.',
             headers={'WWW-Authenticate': 'Cookie'},
         )
     return identity

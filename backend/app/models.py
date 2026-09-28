@@ -100,6 +100,11 @@ class FeasibilityResponse(BaseModel):
     items: List[FeasibilityLineItem]
     readiness_score: int
     readiness_breakdown: Dict[str, int]
+    # The weights the breakdown was combined with. Returned rather than left
+    # for the console to hardcode: a second copy in the browser drifts from
+    # this one the first time either is tuned, and then the contributions
+    # shown to a commander stop adding up to the score beside them.
+    readiness_weights: Dict[str, float] = Field(default_factory=dict)
 
 class ShipmentCreate(BaseModel):
     """A consignment.

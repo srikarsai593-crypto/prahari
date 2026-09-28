@@ -6,6 +6,13 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
+    # Render polls this to decide whether a deploy came up, and polling it
+    # also keeps a free instance from sleeping — a cold start behind a
+    # satellite-themed demo is the worst possible first impression. /health
+    # reports the security posture rather than a bare 200, so a failing check
+    # says something useful.
+    healthCheckPath: /health
+
     # ── Durability ────────────────────────────────────────────────────────
     # A container filesystem is ephemeral. Without a disk, every deploy and
     # every idle spin-down wipes the station's whole operational record and
@@ -79,6 +86,26 @@ services:
       # URL. Set to "true" only for a kiosk or a deliberately public demo.
       # - key: PRAHARI_PUBLIC_READS
       #   value: "false"
+
+      # ── First impression ────────────────────────────────────────────────
+      # An empty station is indistinguishable from a broken one. With this
+      # set, a backend that comes up holding no consignments plants the
+      # demonstration season itself, so the first person through the link
+      # sees a working console rather than a page of zeroes. It never
+      # overwrites records: it fires only when the station is empty, and the
+      # season is announced in the audit log as synthetic.
+      #
+      # Leave this UNSET on a real station. A console that invents records is
+      # worse than an empty one.
+      - key: PRAHARI_SEED_DEMO_ON_BOOT
+        value: "true"
+
+      # Hands out a read-only session to anyone with the link, so an
+      # evaluator is not met by a key prompt. Observers can read every module
+      # and write nothing; the refusal is a 403 that says so. Unset on a real
+      # station — the roster carries live field positions.
+      - key: PRAHARI_ALLOW_OBSERVER
+        value: "true"
 
       - key: PRAHARI_LOG_LEVEL
         value: INFO

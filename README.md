@@ -62,6 +62,8 @@ module reads the same truth.
 | **Idempotency keys on replay** | The case the offline queue cannot detect on its own is a write the station received and acted on whose response never came back. Without a key, replaying it issues the stock twice. Each queue entry carries its own key for its whole life, so a retry is recognisable as the same intent. |
 | **Five stages, not two** | `open` and `resolved` could not tell an incident nobody had seen apart from one with a snowcat already on the ice, which during a callout is the only difference that matters. Each stage is timestamped as it is entered, so a debrief can say how long acknowledgement and dispatch took. Committing an asset moves the stage by itself — a lifecycle nobody updates is a dropdown, not a record. |
 | **Assets ranked on capability, not just distance** | Distance alone sent the nearest snowcat to a casualty while a helicopter with a medic sat eight minutes further out. Range is judged on the *round trip*, because the asset has to come back. Fuel is scored as reserve rather than tank level: there is nothing to choose between 82% and 100% for a two-kilometre callout. Every component of the score is returned, because a commander overruling a ranking mid-emergency needs to see what it weighed. |
+| **Two roles, because there are two** | Commander/Logistics/Field would all currently resolve to "may write", and naming roles without enforcing them makes the console claim an access model it does not have. What genuinely differs is whether you can change the station's record, so that is what is modelled: an observer reads every module and writes nothing, and the role rides inside the signed session so it cannot be edited by its holder. |
+| **An empty hosted station seeds itself** | A container comes up bare after every deploy, and a page of zeroes is indistinguishable from a backend that is down. `PRAHARI_SEED_DEMO_ON_BOOT` plants the season *only* when the station holds nothing, so it can never overwrite an operator's records — and it is off by default, because a real station's console must never invent them. |
 | **Boundaries per panel, not per page** | A Leaflet tile error used to take the accountability head-count and the resolve button down with the map. During an incident that is the worst possible trade. |
 
 ---
@@ -142,6 +144,13 @@ deploy needs four values. Render prompts for each on a blueprint sync.
 | `PRAHARI_CORS_PROJECT` | Your Vercel project name, e.g. `prahari` — only needed if preview deployments should work too |
 | `PRAHARI_ALLOW_DEMO_KEY` | `false` (already set in the blueprint) |
 
+The blueprint also sets `healthCheckPath: /health`, which is what Render polls
+to decide a deploy came up — and polling it keeps the instance from sleeping,
+so nobody's first visit is a cold start. It sets `PRAHARI_ALLOW_OBSERVER` and
+`PRAHARI_SEED_DEMO_ON_BOOT` too, so a hosted console opens on a populated
+station that a visitor can actually look at. **Unset both for a real
+deployment.**
+
 The blueprint also asks for a **1 GB disk at `/var/data`**, with
 `PRAHARI_DB_PATH=/var/data/prahari.db`. This is the difference between a
 station that remembers what it was told and one that forgets on every deploy.
@@ -218,6 +227,31 @@ queue-and-flush cycle.
 
 ---
 
+## 👁 Observer access
+
+A station that is closed by default is the right posture and the wrong first
+impression: anyone handed the link meets a key prompt and a console correctly
+refusing to show them anything.
+
+`PRAHARI_ALLOW_OBSERVER=true` adds an **Enter as observer** button to the
+sign-in screen. It issues a real, expiring, signed session that can read every
+module and write nothing — a refused write comes back `403` with a sentence
+saying why, and the navigation band carries a standing **READ ONLY** badge so
+nobody discovers the limit only when a control refuses them.
+
+It is deliberately *not* the same switch as `PRAHARI_PUBLIC_READS`. That one
+serves reads to anyone who knows the URL with no session at all; this one
+issues a session the audit log can attribute. Both are off by default, because
+the roster carries live positions for people in the field and whether that is
+shareable is a decision for whoever runs the station.
+
+The role lives inside the signed session payload, so an observer cannot
+promote themselves by editing a cookie, and the `X-Commander-Key` header
+always outranks a browser session — a script is never downgraded by whatever
+the browser last did.
+
+---
+
 ## 🔍 What is measured, and what is not
 
 Prahari runs on a laptop with no sensor network attached. Everything below is
@@ -246,7 +280,7 @@ you which is which is one you cannot act on.
 | Head-counts and accountability | Personnel status, which an operator sets | **Real** — as accurate as the last check-in |
 | Audit chain | SHA-256 over each entry and the one before it | **Real, and tamper-*evident*** — a writer with database access could recompute the whole chain. Not tamper-proof, and `/events/verify` says so in its own response |
 | Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran | **Real**, and the UI never claims AI when a regex did the work |
-| The demonstration season | Synthetic records planted by `/admin/demo-season` | **Synthetic**, and the audit log says so in the entry that creates it |
+| The demonstration season | Synthetic records planted by `/admin/demo-season`, or on boot where `PRAHARI_SEED_DEMO_ON_BOOT` is set and the station is empty | **Synthetic**, and the audit log says so in the entry that creates it |
 
 What Prahari does **not** have, and does not pretend to: a satellite link, a
 meteorological feed, GPS hardware, temperature probes, vehicle telemetry, or a
@@ -331,6 +365,8 @@ next step, and nothing above is a substitute for them.
 | `PRAHARI_API_KEY` | Unset, with `PRAHARI_ALLOW_DEMO_KEY=true`, every write accepts `prahari-demo-2026` — a key published in this README. Set it. (`PRAHARI_COMMANDER_KEY` is read as an alias, because the Render blueprint used that name and a key read under the wrong name protects nothing.) |
 | `PRAHARI_ALLOW_DEMO_KEY` | Defaults to `true`, right for `npm run dev` and wrong for anything with a public hostname. The blueprint sets `false`, so a hosted backend with no key **refuses to boot** rather than coming up open. |
 | `PRAHARI_PUBLIC_READS` | Defaults to `false`. Setting it serves the roster, with live field positions, to anyone who knows the URL. |
+| `PRAHARI_ALLOW_OBSERVER` | Defaults to `false`. Setting it lets anyone with the link take a read-only session — they see the roster, but every write is refused and the session is attributable. Prefer this to `PRAHARI_PUBLIC_READS` for a demo. |
+| `PRAHARI_SEED_DEMO_ON_BOOT` | Defaults to `false`. Setting it plants the demonstration season when the station comes up holding nothing. Leave it unset on a real station: a console that invents records is worse than an empty one. |
 | `PRAHARI_SESSION_SECRET` | Optional. Without it the secret derives from the commander key, which ties session lifetime to key rotation. Set it if you want sessions to survive a rotation. |
 | `PRAHARI_DB_PATH` | Defaults to the application directory, which a hosted deploy replaces wholesale — every restart loses the station's whole operational record. Point it at a mounted disk. |
 | `PRAHARI_CORS_ORIGINS` | Defaults to localhost only, so a hosted console is refused by the browser until this names it. Set it to the console's own URL. |
@@ -354,11 +390,11 @@ pytest
 ```bash
 cd frontend
 npm install
-npm test                 # 168 tests
+npm test                 # 175 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**609 backend tests (~5 s) and 168 frontend tests (~2 s).** No network, no
+**638 backend tests (~5 s) and 175 frontend tests (~2 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -386,6 +422,7 @@ What they cover, and why these things in particular:
 | `test_burn_rate` | What counts as consumption and what does not, and the two ways the measured rate refuses to guess — too few movements, too little elapsed time. |
 | `test_coldchain` | Band breaches in both directions, rate of change catching a failure before the breach, and that a crate which recovered still reports its excursion. |
 | `test_idempotency` | That a replayed write lands once, that two identical writes without keys both land, and that a refusal is not remembered. |
+| `test_observer` | That a read-only session reads everything, writes nothing, cannot promote itself by editing its cookie, and can still sign out. |
 | `test_incident_lifecycle` | The stages, that a response cannot roll backwards, that dispatch advances it, and that the head-count rule survives having five stages instead of two. |
 | `test_asset_ranking` | Each factor in the score, the round-trip range check, and that the ranking follows the incident type. |
 | `test_demo` | The demonstration season: that it reaches every station, is made of real records, does not stack on a second run, leaves the store at its seeded figures, and says it is synthetic. |
@@ -401,7 +438,7 @@ What they cover, and why these things in particular:
 | `useInventory.test.tsx` | The stock-command preview, including that a queued command is never offered as one to confirm. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count. Fifty-three known bugs — a flat criticality rule, bearing by the
+line count. Sixty known bugs — a flat criticality rule, bearing by the
 flat approximation, deviation measured to waypoints, an incident closable over
 a missing person, an unverified session signature, a database back inside the
 container, an audit chain that no longer links, a stocktake counted as
@@ -422,7 +459,7 @@ three more surfaced when this batch was added, one of which was a genuine bug
 — a query listing the five stage names by hand, which counted an incident
 still holding the legacy `open` value as closed.
 CI runs it weekly rather than per-commit: it runs the whole suite once per
-mutation, so it costs roughly fifty-three times a normal run.
+mutation, so it costs roughly sixty times a normal run.
 
 ---
 

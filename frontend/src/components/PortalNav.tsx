@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LogOut, SatelliteDish } from 'lucide-react';
+import { Eye, LogOut, SatelliteDish } from 'lucide-react';
 import { offlineQueue } from '@/lib/offlineQueue';
 import { useEffect, useState } from 'react';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
@@ -20,7 +20,7 @@ import { useToast } from '@/components/Toast';
 export function PortalNav() {
   const pathname = usePathname();
   const { connected } = useWebSocket();
-  const { authenticated, signOut } = useSession();
+  const { authenticated, isObserver, signOut } = useSession();
   const { addToast } = useToast();
   const [pending, setPending] = useState(0);
   const [offline, setOffline] = useState(false);
@@ -139,6 +139,20 @@ export function PortalNav() {
               {blackout ? 'Restore link' : 'Simulate blackout'}
             </span>
           </button>
+
+          {/* Standing, not a toast: an observer needs to know why a control
+              refused them at the moment they press it, which may be twenty
+              minutes after they arrived. */}
+          {isObserver && (
+            <span data-compact
+                  title="Read-only session. Sign in with the commander key to make changes."
+                  className="flex items-center gap-1.5 px-2 py-1 rounded border
+                             border-alert-edge bg-alert-tint text-alert font-mono text-2xs
+                             font-bold tracking-caps uppercase">
+              <Eye size={12} aria-hidden="true" />
+              <span className="hidden lg:inline">Read only</span>
+            </span>
+          )}
 
           {/* A console left signed in on a shared terminal is the other half
               of taking the key out of the bundle.

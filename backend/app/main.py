@@ -66,10 +66,37 @@ def _cors_origin_regex() -> str | None:
     return _project_origin_regex(project) if project else None
 
 
+def _seed_demo_on_boot() -> bool:
+    """Whether an empty station should come up with a season already on it.
+
+    Off by default, because a real station's console must never invent
+    records. On for a hosted demo, where the alternative is that the first
+    person to open the link sees an empty Cargo board and an empty Emergency
+    page and concludes the thing is broken — which is exactly what a bare
+    container does after every deploy.
+
+    It only fires when the station is genuinely empty, so it can never
+    overwrite operational records, and the season announces itself in the
+    audit log as synthetic either way.
+    """
+    return os.getenv('PRAHARI_SEED_DEMO_ON_BOOT', 'false').lower() in {'1', 'true', 'yes'}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     seed_data()
+
+    if _seed_demo_on_boot():
+        from .database import get_db
+        from .demo import load_demo_season
+        existing = get_db().execute('SELECT COUNT(*) FROM shipments').fetchone()[0]
+        if existing:
+            logger.info('Demo season not planted: the station already holds %d '
+                        'consignment(s).', existing)
+        else:
+            created = await load_demo_season()
+            logger.info('Demo season planted on an empty station: %s', created)
 
     # Fail loudly at boot rather than 503-ing on the first write.
     if get_expected_key() is None:
