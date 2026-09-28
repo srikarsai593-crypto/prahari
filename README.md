@@ -421,6 +421,9 @@ next step, and nothing above is a substitute for them.
 | `PRAHARI_ALLOW_OBSERVER` | Defaults to `false`. Setting it lets anyone with the link take a read-only session — they see the roster, but every write is refused and the session is attributable. Prefer this to `PRAHARI_PUBLIC_READS` for a demo. |
 | `PRAHARI_SEED_DEMO_ON_BOOT` | Defaults to `false`. Setting it plants the demonstration season when the station comes up holding nothing. Leave it unset on a real station: a console that invents records is worse than an empty one. |
 | `PRAHARI_SESSION_SECRET` | Optional. Without it the secret derives from the commander key, which ties session lifetime to key rotation. Set it if you want sessions to survive a rotation. |
+| `PRAHARI_SESSION_TTL_SECONDS` | How long a session lasts. Defaults to 12 hours. |
+| `PRAHARI_INSECURE_COOKIES` | Drops the `Secure` flag from the session cookie. **Only** for a local console on plain HTTP with no TLS-terminating proxy in front — setting it on anything public sends the session in the clear. |
+| `PRAHARI_LOG_LEVEL` | Defaults to `INFO`. |
 | `PRAHARI_DB_PATH` | Defaults to the application directory, which a hosted deploy replaces wholesale — every restart loses the station's whole operational record. Point it at a mounted disk. |
 | `PRAHARI_CORS_ORIGINS` | Defaults to localhost only, so a hosted console is refused by the browser until this names it. Set it to the console's own URL. |
 | `PRAHARI_CORS_PROJECT` | Your Vercel project name. Also admits that project's *preview* deployments, whose hostnames change per branch and so cannot be listed exactly. Scoped to your project alone. |
@@ -447,7 +450,7 @@ npm test                 # 186 tests
 npm run test:coverage    # with the floor enforced
 ```
 
-**693 backend tests (~6 s) and 186 frontend tests (~3 s).** No network, no
+**699 backend tests (~6 s) and 186 frontend tests (~3 s).** No network, no
 shared state and no ambient credentials: each backend test gets its own
 throwaway SQLite file, the environment is cleared so a developer's own
 `backend/.env` cannot change the result, and the LLM chain is stubbed so every
@@ -494,7 +497,7 @@ What they cover, and why these things in particular:
 | `useInventory.test.tsx` | The stock-command preview, including that a queued command is never offered as one to confirm. |
 
 The suite is checked against deliberate regressions rather than trusted on its
-line count. Sixty-nine known bugs — a flat criticality rule, bearing by the
+line count. Seventy known bugs — a flat criticality rule, bearing by the
 flat approximation, deviation measured to waypoints, an incident closable over
 a missing person, an unverified session signature, a database back inside the
 container, an audit chain that no longer links, a stocktake counted as

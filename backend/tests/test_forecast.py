@@ -211,6 +211,63 @@ class TestThroughTheApi:
         assert fuel['forecast']['available'] is True
         assert fuel['forecast']['p50_days'] > 0
 
+    def test_a_row_with_no_configured_rate_is_still_forecast(self, station):
+        """The regression that matters most, because it is silent.
+
+        The conditions multiplier used to be derived as a ratio of two
+        absolute depletion rates. base_burn_rate appears on both sides, so a
+        row with no configured rate collapsed it to zero and every resampled
+        day became zero — the forecast reported "holds past the horizon in
+        every run" for stock the station was visibly consuming. That is
+        exactly the row a measured figure exists to correct.
+        """
+        from datetime import timedelta
+
+        from app.timeutil import utc_now
+
+        station.db.execute(
+            "UPDATE inventory_items SET base_burn_rate = 0 WHERE id = 'inv-blankets'")
+        station.db.commit()
+
+        for _ in range(MIN_OBSERVED_DAYS + 2):
+            station.json('post', '/inventory/command', json={
+                'transcript': 'Removed 3 thermal blankets',
+                'station': 'Maitri', 'dry_run': False})
+        rows = station.db.execute(
+            "SELECT seq FROM events WHERE module = 'inventory' "
+            'AND metadata LIKE \'%"command"%\' ORDER BY seq ASC').fetchall()
+        now = utc_now()
+        for offset, row in enumerate(rows):
+            when = (now - timedelta(days=offset + 1)).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            station.db.execute('UPDATE events SET created_at = ? WHERE seq = ?',
+                               (when, row['seq']))
+        station.db.commit()
+
+        blankets = next(i for i in station.json(
+            'get', '/inventory/stockout-risk?station=Maitri')['items']
+            if i['id'] == 'inv-blankets')
+
+        # The straight-line figure says "never depletes", because that is
+        # what a zero configured rate means. The measured one must not agree.
+        assert blankets['days_of_cover'] >= 9999
+        assert blankets['forecast']['available'] is True
+        assert blankets['forecast']['mean_daily'] > 0, \
+            'observed consumption was zeroed out by the configured rate'
+        assert blankets['forecast']['p50_days'] is not None, \
+            'a row being consumed forecast as lasting for ever'
+
+    def test_the_multiplier_tracks_conditions_not_the_configured_rate(self, station):
+        """Two rows consuming identically must scale identically, whatever
+        their configured rates happen to say."""
+        from app.routes.inventory import compute_depletion
+
+        lean = compute_depletion({'quantity': 100, 'base_burn_rate': 0, 'beta': 0.15,
+                                  'name': 'Diesel Fuel', 'category': 'consumable'}, 20, 1.5)
+        rich = compute_depletion({'quantity': 100, 'base_burn_rate': 900, 'beta': 0.15,
+                                  'name': 'Diesel Fuel', 'category': 'consumable'}, 20, 1.5)
+        assert lean['headcount_factor'] == rich['headcount_factor']
+        assert lean['beta'] == rich['beta']
+
     def test_it_answers_whether_stock_reaches_a_given_horizon(self, station):
         result = station.json(
             'get', '/inventory/stockout-risk?station=Maitri&until_days=30')

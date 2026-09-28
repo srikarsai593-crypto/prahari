@@ -240,6 +240,12 @@ MUTATIONS: list[Mutation] = [
              '            remaining -= rng.choice(days)\n'
              '            if remaining <= 0:\n'
              '                exhausted_on.append(day)'),
+    Mutation('the conditions multiplier is a ratio of absolute rates again',
+             'app/routes/inventory.py',
+             "        weather = max(0.1, 1 + (depletion['beta'] or 0) * delta_t)\n"
+             "        multiplier = weather * (depletion['headcount_factor'] or 1.0)",
+             "        base = compute_depletion(item, 0, 1.0)['depletion_rate'] or 1\n"
+             "        multiplier = (depletion['depletion_rate'] / base) if base else 1.0"),
     Mutation('the forecast is reseeded on every call',
              'app/forecast.py',
              '    rng = random.Random(seed if seed is not None else _stable_seed(quantity, days))',

@@ -372,12 +372,19 @@ def stockout_risk(station: Station, until_days: float = Query(default=None, gt=0
         item = dict(row)
         daily = series.get(item['id'], {})
         # The history was recorded under whatever conditions held then; the
-        # forecast is asked about now. Scale the samples by the ratio of the
-        # two multipliers so a blizzard raises the projected burn without
-        # pretending it was already in the observations.
+        # forecast is asked about now. Scale the samples by the conditions
+        # themselves — the weather multiplier and the crew factor.
+        #
+        # Not by the ratio of two absolute depletion rates, which is what
+        # this was. That ratio has base_burn_rate on both sides, so a row
+        # with no configured rate collapsed it to zero and the forecast
+        # reported "holds past the horizon in every run" for stock the
+        # station was demonstrably consuming. That is the exact row the
+        # measured figure exists to correct, and it was the one row where
+        # the forecast deferred to the configured rate completely.
         depletion = compute_depletion(item, delta_t, factor)
-        base = compute_depletion(item, 0, 1.0)['depletion_rate'] or 1
-        multiplier = (depletion['depletion_rate'] / base) if base else 1.0
+        weather = max(0.1, 1 + (depletion['beta'] or 0) * delta_t)
+        multiplier = weather * (depletion['headcount_factor'] or 1.0)
 
         forecast = stockout_forecast(
             quantity=float(item['quantity'] or 0), daily_consumption=daily,
