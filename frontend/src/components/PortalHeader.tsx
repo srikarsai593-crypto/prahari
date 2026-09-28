@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { Headphones } from 'lucide-react';
+import { Headphones, Sun, Moon, SunMoon, Thermometer } from 'lucide-react';
 import { Coordinate } from '@/components/Coordinate';
 import { PrahariLogo } from '@/components/PrahariLogo';
 import { useStation } from '@/components/StationProvider';
 import { useStationConditions } from '@/lib/useStationConditions';
 import { StationSwitcher } from '@/components/StationSwitcher';
 import { MobileNav } from '@/components/MobileNav';
+import { polarDaylight, seasonalNormal } from '@/lib/stations';
 
 /**
  * Tier 2 — the station identity header.
@@ -28,6 +29,33 @@ export function PortalHeader() {
   const hasBlizzard = deltaT !== null && deltaT > 0;
   const ambientTone = !hasBlizzard ? 'text-nominal'
     : deltaT >= 25 ? 'text-emergency' : 'text-alert';
+
+  // Two survival factors an operator checks before signing off a traverse.
+  //
+  // The lighting cycle is computed from the station's own latitude and today's
+  // date, so it is as real as the coordinates beside it. The effective cold is
+  // the site's published seasonal normal minus the blizzard load the station
+  // is actually carrying — the derivation is named in the tooltip, because a
+  // normal is not a reading and an operator must be able to tell which is
+  // which. There is deliberately no wind speed: Prahari holds none, and a
+  // fabricated one beside live telemetry would be read as measured.
+  const daylight = polarDaylight(station);
+  const daylightBadge = daylight === 'midnight_sun'
+    ? { Icon: Sun, label: '24H MIDNIGHT SUN',
+        tone: 'text-alert border-alert-edge bg-alert-tint',
+        title: `The sun does not set at ${station.label} at this time of year` }
+    : daylight === 'polar_night'
+      ? { Icon: Moon, label: 'POLAR NIGHT',
+          tone: 'text-arctic-100 border-navy-panel bg-navy',
+          title: `The sun does not rise at ${station.label} at this time of year` }
+      : { Icon: SunMoon, label: 'DIURNAL CYCLE',
+          tone: 'text-frost-muted border-frost-border bg-frost-subtle',
+          title: `${station.label} is currently getting a normal day/night cycle` };
+
+  const normal = seasonalNormal(station);
+  const effective = normal - (deltaT ?? 0);
+  const effectiveTone = effective <= -40 ? 'text-emergency'
+    : effective <= -25 ? 'text-alert' : 'text-arctic-900';
 
   return (
     <div className="bg-white border-b border-frost-border">
@@ -77,6 +105,25 @@ export function PortalHeader() {
             <div className={`metric text-15 mt-0.5 whitespace-nowrap ${ambientTone}`}>
               {deltaT === null ? 'No reading'
                 : hasBlizzard ? `Blizzard ΔT +${deltaT.toFixed(1)}°C` : 'Nominal · ΔT 0.0°C'}
+            </div>
+            <div className="flex items-center justify-end gap-1.5 mt-1.5">
+              <span title={daylightBadge.title}
+                    className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5
+                                font-mono text-2xs font-semibold tracking-caps
+                                ${daylightBadge.tone}`}>
+                <daylightBadge.Icon size={10} aria-hidden="true" />
+                {daylightBadge.label}
+              </span>
+              <span title={`${station.label} seasonal normal ${normal}°C, less the `
+                           + `${(deltaT ?? 0).toFixed(1)}°C blizzard load the station is `
+                           + 'carrying. A published normal, not a sensor reading — Prahari '
+                           + 'has no met feed.'}
+                    className={`inline-flex items-center gap-1 rounded border
+                                border-frost-border bg-frost-subtle px-1.5 py-0.5 font-mono
+                                text-2xs font-semibold tracking-caps ${effectiveTone}`}>
+                <Thermometer size={10} aria-hidden="true" />
+                {effective.toFixed(0)}°C EFFECTIVE
+              </span>
             </div>
           </div>
 

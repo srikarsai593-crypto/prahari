@@ -15,6 +15,7 @@ export function MobileNav() {
   const { connected } = useWebSocket();
   const [pending, setPending] = useState(0);
   const [offline, setOffline] = useState(false);
+  const [blackout, setBlackout] = useState(false);
   const links = [...NAV_LINKS, SCENARIO_LINK];
 
   // Navigating away must close the drawer — otherwise it stays open over the
@@ -27,6 +28,7 @@ export function MobileNav() {
   useEffect(() => {
     const sync = () => {
       setOffline(offlineQueue.isOffline);
+      setBlackout(offlineQueue.isBlackout);
       setPending(offlineQueue.pendingCount);
     };
     const unsub = offlineQueue.subscribe(sync);
@@ -34,11 +36,14 @@ export function MobileNav() {
     return unsub;
   }, []);
 
-  const link = offline
-    ? { dot: 'bg-alert-fill', label: `${pending} write(s) queued locally` }
-    : connected
-      ? { dot: 'bg-nominal-fill', label: 'Station link up' }
-      : { dot: 'bg-emergency-fill', label: 'Station link down — reconnecting' };
+  const link = blackout
+    ? { dot: 'bg-alert-fill',
+        label: `Simulated SATCOM blackout — ${pending} write(s) queued locally` }
+    : offline
+      ? { dot: 'bg-alert-fill', label: `${pending} write(s) queued locally` }
+      : connected
+        ? { dot: 'bg-nominal-fill', label: 'Station link up' }
+        : { dot: 'bg-emergency-fill', label: 'Station link down — reconnecting' };
 
   return (
     <div className="md:hidden relative flex items-center gap-2 shrink-0">

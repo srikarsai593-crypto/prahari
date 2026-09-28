@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Siren, RotateCw, Zap, CheckCircle2, Users } from 'lucide-react';
+import { Siren, RotateCw, Zap, CheckCircle2, Users, FileDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
 import { useStation } from '@/components/StationProvider';
@@ -11,6 +11,8 @@ import { MapView } from '@/components/MapView';
 import { PanelBoundary } from '@/components/PanelBoundary';
 import { EventTimeline } from '@/components/EventTimeline';
 import { IncidentResponsePanel } from '@/components/IncidentResponsePanel';
+import { collectDebrief, renderDebrief, debriefFilename, downloadDebrief }
+  from '@/lib/debrief';
 import type { Incident, Accountability, NearbyAsset } from '@/lib/types';
 
 const INCIDENT_TYPES = [
@@ -218,6 +220,24 @@ export default function EmergencyPage() {
     } finally { setBusyId(null); }
   };
 
+  /**
+   * The formal record MoES asks for after a declared emergency.
+   *
+   * Assembled from the station's own records rather than from what this page
+   * is holding — the operator exporting it is usually not the one who ran the
+   * response, and may be doing it days later on a different console.
+   */
+  const handleExportDebrief = async (incident: Incident) => {
+    setBusyId(incident.id);
+    try {
+      const sources = await collectDebrief(incident);
+      downloadDebrief(debriefFilename(incident), renderDebrief(sources));
+      addToast(`MoES debrief exported for ${incident.id}`, 'success');
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Could not build the debrief', 'alert');
+    } finally { setBusyId(null); }
+  };
+
   const handlePowerFailure = async () => {
     try {
       const res = await api.declarePowerFailure(stationId);
@@ -376,6 +396,21 @@ export default function EmergencyPage() {
                         {inc.unaccounted_count ?? 0} unaccounted ·{' '}
                         {inc.confirmed_safe_count ?? 0} safe of {inc.expected_count ?? 0}
                       </p>
+
+                      {resolved && (
+                        <button
+                          type="button"
+                          data-compact
+                          disabled={busyId === inc.id}
+                          title="Download the MoES post-incident debrief for this incident"
+                          onClick={(e) => { e.stopPropagation();
+                                            void handleExportDebrief(inc); }}
+                          className="btn-secondary !min-h-0 !px-2 !py-1 text-2xs w-full mt-2.5"
+                        >
+                          <FileDown size={11} aria-hidden="true" />
+                          {busyId === inc.id ? 'Building…' : 'Export MoES Debrief'}
+                        </button>
+                      )}
 
                       {!resolved && (
                         <div className="flex gap-1.5 mt-2.5">

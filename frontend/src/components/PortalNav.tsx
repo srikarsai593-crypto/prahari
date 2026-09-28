@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LogOut } from 'lucide-react';
+import { LogOut, SatelliteDish } from 'lucide-react';
 import { offlineQueue } from '@/lib/offlineQueue';
 import { useEffect, useState } from 'react';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useSession } from '@/components/SessionProvider';
+import { useToast } from '@/components/Toast';
 
 /**
  * Tier 3 — the primary module navigation band.
@@ -20,31 +21,64 @@ export function PortalNav() {
   const pathname = usePathname();
   const { connected } = useWebSocket();
   const { authenticated, signOut } = useSession();
+  const { addToast } = useToast();
   const [pending, setPending] = useState(0);
   const [offline, setOffline] = useState(false);
+  const [blackout, setBlackout] = useState(false);
+  const [switching, setSwitching] = useState(false);
 
   useEffect(() => {
-    const unsub = offlineQueue.subscribe(() => {
+    const sync = () => {
       setOffline(offlineQueue.isOffline);
+      setBlackout(offlineQueue.isBlackout);
       setPending(offlineQueue.pendingCount);
-    });
-    setOffline(offlineQueue.isOffline);
-    setPending(offlineQueue.pendingCount);
+    };
+    const unsub = offlineQueue.subscribe(sync);
+    sync();
     return unsub;
   }, []);
+
+  /**
+   * Cut the station link, or restore it and replay what was written while it
+   * was down. The claim this console makes is that an outage costs an operator
+   * nothing, and until now there was no way to make it true in front of anyone
+   * — you had to pull the network cable and hope.
+   */
+  const toggleBlackout = async () => {
+    setSwitching(true);
+    try {
+      if (offlineQueue.isBlackout) {
+        const held = offlineQueue.pendingCount;
+        const { flushed, dropped } = await offlineQueue.setBlackout(false);
+        addToast(
+          held === 0
+            ? 'SATCOM restored — nothing was written while the link was down'
+            : `SATCOM restored — ${flushed} of ${held} queued write(s) replayed`
+              + (dropped ? `, ${dropped} rejected` : ''),
+          dropped ? 'warning' : 'success');
+      } else {
+        await offlineQueue.setBlackout(true);
+        addToast('SATCOM blackout — writes are being held on this console and will '
+          + 'replay when the link returns', 'warning');
+      }
+    } finally { setSwitching(false); }
+  };
 
   // Whether the console can reach the station is not an optional decoration:
   // below xl this was hidden entirely, so an operator on a laptop had no way
   // to tell a live console from one queueing every write locally. The full
   // label collapses to the dot plus a short code, never to nothing.
-  const link = offline
+  const link = blackout
     ? { dot: 'bg-alert-fill', text: 'text-alert-fill',
-        label: `QUEUED: ${pending} PENDING`, short: `Q${pending}` }
-    : connected
-      ? { dot: 'bg-nominal-fill status-badge-glow', text: 'text-nominal-fill',
-          label: 'SATCOM: ONLINE', short: 'ON' }
-      : { dot: 'bg-emergency-fill', text: 'text-emergency-fill',
-          label: 'SATCOM: RECONNECTING', short: 'RECONN' };
+        label: `SATCOM: BLACKOUT (QUEUEING ${pending})`, short: `BLKT ${pending}` }
+    : offline
+      ? { dot: 'bg-alert-fill', text: 'text-alert-fill',
+          label: `QUEUED: ${pending} PENDING`, short: `Q${pending}` }
+      : connected
+        ? { dot: 'bg-nominal-fill status-badge-glow', text: 'text-nominal-fill',
+            label: 'SATCOM: LINK UP', short: 'UP' }
+        : { dot: 'bg-emergency-fill', text: 'text-emergency-fill',
+            label: 'SATCOM: RECONNECTING', short: 'RECONN' };
 
   return (
     <nav className="portal-nav hidden md:block" aria-label="Operational modules">
@@ -79,6 +113,32 @@ export function PortalNav() {
             <span className="xl:hidden">{link.short}</span>
             <span className="sr-only">Station link status: {link.label}</span>
           </div>
+
+          {/* Proving the offline claim needs a way to sever the link on demand.
+              Labelled a simulation everywhere it appears, so the amber badge
+              beside it is never mistaken for a real satellite failure. */}
+          <button
+            type="button"
+            data-compact
+            role="switch"
+            aria-checked={blackout}
+            disabled={switching}
+            onClick={() => void toggleBlackout()}
+            title={blackout
+              ? 'Restore the simulated link and replay everything queued'
+              : 'Simulate losing the satellite link — writes queue on this console'}
+            className={`flex items-center gap-1.5 font-mono text-2xs font-bold tracking-caps
+                        uppercase border rounded px-2 py-1 transition-colors
+                        ${blackout
+                          ? 'border-alert-edge bg-alert-tint text-alert'
+                          : 'border-frost-border text-frost-muted hover:text-arctic-100 '
+                            + 'hover:border-arctic-600'}`}
+          >
+            <SatelliteDish size={12} aria-hidden="true" />
+            <span className="hidden xl:inline">
+              {blackout ? 'Restore link' : 'Simulate blackout'}
+            </span>
+          </button>
 
           {/* A console left signed in on a shared terminal is the other half
               of taking the key out of the bundle. */}
