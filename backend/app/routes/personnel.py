@@ -252,6 +252,18 @@ async def create_movement_plan(data: MovementPlanCreate):
     await log_event('personnel', f'Movement plan created for {person["name"]}: '
                     f'-> {data.destination_name}', 'commander', plan_id,
                     station=person['station'])
+
+    # Authorising a plan moves somebody off the verified head-count, and every
+    # other handler that changes a status says so. This one did not, so the
+    # NOTAM strip's ROSTER figure went stale the moment a traverse was
+    # authorised and stayed stale until the page was reloaded — a console
+    # reporting five of six accounted for while the station held four.
+    await manager.broadcast({'type': 'personnel_update',
+                             'data': {'personnel_id': data.personnel_id,
+                                      'status': 'in_transit',
+                                      'plan_status': 'planned'}})
+    await broadcast_open_incident_accountability(db)
+
     if restricted_hits:
         warning = (f'Authorised route for {person["name"]} crosses restricted zone(s): '
                    f'{", ".join(restricted_hits)}')

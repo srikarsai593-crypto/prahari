@@ -260,3 +260,62 @@ class TestCredentials:
     ])
     def test_every_write_needs_the_key(self, station, method, url, body):
         assert getattr(station.client, method)(url, json=body).status_code == 401
+
+
+class TestTheSeasonShowsEveryStage:
+    """One order at each stage, because each is a different control.
+
+    An unacknowledged order offers "Vendor confirmed", a confirmed one offers
+    "Dispatch as consignment", and a shipped one links to the crate it
+    became. The season planted only the first two, so the third state never
+    appeared on the board and the dispatch control looked like it led nowhere.
+    """
+
+    def _maitri(self, station):
+        station.json('post', '/admin/demo-season', json={})
+        return station.json('get', '/procurement?station=Maitri')
+
+    def test_all_three_stages_are_on_the_board(self, station):
+        by_status = {o['status'] for o in self._maitri(station)}
+        assert {'ordered', 'confirmed', 'shipped'} <= by_status
+
+    def test_the_shipped_one_points_at_a_consignment_that_exists(self, station):
+        shipped = next(o for o in self._maitri(station) if o['status'] == 'shipped')
+
+        assert shipped['shipment_id']
+        crate = station.json('get', f"/shipments/{shipped['shipment_id']}")
+        assert crate['item_name'] == shipped['item_name']
+
+    def test_that_consignment_went_through_the_real_dispatch_path(self, station):
+        """Written straight into the table it would have no barcode and no
+        band, and the one property this table exists to show — that the two
+        legs are a single chain — would be a claim rather than a fact."""
+        shipped = next(o for o in self._maitri(station) if o['status'] == 'shipped')
+        crate = station.json('get', f"/shipments/{shipped['shipment_id']}")
+
+        assert crate['barcode_id'].startswith('SHP-')
+        # Medical cargo carries a cold-chain band; the dispatch path applies it.
+        assert crate['temp_min'] == 2.0 and crate['temp_max'] == 8.0
+        assert crate['inventory_item_id'] == shipped['inventory_item_id']
+
+    def test_the_crate_is_on_the_cargo_board_like_any_other(self, station):
+        shipped = next(o for o in self._maitri(station) if o['status'] == 'shipped')
+        board = station.json('get', '/shipments?station=Maitri')
+
+        assert shipped['shipment_id'] in {c['id'] for c in board}
+
+    def test_the_ordered_one_is_not_seeded_already_late(self, station):
+        """It exists to show the "awaiting the vendor" state, which an overdue
+        order does not — that one shows the chase warning instead."""
+        ordered = next(o for o in self._maitri(station) if o['status'] == 'ordered')
+        assert ordered['is_overdue'] is False
+
+    def test_a_slipped_order_is_still_there_to_show_the_chase_warning(self, station):
+        assert any(o['is_overdue'] for o in self._maitri(station))
+
+    def test_the_confirmed_one_can_still_be_dispatched(self, station):
+        confirmed = next(o for o in self._maitri(station)
+                         if o['status'] == 'confirmed' and not o['is_overdue'])
+        result = station.json('post', f"/procurement/{confirmed['id']}/dispatch",
+                              json={'weight_kg': 8400})
+        assert result['shipment']['barcode_id'].startswith('SHP-')

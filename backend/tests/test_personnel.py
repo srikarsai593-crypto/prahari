@@ -247,3 +247,56 @@ class TestAccountability:
         before = station.scalar('SELECT COUNT(*) FROM events')
         station.get('/personnel/accountability/check?lat=-70.767&lng=11.731&radius=5000')
         assert station.scalar('SELECT COUNT(*) FROM events') == before
+
+
+class TestAuthorisingAPlanAnnouncesItself:
+    """Authorising a traverse moves somebody off the verified head-count.
+
+    The handler updated the status and said nothing, so the NOTAM strip's
+    ROSTER figure went stale the moment a plan was authorised and stayed
+    stale until the page was reloaded. Measured against the running console:
+    it read 5/6 accounted for while the station held 4/6. Every other handler
+    in this router that changes a status broadcasts; this one did not.
+    """
+
+    def _capture(self, monkeypatch):
+        from app import ws_manager
+        sent = []
+
+        async def fake_broadcast(message):
+            sent.append(message)
+
+        monkeypatch.setattr(ws_manager.manager, 'broadcast', fake_broadcast)
+        return sent
+
+    def test_it_broadcasts_that_the_roster_moved(self, station, monkeypatch):
+        sent = self._capture(monkeypatch)
+        person = next(p for p in station.personnel() if p['status'] == 'at_station')
+
+        station.authorise_movement(person["id"])
+
+        assert 'personnel_update' in [m.get('type') for m in sent], \
+            'nothing told the console the head-count changed'
+
+    def test_the_broadcast_names_who_moved_and_where_to(self, station, monkeypatch):
+        sent = self._capture(monkeypatch)
+        person = next(p for p in station.personnel() if p['status'] == 'at_station')
+
+        station.authorise_movement(person["id"])
+
+        update = next(m for m in sent if m.get('type') == 'personnel_update')
+        assert update['data']['personnel_id'] == person['id']
+        assert update['data']['status'] == 'in_transit'
+
+    def test_the_verified_head_count_really_does_change(self, station, monkeypatch):
+        """The reason the broadcast matters, asserted separately from it."""
+        self._capture(monkeypatch)
+        verified = lambda: sum(
+            1 for p in station.personnel()
+            if (p.get('effective_status') or p['status']) in {'at_station', 'returned'})
+
+        before = verified()
+        person = next(p for p in station.personnel() if p['status'] == 'at_station')
+        station.authorise_movement(person["id"])
+
+        assert verified() == before - 1
