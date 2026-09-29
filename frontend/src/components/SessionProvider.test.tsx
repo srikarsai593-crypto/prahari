@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { SessionProvider, useSession } from './SessionProvider';
 import { LoginGate } from './LoginGate';
 import { api, ApiError } from '@/lib/api';
+import { offlineQueue } from '@/lib/offlineQueue';
 import type { SessionState } from '@/lib/types';
 
 /**
@@ -299,5 +300,55 @@ describe('losing the session', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     expect(screen.getByText('console for commander')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The offline queue has no way to reach React context, so the provider pushes
+ * the session's write permission down to the API layer. If that wiring breaks,
+ * nothing fails loudly — an observer simply goes back to having their writes
+ * parked forever during an outage.
+ */
+describe('telling the API layer what this session may do', () => {
+  const queuedWriteDuringOutage = async () => {
+    await offlineQueue.setOffline(true);
+    try {
+      await api.loadDemoSeason();
+      return 'parked';
+    } catch (e) {
+      return e instanceof ApiError && e.status === 403 ? 'refused' : 'other';
+    } finally {
+      await offlineQueue.setOffline(false);
+      offlineQueue.clear();
+    }
+  };
+
+  it('parks an outage write for a commander', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(signedIn);
+    render(<SessionProvider><Console /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText(/console for commander/)).toBeInTheDocument());
+
+    await expect(queuedWriteDuringOutage()).resolves.toBe('parked');
+  });
+
+  it('refuses an outage write for an observer rather than promising to send it', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(observing);
+    render(<SessionProvider><Console /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText(/console for observer/)).toBeInTheDocument());
+
+    await expect(queuedWriteDuringOutage()).resolves.toBe('refused');
+  });
+
+  /**
+   * A console reloaded while the link is already down never hears back from
+   * /auth/session. Refusing a commander's work over that is the worse of the
+   * two failures, so an unknown session is treated as permitted.
+   */
+  it('parks the write when it could not find out who is signed in', async () => {
+    vi.spyOn(api, 'session').mockRejectedValue(new Error('link down'));
+    render(<SessionProvider><Console /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText(/console for nobody/)).toBeInTheDocument());
+
+    await expect(queuedWriteDuringOutage()).resolves.toBe('parked');
   });
 });
