@@ -16,13 +16,13 @@ const ok = () => ({ ok: true, status: 200, text: async () => '{}' });
 beforeEach(async () => {
   await offlineQueue.setOffline(false);
   offlineQueue.clear();
-  setWriteGuard(() => true);
+  setWriteGuard(() => null);
 });
 
 afterEach(async () => {
   await offlineQueue.setOffline(false);
   offlineQueue.clear();
-  setWriteGuard(() => true);
+  setWriteGuard(() => null);
 });
 
 describe('a write made while the station is unreachable', () => {
@@ -43,7 +43,7 @@ describe('a write made while the station is unreachable', () => {
    */
   it('is refused outright for an observer, rather than promised and never sent',
     async () => {
-      setWriteGuard(() => false);
+      setWriteGuard(() => 'You are viewing this station as an observer, which is read-only.');
       await offlineQueue.setOffline(true);
 
       await expect(api.loadDemoSeason()).rejects.toThrow(/observer, which is read-only/i);
@@ -51,7 +51,7 @@ describe('a write made while the station is unreachable', () => {
     });
 
   it('refuses with the status the station itself would have returned', async () => {
-    setWriteGuard(() => false);
+    setWriteGuard(() => 'You are viewing this station as an observer, which is read-only.');
     await offlineQueue.setOffline(true);
 
     await expect(api.loadDemoSeason()).rejects.toMatchObject({
@@ -66,7 +66,7 @@ describe('a write made while the station is unreachable', () => {
    * commander's work over that is the worse of the two failures.
    */
   it('is parked when the console has not been able to ask who is signed in', async () => {
-    setWriteGuard(() => true);   // SessionProvider's reading of `state === null`
+    setWriteGuard(() => null);   // SessionProvider's reading of `state === null`
     await offlineQueue.setOffline(true);
 
     expect(isQueued(await api.loadDemoSeason())).toBe(true);
@@ -84,7 +84,7 @@ describe('a write lost to a network failure rather than a declared outage', () =
 
   it('is refused for an observer on that path too', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection reset')));
-    setWriteGuard(() => false);
+    setWriteGuard(() => 'You are viewing this station as an observer, which is read-only.');
 
     await expect(api.loadDemoSeason()).rejects.toThrow(/observer, which is read-only/i);
     expect(offlineQueue.pendingCount).toBe(0);
@@ -100,7 +100,7 @@ describe('a write the console can actually deliver', () => {
   it('is sent to the station even for an observer, so the station decides', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok());
     vi.stubGlobal('fetch', fetchMock);
-    setWriteGuard(() => false);
+    setWriteGuard(() => 'You are viewing this station as an observer, which is read-only.');
 
     await api.loadDemoSeason();
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -120,7 +120,7 @@ describe('a read', () => {
       ok: true, status: 200, text: async () => '[]',
     });
     vi.stubGlobal('fetch', fetchMock);
-    setWriteGuard(() => false);
+    setWriteGuard(() => 'You are viewing this station as an observer, which is read-only.');
 
     await expect(api.listPersonnel('Maitri')).resolves.toEqual([]);
   });
