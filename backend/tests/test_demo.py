@@ -10,7 +10,7 @@ that a second click does not double it, and that it says what it is.
 
 import pytest
 
-from app.demo import CONSIGNMENTS, EXPEDITIONS, STANDING_DELTA_T
+from app.demo import PURCHASE_ORDERS, CONSIGNMENTS, EXPEDITIONS, STANDING_DELTA_T
 
 STATIONS = ('Maitri', 'Bharati', 'Himadri')
 
@@ -25,9 +25,17 @@ class TestItFillsEveryModule:
     @pytest.mark.parametrize('station_id', STATIONS)
     def test_every_station_has_a_cargo_board(self, seasoned, station_id):
         """The empty board is the failure this exists to fix, and a judge may
-        switch to any of the three."""
-        assert len(seasoned.json('get', f'/shipments?station={station_id}')) == \
-            len(CONSIGNMENTS[station_id])
+        switch to any of the three.
+
+        Counted from both sources rather than from the consignment list
+        alone: an order planted as already shipped becomes a crate through
+        the real dispatch path, so it is on this board too and the arithmetic
+        has to say so."""
+        dispatched_orders = sum(1 for spec in PURCHASE_ORDERS.get(station_id, [])
+                                if spec.get('dispatch'))
+        board = seasoned.json('get', f'/shipments?station={station_id}')
+
+        assert len(board) == len(CONSIGNMENTS[station_id]) + dispatched_orders
 
     @pytest.mark.parametrize('station_id', STATIONS)
     def test_every_station_has_a_traverse_in_planning(self, seasoned, station_id):

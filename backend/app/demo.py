@@ -92,17 +92,38 @@ CONSIGNMENTS = {
 # `promised_in_days` negative backdates the promise, the same drill the
 # overdue convoy uses.
 PURCHASE_ORDERS = {
+    # Maitri carries one order at each stage of the supply leg, because each
+    # stage is a different control on the board: an unacknowledged order
+    # offers "Vendor confirmed", a confirmed one offers "Dispatch as
+    # consignment", and a shipped one links to the crate it became. Planted
+    # with only two of the three, the third state never appeared and the
+    # board looked like it had a button that did nothing.
     'Maitri': [
-        {'vendor': 'Indian Oil Corporation', 'item_name': 'Aviation Turbine Fuel',
-         'category': 'fuel', 'quantity': 12000, 'unit': 'L',
-         'inventory_item_id': 'inv-avtur', 'promised_in_days': -9, 'confirm': True,
-         'notes': 'Second tranche of the season allocation.'},
-        {'vendor': 'HLL Lifecare', 'item_name': 'Medical Supplies',
+        # 1 · Ordered — the vendor has not acknowledged it yet.
+        {'vendor': 'Indian Oil Corporation', 'item_name': 'Diesel Fuel',
+         'category': 'fuel', 'quantity': 18000, 'unit': 'L',
+         'inventory_item_id': 'inv-fuel', 'promised_in_days': 14, 'confirm': False,
+         'notes': 'Winter resupply tranche 1 - awaiting vendor acknowledgement.'},
+        # 2 · Confirmed — acknowledged, not yet dispatched.
+        {'vendor': 'Indian Oil Corporation (IOCL)', 'item_name': 'Aviation Turbine Fuel',
+         'category': 'fuel', 'quantity': 9000, 'unit': 'L',
+         'inventory_item_id': 'inv-avtur', 'promised_in_days': 21, 'confirm': True,
+         'notes': 'Confirmed against the Maitri air bridge allocation.'},
+        # 3 · Shipped — dispatched through the real path, so the consignment
+        #     on the cargo board is an ordinary crate with a barcode, a risk
+        #     score and its cold-chain band, linked both ways.
+        {'vendor': 'Central Government Health Scheme (CGHS)',
+         'item_name': 'Medical Supplies',
          'category': 'medical', 'quantity': 150, 'unit': 'units',
-         'inventory_item_id': 'inv-med', 'promised_in_days': 21, 'confirm': True},
+         'inventory_item_id': 'inv-med', 'promised_in_days': 8, 'confirm': True,
+         'dispatch': True, 'weight_kg': 180,
+         'notes': 'Cold chain 2-8 C. Already on its way.'},
+        # Kept: a slipped order, which is the only way to see the chase
+        # warning at a realistic lead time.
         {'vendor': 'Goa Shipyard Stores', 'item_name': 'Thermal Blankets',
          'category': 'equipment', 'quantity': 60, 'unit': 'units',
-         'inventory_item_id': 'inv-blankets', 'promised_in_days': 40, 'confirm': False},
+         'inventory_item_id': 'inv-blankets', 'promised_in_days': -9, 'confirm': True,
+         'notes': 'Second tranche of the season allocation.'},
     ],
     'Bharati': [
         {'vendor': 'Indian Oil Corporation', 'item_name': 'Diesel Fuel',
@@ -181,13 +202,25 @@ async def _plant_orders(station: str) -> int:
 
     planted = 0
     for spec in PURCHASE_ORDERS.get(station, []):
-        payload = {k: v for k, v in spec.items() if k != 'confirm'}
+        payload = {k: v for k, v in spec.items()
+                   if k not in ('confirm', 'dispatch', 'weight_kg')}
         order = await create_order(PurchaseOrderCreate(
             destination_station=station, **payload))
         # A vendor acknowledgement is its own step, and only a confirmed
         # order can be dispatched — so the board shows both states.
         if spec.get('confirm'):
             await update_order(order['id'], PurchaseOrderUpdate(status='confirmed'))
+        # And the third: an order that has already become a crate. Sent
+        # through the real dispatch path rather than written straight into
+        # the table, so the consignment it produces is an ordinary one —
+        # barcode, risk score, cold-chain band, and the stock row the order
+        # named carried through. An order pointing at a hand-made row would
+        # misrepresent the single property this table exists to show.
+        if spec.get('dispatch'):
+            from .models import PurchaseOrderDispatch
+            from .routes.procurement import dispatch_order
+            await dispatch_order(order['id'], PurchaseOrderDispatch(
+                weight_kg=spec.get('weight_kg')))
         planted += 1
     return planted
 
