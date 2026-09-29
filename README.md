@@ -1,16 +1,96 @@
 <div align="center">
 
 # ❄️ PRAHARI
+
 ### Antarctic Logistics & Safety Intelligence Platform
 
-[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-WAL_Mode-003B57?style=for-the-badge&logo=sqlite)](https://sqlite.org/)
-[![SIH26062](https://img.shields.io/badge/SIH-26062-FF9900?style=for-the-badge&logo=hackaday)](https://sih.gov.in/)
+**An offline-first station command console for Maitri, Bharati and Himadri —
+built to keep working when the satellite does not.**
+
+[![Live console](https://img.shields.io/badge/▶_Live_console-prahari--eta.vercel.app-0369a1?style=for-the-badge)](https://prahari-eta.vercel.app)
+[![API docs](https://img.shields.io/badge/API_docs-OpenAPI-009688?style=for-the-badge&logo=fastapi)](https://prahari-backend-etbj.onrender.com/docs)
+
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python)](https://python.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite)](https://sqlite.org/)
+[![Tests](https://img.shields.io/badge/tests-1190_passing-2ea44f?style=flat-square)](#-tests)
+[![WCAG](https://img.shields.io/badge/WCAG_2.1-AA_enforced_by_test-2ea44f?style=flat-square)](#-high-contrast-display)
+[![SIH26062](https://img.shields.io/badge/SIH-26062-FF9900?style=flat-square&logo=hackaday)](https://sih.gov.in/)
 
 *Built by **Team 36 OURS** for the extreme edge of the world.*
 
 </div>
+
+---
+
+## ▶️ Try it in ninety seconds
+
+**<https://prahari-eta.vercel.app>**
+
+1. Press **Sign in with the public demo key** — one click, no typing. The key
+   is published and the station says so.
+2. Press **▶ Start demo tour** in the hero. Five stops, arrow keys to move,
+   Escape to leave.
+3. Press **Simulate blackout** in the navigation band. The console turns amber
+   and tells you the link is gone.
+4. Change something — the ΔT slider on **Inventory** is the quickest. Watch the
+   counter in the banner climb.
+5. Press **Restore link**. Everything you did while "offline" replays in order,
+   and the toast tells you how much.
+
+That last sequence is the whole thesis: an outage costs an operator nothing.
+Everything else on the page is what makes it worth keeping the station running
+through one.
+
+<div align="center">
+
+![The console with the station link up](docs/images/console-link-up.jpg)
+
+<sub>**Link up.** The navigation band carries the genuine WebSocket state, not
+decoration — `SATCOM: LINK UP` means a socket is open to the station right now.</sub>
+
+</div>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+![The console during a simulated satellite blackout](docs/images/blackout-drill.jpg)
+
+**Link lost — the drill.** Every design token swings to amber, a banner pins
+to the top, and the counter beside it is the real queue depth climbing as you
+work. Labelled **DRILL**, because a console tinted amber under a satellite
+warning is exactly the sort of thing somebody walks past and reports.
+
+</td>
+<td width="50%" valign="top">
+
+![The guided tour spotlighting the universal lookup](docs/images/guided-tour.jpg)
+
+**The guided tour.** Five spotlit stops over the console's best work. The
+highlighted element stays clickable — the tour narrates, it never presses
+anything on your behalf.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📖 Contents
+
+| | |
+|---|---|
+| [The challenge](#-the-challenge-sih26062) · [The solution](#️-the-solution) | What this is and why |
+| [**Architecture**](#️-architecture) | Diagrams — system, cascade, blackout, tickets |
+| [The five modules](#-the-five-modules) | What each one does |
+| [**Quick start**](#-quick-start) · [Deploying](#-deploying) | Running it yourself |
+| [Drills](#-drills) · [Guided tour](#-the-guided-tour) | Exercising the failure paths |
+| [Field mode](#-field-mode) · [HF radio](#-hf-radio--the-rung-below-the-offline-queue) | Away from the desk |
+| [Security model](#-security-model) | Credentials, sessions, tickets |
+| [Tests](#-tests) · [Troubleshooting](#️-troubleshooting) | Verifying a change |
 
 ---
 
@@ -85,6 +165,205 @@ module reads the same truth.
 
 ---
 
+---
+
+## 🏗️ Architecture
+
+Two deployables and one file. The console is a Next.js app on Vercel; the
+station is a FastAPI service on Render holding a SQLite database on a mounted
+disk. Everything a module knows, it reads from the same event log.
+
+```mermaid
+flowchart TB
+    subgraph browser["🖥️  Station console — the operator's browser"]
+        UI["Next.js 16 · React 19<br/>App Router, all client modules"]
+        SW["Service worker<br/>caches shell + map tiles"]
+        Q["Offline queue<br/>localStorage, idempotency-keyed"]
+        UI --- SW
+        UI --- Q
+    end
+
+    subgraph vercel["▲  Vercel"]
+        PROXY["next.config.ts rewrites<br/>/api/* → station<br/><i>same-origin, carries the cookie</i>"]
+    end
+
+    subgraph render["☁️  Render"]
+        API["FastAPI<br/>11 routers"]
+        WS["WebSocket /ws<br/>telemetry fan-out"]
+        CAS["cascade.py<br/>cross-module re-scoring"]
+        API --- CAS
+        CAS --- WS
+    end
+
+    DB[("SQLite · WAL<br/>/var/data/prahari.db<br/><i>mounted disk, survives deploys</i>")]
+    LLM{{"Gemini → Ollama → regex<br/><i>every parse names its source</i>"}}
+
+    UI -->|"REST, httpOnly cookie"| PROXY
+    PROXY --> API
+    UI -.->|"wss + short-lived ticket<br/>(a rewrite cannot proxy an upgrade)"| WS
+    Q -.->|"replays in order<br/>when the link returns"| PROXY
+    API --> DB
+    API -.-> LLM
+
+    classDef edge fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    classDef cloud fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef store fill:#fffbeb,stroke:#b45309,color:#0f172a
+    class UI,SW,Q edge
+    class PROXY,API,WS,CAS cloud
+    class DB,LLM store
+```
+
+**Why the socket takes a different road.** A platform rewrite forwards HTTP but
+will not carry a WebSocket upgrade, so the socket is opened against the station
+directly. The session cookie belongs to the console's host and is therefore
+never sent there — which is why the handshake carries a
+[short-lived ticket](#the-websocket-ticket) instead.
+
+### The cross-module chain
+
+The modules are wired to each other, not merely to the database. This is the
+part no single module owns, and `app/cascade.py` exists because the routers
+already import one another and putting it in any of them closes a cycle.
+
+```mermaid
+flowchart LR
+    W["🌨️ Blizzard ΔT<br/>set on Inventory"] --> C["📦 Cargo risk<br/>re-scored, ETA pushed"]
+    W --> S["🔋 Depletion rate<br/>days_of_cover falls"]
+    C --> E["🗺️ Open traverses<br/>re-scored for feasibility"]
+    S --> E
+    R["👥 Roster change<br/>party arrives / departs"] --> S
+    E --> A{{"⚠️ FEASIBILITY DEGRADED<br/>+ the inbound crate that<br/>would close the gap"}}
+    A --> L[["📜 SUPPLY CHAIN CASCADE<br/>one event, one banner"]]
+    L --> WS(("🛰️ pushed to every<br/>open console"))
+
+    classDef trigger fill:#fffbeb,stroke:#b45309,color:#0f172a
+    classDef effect fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    classDef alarm fill:#fef2f2,stroke:#b91c1c,color:#0f172a
+    class W,R trigger
+    class C,S,E effect
+    class A,L,WS alarm
+```
+
+A traverse that falls below what it was *approved* against raises the alarm and
+offers the consignment that would close the gap, with the hours to wait. The
+card reports the live figure beside the approved one, because a feasibility
+score saved at planning time describes a moment that has passed.
+
+### An outage, end to end
+
+The claim is that an outage costs an operator nothing. This is the mechanism.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as 👤 Operator
+    participant UI as 🖥️ Console
+    participant Q as 📥 Offline queue
+    participant St as 🛰️ Station
+
+    Note over UI,St: Link up — writes go straight through
+    Op->>UI: Adjust stock
+    UI->>St: POST /inventory/command
+    St-->>UI: 200, audit entry written
+
+    Note over UI,St: 🔶 Link lost (drill, or the satellite really goes)
+    UI->>UI: data-blackout on <html> — every token swings amber
+    UI-->>Op: ⚠ SATCOM LINK LOST — Operating on local cache
+
+    Op->>UI: Adjust stock again
+    UI->>Q: enqueue + Idempotency-Key
+    Q-->>Op: counter ticks 1 … 2 … 3
+    Note right of Q: Reads still work — the service<br/>worker holds the shell and tiles
+
+    Note over UI,St: 🟢 Link restored
+    UI->>Q: flush, in order
+    loop each held write
+        Q->>St: replay with its original key
+        St-->>Q: 200 (or recognises a duplicate)
+    end
+    Q->>St: POST /events/sync-report
+    Q-->>Op: ✅ 3 queued changes synced
+```
+
+Order is preserved and the run stops at the first network failure, because a
+later write may depend on an earlier one. A `4xx` that is a verdict on the
+request is dropped with a logged reason; `401`, `403`, `408` and `429` are
+about the *moment*, not the request, so the work waits.
+
+### The WebSocket ticket
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as 🖥️ Browser
+    participant V as ▲ Vercel rewrite
+    participant S as ☁️ Station
+
+    B->>V: POST /api/auth/ws-ticket
+    Note right of B: same-origin, so the<br/>httpOnly cookie rides along
+    V->>S: forwarded with the cookie
+    S-->>B: { ticket, expires_in: 60 }
+
+    B->>S: wss://station/ws?ticket=…
+    Note right of B: direct — a rewrite cannot<br/>carry an upgrade
+    S->>S: verify signature, expiry, use=="ws"
+    S-->>B: 101 Switching Protocols
+    Note over B,S: SATCOM: LINK UP
+```
+
+A ticket rides in a URL, and URLs end up in access logs — so it lives sixty
+seconds, carries a `use` claim that stops it being replayed as a session
+cookie, and carries the holder's role rather than granting one. A fresh one is
+minted per attempt, because a reconnect can be long after the last one.
+
+### Request lifecycle
+
+```mermaid
+flowchart LR
+    A["Operator action"] --> B{"Link up?"}
+    B -->|no| Q["Queue + key<br/><i>counter ticks</i>"]
+    B -->|yes| C{"May this<br/>session write?"}
+    C -->|"observer /<br/>no session"| R["403, in the<br/>station's own words"]
+    C -->|yes| D["Route handler"]
+    D --> E["Write + audit entry<br/><i>hash-chained to the last</i>"]
+    E --> F["cascade.py<br/>re-score what moved"]
+    F --> G["Broadcast to every console"]
+    Q -.->|"link returns"| D
+
+    classDef no fill:#fef2f2,stroke:#b91c1c,color:#0f172a
+    classDef yes fill:#ecfdf5,stroke:#047857,color:#0f172a
+    class R no
+    class E,F,G yes
+```
+
+### Repository layout
+
+```
+prahari/
+├── backend/                     FastAPI · Python 3.11+
+│   ├── app/
+│   │   ├── main.py              app, lifespan, /ws, /health
+│   │   ├── auth.py              keys, signed sessions, WS tickets
+│   │   ├── cascade.py           cross-module re-scoring
+│   │   ├── events.py            hash-chained audit log
+│   │   ├── forecast.py          depletion, stockout bootstrap
+│   │   ├── geo.py               Haversine, cross-track, geofences
+│   │   ├── stock_ledger.py      signed deltas → measured burn rate
+│   │   └── routes/              11 routers
+│   └── tests/                   762 tests
+└── frontend/                    Next.js 16 · React 19
+    └── src/
+        ├── app/                 8 routes (App Router)
+        ├── components/          console UI
+        │   ├── BlackoutBanner   the outage, made visible
+        │   ├── DemoTour         five-stop guided walk
+        │   ├── SignInPanel      shared by the wall and the dialog
+        │   └── WebSocketProvider  telemetry + ticket exchange
+        └── lib/                 queue, geo, palette, handover, HF radio
+```
+
+---
+
 ## 🌌 The five modules
 
 1. **🗺️ Expedition Planning** — Plain-language request → Gemini (→ Ollama → regex)
@@ -134,17 +413,6 @@ module reads the same truth.
    reserve, whether the round trip is within range, and whether a medic is
    aboard, with every component of the score shown.
 
-### The cross-module chain
-
-The modules are wired to each other, not merely to the database. A blizzard ΔT
-re-scores cargo risk and pushes ETAs; delayed consignments and depleted stock
-re-score every open traverse; a traverse that falls below what it was approved
-against raises a `FEASIBILITY DEGRADED` alarm *and* offers the inbound
-consignment that would close the gap, with the hours to wait. The whole chain
-announces itself once as a `SUPPLY CHAIN CASCADE` event and a dashboard banner.
-`app/cascade.py` owns the fan-out; it is a separate module because the routers
-already import one another and putting it in any of them closes a cycle.
-
 ---
 
 ## 🚀 Deploying
@@ -176,13 +444,49 @@ and `disk` blocks and `PRAHARI_DB_PATH` from `render.yaml` and accept that the
 record resets on restart — `POST /admin/demo-season` puts a populated season
 back in one call.
 
-**Vercel** (console): `NEXT_PUBLIC_COMMANDER_KEY` is **no longer used** — the
-console holds no credential. Nothing needs to be set there beyond the backend
-URL your `next.config.ts` rewrites point at.
+**Vercel** (console):
 
-Check `/health` afterwards: it reports whether a real key is configured and
-whether reads are public, so the posture can be confirmed from outside rather
-than remembered.
+| Variable | Value |
+|---|---|
+| `BACKEND_URL` | The station's URL, e.g. `https://prahari-backend.onrender.com`. `next.config.ts` rewrites `/api/*` to it, which is what keeps the console and the API same-origin — and therefore what lets the session cookie work. |
+| `NEXT_PUBLIC_WS_URL` | `wss://<the same host>/ws`. **Required on any hosted deploy**, and the reason is below. |
+| ~~`NEXT_PUBLIC_COMMANDER_KEY`~~ | **No longer used.** The console holds no credential. Delete it if it is still set. |
+
+> [!IMPORTANT]
+> **The socket cannot go through the rewrite.** A Vercel rewrite forwards HTTP
+> but will not carry a WebSocket upgrade — the request arrives at the station
+> as a plain `GET /ws`, which has no HTTP route, and the console reports a link
+> that is from its own point of view down. Point `NEXT_PUBLIC_WS_URL` straight
+> at the backend. The handshake then authenticates with a
+> [short-lived ticket](#the-websocket-ticket) rather than the cookie, which
+> cannot reach another host.
+>
+> If both link indicators read red while every other part of the console works,
+> this is why.
+
+### Confirming a deploy from outside
+
+```bash
+curl -s https://<your-backend>/health | python3 -m json.tool
+```
+
+`/health` reports whether a real key is configured, whether the demo key is
+live and whether reads are public — so the posture can be checked rather than
+remembered. Two more worth knowing:
+
+| Symptom | Cause |
+|---|---|
+| A page of zeroes | The station is empty. `PRAHARI_SEED_DEMO_ON_BOOT=true`, or press **Load demo season** on the dashboard. |
+| A 30–60s wait on first load | A free Render instance has gone to sleep. The health check keeps a paid one warm; on free, open the site a few minutes before anyone else does. |
+
+### The live deployment
+
+| | |
+|---|---|
+| **Console** | <https://prahari-eta.vercel.app> |
+| **Station API** | <https://prahari-backend-etbj.onrender.com> · [`/docs`](https://prahari-backend-etbj.onrender.com/docs) |
+| **Sign-in** | One click — the station runs the published demo key and says so |
+| **Posture** | Demo: writes accepted on a published key, reads gated behind sign-in. Not a configuration to copy for a real station. |
 
 ---
 
@@ -217,10 +521,15 @@ On boot it prints which LLM path is live. Interactive API docs: <http://localhos
 cd frontend && npm install && npm run dev
 ```
 
-**Fonts:** Inter (interface) and JetBrains Mono (coordinates, IDs, timestamps
-and every telemetry figure) are fetched and self-hosted by `next/font` at build
-time, so a running console makes no font request to a CDN — which matters when
-the station link drops. Nothing to install.
+**Fonts:** three faces, self-hosted by `next/font` at build time, so a running
+console makes no request to a CDN — which matters on a link that drops.
+Nothing to install.
+
+| Face | Carries |
+|---|---|
+| **Outfit** | Interface text |
+| **IBM Plex Mono** | Telemetry — coordinates, ΔT, counts. A wider aperture and unambiguous `0`/`O`, `1`/`l` at small sizes, which is what a latitude has to survive |
+| **JetBrains Mono** | IDs and code-like strings |
 
 ### 4. Put something on it
 
@@ -236,11 +545,63 @@ twice, and it announces itself in the audit log as synthetic.
 curl -X POST localhost:8000/admin/demo-season -H 'X-Commander-Key: <your key>'
 ```
 
-### 5. The guided demo
+### 5. Two guided routes
 
-Open <http://localhost:3000/scenario> — a ten-step walkthrough that exercises all
-five modules end to end, including a geofence violation and an offline
-queue-and-flush cycle.
+| | Where | What it does |
+|---|---|---|
+| **▶ Start demo tour** | Dashboard hero | Five spotlit stops over the console's best work, ending on the blackout drill. Narrates only — it never presses anything for you. Arrow keys move, Escape leaves. |
+| **Live Scenario** | `/scenario` | A ten-step walkthrough that *exercises* all five modules end to end against the real backend, including a geofence violation and an offline queue-and-flush cycle. |
+
+The tour is for somebody deciding whether to keep looking. The scenario is for
+somebody who has decided.
+
+---
+
+## 🧭 The guided tour
+
+Somebody handed this link has under a minute, and the console does not lead
+with its best work. The universal lookup looks like a search box. The standing
+alerts look like a notification list rather than the station reasoning from a
+blizzard through to the cargo that will land late and the stock that runs out
+before it arrives. And the one genuinely unusual thing here — surviving a lost
+satellite — was a toggle in the corner of the navigation band that nobody would
+press without being told what it was for.
+
+**▶ Start demo tour**, top-right of the dashboard hero. Five stops:
+
+```mermaid
+flowchart LR
+    S1["1 · One box for<br/>the whole station"] --> S2["2 · It works out the<br/>consequences itself"]
+    S2 --> S3["3 · The watch<br/>changes every day"]
+    S3 --> S4["4 · Now lose<br/>the satellite"]
+    S4 --> S5["5 · See the<br/>whole thing run"]
+
+    classDef step fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    classDef wow fill:#fffbeb,stroke:#b45309,color:#0f172a
+    class S1,S2,S3,S5 step
+    class S4 wow
+```
+
+Ordered so it builds: what the console knows, what it works out for itself,
+what it hands over, what it survives, and where to watch the whole thing run.
+
+Three things it deliberately does **not** do:
+
+* **It does not drive.** No step presses a button, loads data or changes a
+  record on your behalf. The blackout stop explains the drill and leaves the
+  control lit, because a console that runs itself while you watch is a video,
+  and the point is that this one is real. The highlighted element stays
+  clickable for exactly that reason.
+* **It does not navigate.** Every stop is on the dashboard or in the
+  navigation band. A tour that moves between modules waits for each page to
+  fetch before it can find its next anchor, and somebody watching a spinner
+  has stopped reading.
+* **It does not strand you.** A stop whose anchor is not on your screen — the
+  navigation band is hidden below `md` — still shows its card, centred,
+  rather than going blank.
+
+Escape leaves, arrow keys step, clicking the dimmed area leaves (everyone
+tries it), focus moves to the card and returns to the control that opened it.
 
 ---
 
@@ -551,8 +912,29 @@ HF transmitter, or a directory of real emergency contacts.
 
 ## 🧯 Drills
 
-Two switches exist so the failure paths can be exercised without waiting for a
-real failure, and both are honest about what they are:
+Three switches exist so the failure paths can be exercised without waiting for
+a real failure, and each is honest about what it is:
+
+* **🔶 SATCOM blackout** — the one worth watching. `Simulate blackout` in the
+  navigation band (or the drawer, on a handset) severs the link deliberately
+  and holds it down, so the socket's own reconnect cannot overrule the
+  operator. The whole console swings amber, a banner pins to the top, and the
+  counter beside it is the genuine queue depth climbing as you work. Restoring
+  replays everything held, in order, and reports the real figures — including
+  the unflattering ones, because a green tick over work the station refused is
+  worse than no tick.
+
+  It is labelled **DRILL** wherever it appears. A console tinted amber under a
+  satellite warning is exactly the sort of thing somebody walks past and
+  reports as a real failure, and the difference has to be readable from the
+  doorway. The state is deliberately not persisted: coming back to a reloaded
+  page still severed, with no memory of why, is a worse failure than losing
+  the drill.
+
+  It also defers to the high-contrast theme. Somebody using that chose it
+  because they could not read the default, and washing it orange to make a
+  point about connectivity is the console overruling an accessibility need —
+  so there the banner and the frame appear and the palette stays put.
 
 * **Overdue convoy** — a consignment's *Due in (hours)* field accepts a negative
   value, which backdates the ETA. At the nominal fourteen-day sea leg nothing is
@@ -582,6 +964,26 @@ service. Within that shape, it is now closed by default.
 - **`X-Commander-Key` still works** for scripts, the barcode scanner and the
   test suite. A machine caller has nowhere to keep a cookie and no sign-in
   screen to fill in.
+- **The telemetry socket carries a ticket, not the cookie.** A hosted console
+  reaches the station through its own origin, so the session cookie belongs to
+  *that* host; the socket cannot take the same route, because a platform
+  rewrite will not carry a WebSocket upgrade. `POST /auth/ws-ticket` goes over
+  the proxied path — where the cookie does arrive — and returns a credential
+  the handshake can carry in its query string, which is the only place a
+  browser can put one. Because a URL ends up in access logs, the ticket lives
+  **sixty seconds**, carries a `use` claim so it **cannot be replayed as a
+  session cookie** (nor a cookie as a ticket), and carries the holder's role
+  rather than granting one. A fresh one is minted per connection attempt.
+  Same-origin — local development — no ticket is minted at all, because the
+  cookie already works and putting a credential in a URL for no reason is
+  strictly worse.
+- **A read-only session is told so, and refused early.** An observer, or a
+  visitor to a station serving open reads, sees a standing `READ ONLY` badge
+  rather than discovering the limit one refused click at a time. A write
+  attempted during an outage is refused immediately instead of being queued:
+  every replay would hit the same 403, which the queue correctly treats as
+  retryable, so the entry would sit there forever while the console reported
+  the work as safely held.
 - **Sign-in is rate limited** (5 failures/minute/IP). The key is a single
   shared secret, so without a limit it is brute-forceable at network speed.
   Writes are limited an order of magnitude higher, against a runaway client.
@@ -648,13 +1050,13 @@ rather than remembered.
 ```bash
 cd backend
 pip install -r requirements.txt -r requirements-dev.txt
-pytest
+pytest                   # 762 tests
 ```
 
 ```bash
 cd frontend
 npm install
-npm test                 # 364 tests
+npm test                 # 428 tests
 npm run test:coverage    # with the floor enforced
 ```
 
@@ -778,8 +1180,15 @@ console.table([...document.querySelectorAll('body *')].flatMap(el=>{
 }));
 ```
 
-It should print an empty table on every page, in **both** themes. It is how
-four separate defects were found: the toggle's own label came out white on
+It should print an empty table on every page, in **all three** palettes — the
+default, high contrast, and the amber the console swings to during an outage.
+That third one is a palette like any other and is held to the same bar: its
+banner originally ran through amber-600, which carries white text at 3.19:1,
+under a comment claiming 4.8 that nobody had measured. The headline is 14px
+bold, which is not WCAG large text, so the sweep was moved down into a range
+where every stop clears 5:1.
+
+It is how four further defects were found: the toggle's own label came out white on
 its yellow fill; Leaflet's zoom buttons inherited a white foreground onto
 their hardcoded white background; the default palette failed in six places;
 and darkening the muted colour to fix that broke it over the navy footer, in
@@ -805,6 +1214,23 @@ operable; the markup is the library's, not this console's.
   declared before `/{id}` routes in FastAPI.
 - **Windows `zbar` ImportError when scanning** — install the Visual C++
   Redistributable, or use the manual barcode entry field.
+- **Both link badges read red on a hosted deploy** (`SATCOM: RECONNECTING`
+  and `LINK DOWN`) while every other part of the console works — the socket
+  is not reaching the station. A platform rewrite cannot carry a WebSocket
+  upgrade, so `NEXT_PUBLIC_WS_URL` must point *straight* at the backend; and
+  the backend must be new enough to serve `/auth/ws-ticket`, since the cookie
+  cannot travel to another host. Check both:
+
+  ```bash
+  curl -s https://<your-backend>/openapi.json | grep -o '/auth/ws-ticket'
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<console>/api/auth/ws-ticket   # 401 = present
+  ```
+
+- **A dashboard of zeroes** — the station is empty, not broken. Press **Load
+  demo season**, or set `PRAHARI_SEED_DEMO_ON_BOOT=true` so a bare container
+  seeds itself on boot.
+- **The first load takes 30–60 seconds** — a free Render instance has gone to
+  sleep and is cold-starting. `healthCheckPath` keeps a paid instance warm.
 
 ---
 <div align="center">
