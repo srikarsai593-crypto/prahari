@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Eye, LogOut, SatelliteDish } from 'lucide-react';
+import { Eye, LogIn, LogOut, SatelliteDish } from 'lucide-react';
+import { useState } from 'react';
 import { useBlackoutDrill } from '@/lib/useBlackoutDrill';
+import { SignInDialog } from '@/components/SignInDialog';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useSession } from '@/components/SessionProvider';
@@ -18,7 +20,8 @@ import { useSession } from '@/components/SessionProvider';
 export function PortalNav() {
   const pathname = usePathname();
   const { connected } = useWebSocket();
-  const { authenticated, isObserver, signOut } = useSession();
+  const { authenticated, canWrite, isObserver, signOut } = useSession();
+  const [signingIn, setSigningIn] = useState(false);
   const { pending, offline, blackout, switching, toggle } = useBlackoutDrill();
 
   // Whether the console can reach the station is not an optional decoration:
@@ -98,18 +101,44 @@ export function PortalNav() {
             </span>
           </button>
 
-          {/* Standing, not a toast: an observer needs to know why a control
-              refused them at the moment they press it, which may be twenty
-              minutes after they arrived. */}
-          {isObserver && (
+          {/* Standing, not a toast: someone who cannot write needs to know why
+              a control refused them at the moment they press it, which may be
+              twenty minutes after they arrived.
+
+              Keyed on `canWrite` rather than on the observer role. A station
+              serving open reads hands anonymous visitors a console that looks
+              complete and refuses every write, and they are not observers —
+              they have no session at all — so the badge that explains it never
+              appeared for the one group with no way to work out why. */}
+          {!canWrite && (
             <span data-compact
-                  title="Read-only session. Sign in with the commander key to make changes."
+                  title={isObserver
+                    ? 'Read-only session. Sign in with the commander key to make changes.'
+                    : 'Reading without a session. Sign in to make changes.'}
                   className="flex items-center gap-1.5 px-2 py-1 rounded border
                              border-alert-edge bg-alert-tint text-alert font-mono text-2xs
                              font-bold tracking-caps uppercase">
               <Eye size={12} aria-hidden="true" />
               <span className="hidden lg:inline">Read only</span>
             </span>
+          )}
+
+          {/* Where reads are open there is no wall, so this is the only way in.
+              Without it the console shows an anonymous visitor everything and
+              then refuses every control, with nothing on the page to press. */}
+          {!authenticated && (
+            <button
+              type="button"
+              data-compact
+              onClick={() => setSigningIn(true)}
+              title="Sign in with the station commander key"
+              className="flex items-center gap-1.5 text-13 text-slate-300
+                         hover:text-white transition-colors
+                         border-l border-white/15 pl-3"
+            >
+              <LogIn size={13} aria-hidden="true" />
+              <span className="hidden lg:inline">Sign in</span>
+            </button>
           )}
 
           {/* A console left signed in on a shared terminal is the other half
@@ -137,6 +166,8 @@ export function PortalNav() {
           )}
         </div>
       </div>
+
+      <SignInDialog open={signingIn} onClose={() => setSigningIn(false)} />
     </nav>
   );
 }

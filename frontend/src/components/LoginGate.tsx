@@ -1,57 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Eye, KeyRound, Loader2, ShieldAlert } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useSession } from './SessionProvider';
 import { PrahariLogo } from './PrahariLogo';
+import { SignInPanel } from './SignInPanel';
 
 /**
  * Sign-in wall for the console.
  *
  * The roster carries live positions for everyone on the ice, so this is not a
  * formality over a public page — the data behind it is the reason it is here.
+ *
+ * On a station configured for open reads there is no wall, and the console
+ * opens straight onto the dashboard. Signing in is then still possible, from
+ * the navigation band; see `SignInPanel`, which both surfaces share.
  */
 export function LoginGate({ children }: { children: React.ReactNode }) {
-  const { ready, authenticated, state, signIn, enterAsObserver } = useSession();
-  const [key, setKey] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [observing, setObserving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { ready, authenticated, state } = useSession();
 
   // Reads may be open on a kiosk deployment; there is nothing to gate then.
   const gated = !authenticated && !(state?.public_reads ?? false);
-
-  useEffect(() => { if (authenticated) { setKey(''); setError(null); } }, [authenticated]);
-
-  const signInWith = async (candidate: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await signIn(candidate);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Sign-in failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!key.trim()) return setError('Enter the station commander key.');
-    await signInWith(key.trim());
-  };
-
-  const observe = async () => {
-    setObserving(true);
-    setError(null);
-    try {
-      await enterAsObserver();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not open a read-only view.');
-    } finally {
-      setObserving(false);
-    }
-  };
 
   // Hold the first paint until the session probe answers, or an operator who
   // is already signed in sees the login screen flash before their console.
@@ -81,95 +49,7 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <form onSubmit={submit}
-              className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <h2 className="text-base font-bold text-white mb-1">Station sign-in</h2>
-          <p className="text-13 text-slate-300 leading-relaxed mb-5">
-            This console carries live positions for everyone in the field, so it is not
-            served anonymously. Sign in with the station commander key.
-          </p>
-
-          <label htmlFor="commander-key"
-                 className="block font-mono text-2xs uppercase tracking-caps text-slate-400 mb-1.5">
-            Commander key
-          </label>
-          <div className="relative">
-            <KeyRound size={15} aria-hidden="true"
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400
-                                 pointer-events-none" />
-            <input
-              id="commander-key"
-              type="password"
-              value={key}
-              autoFocus
-              autoComplete="current-password"
-              onChange={(event) => { setKey(event.target.value); setError(null); }}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'sign-in-error' : undefined}
-              className="w-full !bg-white/5 !border-white/20 !text-white !pl-10 !py-2.5
-                         placeholder:!text-slate-500 font-mono text-13"
-              placeholder="••••••••••••"
-            />
-          </div>
-
-          {error && (
-            <p id="sign-in-error" role="alert"
-               className="mt-3 flex items-start gap-2 text-2xs text-rose-300">
-              <ShieldAlert size={13} className="shrink-0 mt-0.5" aria-hidden="true" />
-              {error}
-            </p>
-          )}
-
-          <button type="submit" disabled={busy}
-                  className="btn-primary w-full mt-5 !py-2.5 tracking-caps uppercase text-13">
-            {busy ? 'Signing in…' : 'Sign in'}
-          </button>
-
-          {/* Someone handed the link is otherwise met by a key prompt and a
-              console correctly refusing to show them anything. This is the
-              middle ground, and it is a real session rather than an open
-              door: read everything, change nothing. */}
-          {state?.observer_enabled && (
-            <div className="mt-5 pt-4 border-t border-white/10">
-              <button type="button" disabled={observing} onClick={() => void observe()}
-                      className="btn-secondary w-full !py-2.5 text-13">
-                <Eye size={14} aria-hidden="true" />
-                {observing ? 'Opening…' : 'Enter as observer'}
-              </button>
-              <p className="mt-2 text-2xs text-slate-400 leading-relaxed text-center">
-                Read-only. You will see every module and be able to change nothing.
-              </p>
-            </div>
-          )}
-
-          {/*
-            A station running on the published demo key has no secret to
-            protect — the key is printed in the README and this screen has
-            just displayed it. Making somebody copy it into the field above
-            and then press Sign in is two steps of ceremony guarding nothing,
-            and it is the first thing anyone handed the link meets.
-
-            Still the real sign-in: the same POST, the same session cookie,
-            the same audit line. The button skips the typing, not the
-            exchange. It says which key it is using, so nobody is signed in
-            by a control that did not tell them what it did.
-          */}
-          {state?.demo_key_enabled && state.demo_key && (
-            <div className="mt-5 pt-4 border-t border-white/10">
-              <button type="button" disabled={busy}
-                      onClick={() => void signInWith(state.demo_key ?? '')}
-                      className="btn-secondary w-full !py-2.5 text-13">
-                <KeyRound size={14} aria-hidden="true" />
-                Sign in with the public demo key
-              </button>
-              <p className="mt-2 text-2xs text-slate-400 leading-relaxed text-center">
-                This station runs on{' '}
-                <span className="font-mono text-arctic-300">{state.demo_key}</span>, which is
-                published. Full access — every module, and changes are saved.
-              </p>
-            </div>
-          )}
-        </form>
+        <SignInPanel />
 
         <p className="mt-4 text-center text-2xs text-slate-500">
           Offline-first station console · keeps working when the link drops

@@ -39,36 +39,36 @@ export class ApiError extends Error {
 }
 
 /**
- * Whether the signed-in caller may write at all.
+ * Why this caller may not write, or null if they may.
  *
  * Only consulted when a mutation is about to be *queued*. Online, the station
  * answers for itself and its 403 carries the real explanation; there is
  * nothing for the console to second-guess. Offline there is no station to
  * ask, so the console decides on its behalf — and it used to decide wrong.
  *
- * An observer clicking a control during an outage had the write parked and
- * was told it "will be sent when the link returns". It never could be: every
- * replay hits the observer 403 from `require_commander`, which the queue
+ * A caller without write permission had their mutation parked and was told it
+ * "will be sent when the link returns". It never could be: every replay hits
+ * the 403 from `require_commander`, which the queue
  * correctly treats as retryable — the session might yet be upgraded — so the
  * entry sits there forever. The operator is told their work is safe, the
  * counter climbs, and the reconnect reports "0 queued changes synced".
  *
- * Defaults to permissive, and stays permissive until a session says
- * otherwise. A console reloaded while the link is already down cannot reach
+ * A reason rather than a boolean, because the two cases need different
+ * sentences: an observer holds a real session that is read-only, while a
+ * visitor to a station serving open reads holds no session at all. Telling
+ * the second group they are "an observer" explains nothing and points at a
+ * role they do not have.
+ *
+ * Defaults to permitted, and stays permitted until a session says otherwise.
+ * A console reloaded while the link is already down cannot reach
  * `/auth/session`, and refusing a commander's work because the console could
  * not confirm who they were is the worse of the two failures.
  */
-let callerMayWrite: () => boolean = () => true;
+let writeRefusal: () => string | null = () => null;
 
-export function setWriteGuard(fn: () => boolean) {
-  callerMayWrite = fn;
+export function setWriteGuard(fn: () => string | null) {
+  writeRefusal = fn;
 }
-
-/** Refusal for a write this console knows the station would reject anyway. */
-const observerRefusal = (url: string) => new ApiError(
-  'You are viewing this station as an observer, which is read-only. Sign in with '
-  + 'the commander key to change the record.',
-  403, url);
 
 /** Marker returned when a mutation was parked in the offline queue. */
 export interface QueuedResult { queued: true; pending: true }
@@ -123,8 +123,9 @@ async function request<T = unknown>(
 
   if (offlineQueue.isOffline && method !== 'GET') {
     // Refuse now, in the station's own words, rather than promising to send
-    // something that every replay will bounce off the observer 403.
-    if (!callerMayWrite()) throw observerRefusal(url);
+    // something that every replay will bounce off the same 403.
+    const refusal = writeRefusal();
+    if (refusal) throw new ApiError(refusal, 403, url);
     offlineQueue.enqueue(url, options, description);
     return { queued: true, pending: true } as T;
   }
@@ -136,7 +137,8 @@ async function request<T = unknown>(
     // A network failure on a mutation must not be lost: park it so it replays
     // when the link comes back, exactly like an explicit offline mutation.
     if (method !== 'GET') {
-      if (!callerMayWrite()) throw observerRefusal(url);
+      const refusal = writeRefusal();
+      if (refusal) throw new ApiError(refusal, 403, url);
       offlineQueue.enqueue(url, options, description);
       return { queued: true, pending: true } as T;
     }

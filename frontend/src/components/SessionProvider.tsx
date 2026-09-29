@@ -98,7 +98,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
    * refused because the session probe could not complete.
    */
   useEffect(() => {
-    setWriteGuard(() => state === null || state.can_write);
+    setWriteGuard(() => {
+      if (state === null || state.can_write) return null;
+      return state.authenticated
+        ? 'You are viewing this station as an observer, which is read-only. '
+          + 'Sign in with the commander key to change the record.'
+        : 'You are reading this station without a session, so that change cannot be '
+          + 'held for it. Sign in with the commander key to make changes.';
+    });
   }, [state]);
 
   // A session expires while the console is open. Rather than let every module

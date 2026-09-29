@@ -30,6 +30,18 @@ function Console() {
   return <p>{`console for ${authenticated ? state?.actor : 'nobody'}`}</p>;
 }
 
+/**
+ * "console for nobody" is what `Console` renders both before the session
+ * probe answers and after it answers "not signed in", so waiting on it does
+ * not prove the session has loaded — and a test that then depends on the
+ * write guard, which the provider installs from that session, races it.
+ * This reports something only a resolved probe can produce.
+ */
+function SessionLoaded() {
+  const { ready, state } = useSession();
+  return <p>{ready && state ? `loaded:${state.public_reads}` : 'loading'}</p>;
+}
+
 const renderGate = () => render(
   <SessionProvider><LoginGate><Console /></LoginGate></SessionProvider>,
 );
@@ -351,4 +363,38 @@ describe('telling the API layer what this session may do', () => {
 
     await expect(queuedWriteDuringOutage()).resolves.toBe('parked');
   });
+});
+
+/**
+ * A station serving open reads (PRAHARI_PUBLIC_READS) shows the console to
+ * anyone with the link — which is the right first impression, and was also a
+ * dead end: no wall meant no sign-in, so every write control failed with
+ * nothing on the page to press and nothing explaining why.
+ */
+const openReads: SessionState = { ...signedOut, public_reads: true };
+
+describe('a station that serves reads without a session', () => {
+  it('shows the console rather than a sign-in wall', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(openReads);
+    render(<SessionProvider><LoginGate><Console /></LoginGate></SessionProvider>);
+
+    await waitFor(() => expect(screen.getByText(/console for nobody/)).toBeInTheDocument());
+    expect(screen.queryByLabelText(/commander key/i)).not.toBeInTheDocument();
+  });
+
+  it('refuses an outage write in words that fit having no session', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(openReads);
+    render(<SessionProvider><SessionLoaded /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText('loaded:true')).toBeInTheDocument());
+
+    await offlineQueue.setOffline(true);
+    try {
+      await expect(api.loadDemoSeason()).rejects.toThrow(/without a session/i);
+      expect(offlineQueue.pendingCount).toBe(0);
+    } finally {
+      await offlineQueue.setOffline(false);
+      offlineQueue.clear();
+    }
+  });
+
 });
