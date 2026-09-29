@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, isQueued } from './api';
+import { offlineQueue } from './offlineQueue';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { isAnyOf } from './broadcasts';
 import type { HeadcountBasis, InventoryItem, StockCommandResult } from './types';

@@ -9,6 +9,7 @@ import { WhatIfPanel } from '@/components/WhatIfPanel';
 import { StockoutBand } from '@/components/StockoutBand';
 import { useStation } from '@/components/StationProvider';
 import { useStationConditions } from '@/lib/useStationConditions';
+import { pendingQuantity, usePendingRevision } from '@/lib/pendingEffects';
 import { useInventory, useStockCommand } from '@/lib/useInventory';
 import {
   CrossStationDialog, HeadcountChip, ThermalLoadControl,
@@ -43,7 +44,9 @@ export default function InventoryPage() {
   /** Per-item supply floor being edited in the detail panel. */
   const [policyDraft, setPolicyDraft] = useState<{ minimum: string; days: string } | null>(null);
   const [savingPolicy, setSavingPolicy] = useState(false);
-  const { deltaT } = useStationConditions(stationId);
+  const { deltaT, deltaTPending } = useStationConditions(stationId);
+  // Re-render the table when a held correction is added or drains away.
+  usePendingRevision();
 
   // Switching station invalidates anything that named the old one. The stock
   // command's own preview is cleared by its hook.
@@ -194,6 +197,7 @@ export default function InventoryPage() {
         stationId={stationId}
         stationLabel={station.label}
         deltaT={deltaT}
+        deltaTPending={deltaTPending}
         onApplied={loadInventory}
       />
 
@@ -422,7 +426,32 @@ export default function InventoryPage() {
                         </span>
                       </td>
                       <td className="py-3 text-frost-muted">{item.station}</td>
-                      <td className="py-3 metric text-arctic-800">{item.quantity} {item.unit}</td>
+                      {/* A correction made while the link is down shows here,
+                          named as held. The cover figure beside it is left as
+                          the station's last answer rather than recomputed:
+                          days-of-cover is quantity over a burn rate scaled by
+                          crew and weather, and that arithmetic lives in one
+                          place, on the backend. */}
+                      <td className="py-3 metric text-arctic-800">
+                        {(() => {
+                          const heldQty = pendingQuantity(item.id);
+                          if (heldQty === null) return <>{item.quantity} {item.unit}</>;
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="text-alert">{heldQty} {item.unit}</span>
+                              <span data-compact
+                                    title={`Counted here while the link is down — the `
+                                      + `station still holds ${item.quantity} `
+                                      + `${item.unit ?? ''}`.trim()}
+                                    className="px-1.5 py-0.5 rounded border border-alert-edge
+                                               bg-alert-tint text-alert font-bold
+                                               tracking-caps uppercase">
+                                Held
+                              </span>
+                            </span>
+                          );
+                        })()}
+                      </td>
                       <td className="py-3 metric font-normal text-frost-muted">
                         {typeof item.depletion_rate === 'number' ? `${item.depletion_rate.toFixed(1)}` : '—'}
                         {/* Only when the station's own record disagrees with
