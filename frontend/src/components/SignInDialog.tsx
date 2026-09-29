@@ -28,6 +28,11 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="w-full max-w-md relative">
+        {/* After the panel in the DOM, though absolutely positioned above
+            it: the focus trap moves focus to the first focusable child, and
+            somebody who opened a sign-in dialog wants the key field, not the
+            control that throws it away. */}
+        <SignInPanel compact onSignedIn={onClose} />
         <button
           type="button"
           data-compact
@@ -38,7 +43,6 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
         >
           <X size={16} aria-hidden="true" />
         </button>
-        <SignInPanel compact onSignedIn={onClose} />
       </div>
     </div>
   );

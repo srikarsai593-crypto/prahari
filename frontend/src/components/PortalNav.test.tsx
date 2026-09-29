@@ -78,6 +78,19 @@ describe('a console reading a station without a session', () => {
     expect(screen.queryByText(/read only/i)).not.toBeInTheDocument();
   });
 
+  /**
+   * The close button is painted at the top-right but comes *after* the panel
+   * in the DOM, so the focus trap lands on the key field. Somebody who opened
+   * a sign-in dialog wants to type, not to be handed the control that throws
+   * it away.
+   */
+  it('puts focus on the key field, not on the way out', async () => {
+    renderNav();
+    await userEvent.click(await screen.findByRole('button', { name: /^sign in$/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toHaveFocus());
+  });
+
   it('can be dismissed without signing in', async () => {
     renderNav();
     await userEvent.click(await screen.findByRole('button', { name: /^sign in$/i }));

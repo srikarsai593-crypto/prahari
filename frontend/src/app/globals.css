@@ -1607,10 +1607,14 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
 }
 
 /* ── The banner ──────────────────────────────────────────────────────────
-   Amber-600 through orange-700 with white text: 4.8:1 at the light end, so
-   the headline holds up across the whole sweep. */
+   Every stop carries white text at 5:1 or better, measured rather than
+   assumed: 7.3 / 5.0 / 5.8 across the sweep. The headline is 14px bold,
+   which is *not* WCAG large text, so the whole gradient has to clear 4.5
+   rather than 3 — an earlier amber-600 midpoint sat at 3.19 and failed the
+   bar this console is otherwise held to. The sweep is kept, just moved down
+   into a range that passes. */
 .blackout-banner {
-  background: linear-gradient(95deg, #b45309 0%, #d97706 45%, #c2410c 100%);
+  background: linear-gradient(95deg, #9a3412 0%, #b45309 48%, #a8480b 100%);
   color: #ffffff;
   border-bottom: 1px solid rgba(255, 255, 255, 0.25);
   box-shadow: 0 4px 14px -2px rgba(120, 53, 15, 0.45);

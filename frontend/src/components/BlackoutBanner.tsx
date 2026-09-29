@@ -91,7 +91,11 @@ export function BlackoutBanner() {
           somebody clicks through the modules is correct and reads as broken.
           Until the first write lands, the banner asks for one.
         */}
-        <span className="font-mono text-2xs font-bold tracking-caps uppercase opacity-90">
+        {/* No opacity here. Knocking this back to 90% was worth 0.6 of a
+            contrast point and put 11px text at 4.39:1 against the middle of
+            the gradient — under the 4.5 the rest of the console holds to.
+            Size and weight already separate it from the headline. */}
+        <span className="font-mono text-2xs font-bold tracking-caps uppercase">
           {flushing ? 'Syncing'
             : pending === 0 ? 'Make a change — it will be held here'
               : 'Queued locally'}

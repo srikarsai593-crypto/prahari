@@ -92,6 +92,10 @@ export function SignInPanel({ onSignedIn, compact = false }: {
           id="commander-key"
           type="password"
           value={key}
+          // The wall is the whole page and the field is why anyone is
+          // looking at it. Inside the dialog the focus trap places focus
+          // instead, and a second claim on it would fight that.
+          autoFocus={!compact}
           autoComplete="current-password"
           onChange={(event) => { setKey(event.target.value); setError(null); }}
           aria-invalid={error ? true : undefined}
