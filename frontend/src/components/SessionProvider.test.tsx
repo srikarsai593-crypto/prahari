@@ -322,7 +322,23 @@ describe('losing the session', () => {
  * parked forever during an outage.
  */
 describe('telling the API layer what this session may do', () => {
+  /**
+   * What the console does with a write it cannot send during an outage.
+   *
+   * The flush is load-bearing. The provider installs the write guard from an
+   * effect, and the text each test waits on is rendered by the commit that
+   * *schedules* that effect — so a probe fired the moment the text appears
+   * can land in the window where the session has arrived and the guard has
+   * not, read the permissive default, and park a write the console would in
+   * fact have refused. It failed about one run in five, and only under the
+   * full suite, where the extra load widened the window.
+   *
+   * Flushing rather than polling the behaviour: a poll would let the two
+   * cases that expect "parked" pass on the default before the guard was
+   * installed at all, which is the assertion those tests exist to make.
+   */
   const queuedWriteDuringOutage = async () => {
+    await act(async () => {});
     await offlineQueue.setOffline(true);
     try {
       await api.loadDemoSeason();
@@ -386,6 +402,7 @@ describe('a station that serves reads without a session', () => {
     vi.spyOn(api, 'session').mockResolvedValue(openReads);
     render(<SessionProvider><SessionLoaded /></SessionProvider>);
     await waitFor(() => expect(screen.getByText('loaded:true')).toBeInTheDocument());
+    await act(async () => {});   // see queuedWriteDuringOutage for why
 
     await offlineQueue.setOffline(true);
     try {

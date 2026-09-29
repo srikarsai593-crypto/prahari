@@ -20,7 +20,8 @@ from .database import init_db
 from . import idempotency
 from .seed import seed_data
 from .ws_manager import manager
-from .auth import DEMO_KEY, SESSION_COOKIE, get_expected_key, identify, reads_are_public
+from .auth import (DEMO_KEY, SESSION_COOKIE, get_expected_key, identify,
+                   read_ws_ticket, reads_are_public)
 from .llm import GEMINI_MODEL, get_gemini_api_key
 from .routes import (expeditions, shipments, inventory, personnel, incidents,
                      events_routes, geofences, admin, auth_routes, procurement)
@@ -195,11 +196,28 @@ for router in (auth_routes, expeditions, shipments, inventory, personnel, incide
 
 @app.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):
-    # The socket carries the same operational data as the REST reads - GPS
-    # fixes, accountability counts, stock alerts - so it is gated the same way.
-    # Closing before accept() is deliberate: an unauthenticated client gets a
-    # handshake failure rather than an open socket that silently says nothing.
-    if not reads_are_public() and identify(websocket) is None:
+    """Station telemetry.
+
+    The socket carries the same operational data as the REST reads - GPS
+    fixes, accountability counts, stock alerts - so it is gated the same way.
+    Closing before accept() is deliberate: an unauthenticated client gets a
+    handshake failure rather than an open socket that silently says nothing.
+
+    Two ways to prove who you are, because the console may arrive by either
+    route. A cookie, when the socket is same-origin with the console - which
+    is how it works locally. Or a ticket in the query string, when it is not:
+    a hosted console reaches this backend through the frontend's own origin,
+    the session cookie therefore belongs to that host, and a platform rewrite
+    will not carry a WebSocket upgrade for it to travel on. Without the
+    ticket every hosted handshake failed and the console showed a link that
+    was, from where it stood, genuinely down.
+
+    The ticket is checked first and is not interchangeable with a cookie in
+    either direction; see `issue_ws_ticket` for why that separation matters
+    when a credential rides in a URL.
+    """
+    identity = read_ws_ticket(websocket.query_params.get('ticket')) or identify(websocket)
+    if not reads_are_public() and identity is None:
         await websocket.close(code=1008, reason='Sign in to receive station telemetry')
         return
     await manager.connect(websocket)
