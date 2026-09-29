@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { api } from './api';
+import { offlineQueue } from './offlineQueue';
+import { pendingDeltaT, usePendingRevision } from './pendingEffects';
 import { useWebSocket } from '@/components/WebSocketProvider';
 
 /**
@@ -58,6 +60,9 @@ export function __resetStationConditions(): void {
 
 export function useStationConditions(stationId: string) {
   const { lastMessage } = useWebSocket();
+  // Re-render when the queue changes, so a load applied during an outage
+  // reaches every reader of this hook at once.
+  usePendingRevision();
   // Seeded from the shared cache, so a component mounting later renders the
   // known figure immediately instead of flashing "no reading".
   const [stations, setStations] = useState<Conditions | null>(cache);
@@ -68,15 +73,41 @@ export function useStationConditions(stationId: string) {
     return () => { subscribers.delete(setStations); };
   }, []);
 
+  /*
+   * Re-read once a replay has delivered. The `blizzard_update` broadcast
+   * that normally refreshes this is the one a console coming out of an
+   * outage has missed — the socket was down while the write landed — so a
+   * load applied offline reached the station and the console went on showing
+   * the old figure until something else happened to re-read it.
+   */
+  useEffect(() => offlineQueue.subscribeDrained(() => { void fetchShared(); }), []);
+
   useEffect(() => {
     if (lastMessage?.type === 'blizzard_update' || lastMessage?.type === 'shipment_update') {
       void fetchShared();
     }
   }, [lastMessage]);
 
+  /*
+   * A load the operator applied while the link was down is theirs, not the
+   * station's. It is shown — otherwise they set the slider, pressed Apply,
+   * and watched the console carry on reporting the old weather — but every
+   * caller is told it is pending so it can be marked as such.
+   *
+   * Not merged into the shared cache: that cache is what the station last
+   * said, and writing a local intention into it would make the difference
+   * unrecoverable the moment anything else read from it.
+   */
+  const held = pendingDeltaT(stationId);
+  const confirmed = stations ? (stations[stationId] ?? 0) : null;
+
   return {
     /** null until the first successful fetch, then 0 for "calm". */
-    deltaT: stations ? (stations[stationId] ?? 0) : null,
+    deltaT: held ?? confirmed,
+    /** True while the figure above is a held write rather than the station's. */
+    deltaTPending: held !== null,
+    /** What the station itself last confirmed, whatever is held on top. */
+    confirmedDeltaT: confirmed,
     allStations: stations,
     refresh: fetchShared,
   };

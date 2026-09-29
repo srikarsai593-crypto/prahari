@@ -1,7 +1,16 @@
+import type { PendingEffect } from './pendingEffects';
+
 export interface QueuedRequest {
   id: string;
   url: string;
   method: string;
+  /**
+   * What this write would do locally, so the console can show the operator
+   * their own change while the station has not had it yet. Serialisable, and
+   * therefore persisted with the entry — a console reloaded mid-outage comes
+   * back still showing the work it is holding. See `pendingEffects.ts`.
+   */
+  effect?: PendingEffect;
   /** Serialisable body. A RequestInit is not JSON-safe, so we store the parts. */
   body?: string;
   timestamp: number;
@@ -67,6 +76,8 @@ class OfflineQueue {
   /** The in-flight replay, so concurrent callers observe one real result. */
   private _flushPromise: Promise<FlushResult> | null = null;
   private listeners = new Set<QueueListener>();
+  /** Notified once per replay that actually delivered something. */
+  private drainListeners = new Set<QueueListener>();
   private headerFactory: () => Record<string, string> =
     () => ({ 'Content-Type': 'application/json' });
 
@@ -99,7 +110,25 @@ class OfflineQueue {
     return () => { this.listeners.delete(fn); };
   }
 
+  /**
+   * Called after a replay that delivered at least one write.
+   *
+   * The station now holds something this console asked for while the link
+   * was down, and every figure those writes touched is stale on screen. The
+   * broadcast that would normally refresh them is precisely what a console
+   * coming out of an outage has missed — the socket was down while the write
+   * landed. Without this a blizzard load applied offline reached the station
+   * and the console kept showing the old one until something else happened
+   * to re-read it.
+   */
+  subscribeDrained(fn: QueueListener) {
+    this.drainListeners.add(fn);
+    return () => { this.drainListeners.delete(fn); };
+  }
+
   private notify() { this.listeners.forEach((fn) => fn()); }
+
+  private notifyDrained() { this.drainListeners.forEach((fn) => fn()); }
 
   private persist() {
     if (typeof window === 'undefined') return;
@@ -186,7 +215,8 @@ class OfflineQueue {
     };
   }
 
-  enqueue(url: string, options: RequestInit, description: string) {
+  enqueue(url: string, options: RequestInit, description: string,
+          effect?: PendingEffect) {
     if (this.queue.length >= MAX_QUEUE_LENGTH) {
       console.warn('Offline queue full — dropping oldest entry');
       this.queue.shift();
@@ -203,6 +233,7 @@ class OfflineQueue {
       timestamp: Date.now(),
       description,
       attempts: 0,
+      ...(effect ? { effect } : {}),
     });
     this.persist();
     this.notify();
@@ -290,6 +321,9 @@ class OfflineQueue {
     }
 
     if (flushed > 0) {
+      // Before the audit line: what is on screen is now behind what the
+      // station holds, and the operator is looking at it.
+      this.notifyDrained();
       // Report the counts and let the backend compose the audit line. The
       // general-purpose POST /events this used to call let the browser write
       // any module, actor and message it liked into the station's record.

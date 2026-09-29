@@ -58,10 +58,14 @@ interface WeatherProps {
   stationLabel: string;
   /** Live reading from the station, so the control cannot drift from the truth. */
   deltaT: number | null;
+  /** True when `deltaT` is a write held on this console, not the station's. */
+  deltaTPending?: boolean;
   onApplied: () => void;
 }
 
-export function ThermalLoadControl({ stationId, stationLabel, deltaT, onApplied }: WeatherProps) {
+export function ThermalLoadControl({
+  stationId, stationLabel, deltaT, deltaTPending = false, onApplied,
+}: WeatherProps) {
   const { addToast } = useToast();
   const [value, setValue] = useState(deltaT ?? 0);
   const [applying, setApplying] = useState(false);
@@ -131,8 +135,22 @@ export function ThermalLoadControl({ stationId, stationLabel, deltaT, onApplied 
 
       <div className="flex items-center justify-between gap-2 mt-3 pt-3
                       border-t border-frost-border">
-        <span className="text-2xs font-mono text-frost-muted">
-          On station: {deltaT === null ? 'no reading' : `ΔT +${deltaT.toFixed(1)}°C`}
+        {/* A load applied during an outage is shown, because an operator who
+            pressed Apply and saw nothing move has no way to tell whether the
+            console took it. It is named as held rather than presented as the
+            station's reading. */}
+        <span className="text-2xs font-mono text-frost-muted flex items-center gap-1.5">
+          {deltaTPending ? 'Held on this console:' : 'On station:'}{' '}
+          {deltaT === null ? 'no reading' : `ΔT +${deltaT.toFixed(1)}°C`}
+          {deltaTPending && (
+            <span data-compact
+                  title="Applied here while the link is down — it reaches the station
+                         when the link returns"
+                  className="px-1.5 py-0.5 rounded border border-alert-edge bg-alert-tint
+                             text-alert font-bold tracking-caps uppercase">
+              Not yet sent
+            </span>
+          )}
         </span>
         <button type="button" className="btn-primary text-2xs !min-h-0 !px-3 !py-1.5"
                 disabled={applying} onClick={() => void apply(value)}>

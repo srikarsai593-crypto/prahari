@@ -272,6 +272,8 @@ sequenceDiagram
 
     Op->>UI: Adjust stock again
     UI->>Q: enqueue + Idempotency-Key
+    Q-->>UI: what it would do, locally
+    UI-->>Op: the change, marked "held"
     Q-->>Op: counter ticks 1 … 2 … 3
     Note right of Q: Reads still work — the service<br/>worker holds the shell and tiles
 
@@ -282,8 +284,28 @@ sequenceDiagram
         St-->>Q: 200 (or recognises a duplicate)
     end
     Q->>St: POST /events/sync-report
-    Q-->>Op: ✅ 3 queued changes synced
+    Q-->>UI: drained — re-read what those writes touched
+    Note right of UI: the broadcast that normally does this<br/>is the one an outage missed
+    UI-->>Op: ✅ 3 queued changes synced, figures now the station's
 ```
+
+**What the operator sees while it is held.** A write can declare what it
+means locally, so the console shows the change rather than carrying on
+describing a station where nothing happened — a blizzard load applied during
+an outage used to leave the header on the old figure and the slider looking
+like it had done nothing. Every held value is *named* as held (`Held on this
+console · NOT YET SENT`), because a console that quietly showed the operator
+their own input back as though the station had accepted it would be lying in
+the one direction that matters.
+
+Nothing is derived from it. `days_of_cover` is quantity over a burn rate
+scaled by crew and weather, and that arithmetic lives on the backend; a copy
+in the browser would be a second model to drift from the first. So a figure
+that depends on a held write is left as the station's last answer rather than
+recalculated. For the same reason a plain-language stock command cannot be
+shown locally at all — resolving *"removed 500 litres of diesel"* to a row and
+a delta is the server's parser, and guessing at it would be inventing a
+reading.
 
 Order is preserved and the run stops at the first network failure, because a
 later write may depend on an earlier one. A `4xx` that is a verdict on the

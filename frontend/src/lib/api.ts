@@ -1,4 +1,5 @@
 import { offlineQueue } from './offlineQueue';
+import type { PendingEffect } from './pendingEffects';
 import type {
   Personnel, Incident, Accountability, NearbyAsset, Shipment, ShipmentInput,
   Expedition, ExpeditionInput, ExpeditionStatus, InventoryItem, Geofence, MovementPlan, AppEvent,
@@ -118,6 +119,8 @@ async function request<T = unknown>(
   url: string,
   options: RequestInit = {},
   description = 'API request',
+  /** What this write means locally, for a console holding it. */
+  effect?: PendingEffect,
 ): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
 
@@ -126,7 +129,7 @@ async function request<T = unknown>(
     // something that every replay will bounce off the same 403.
     const refusal = writeRefusal();
     if (refusal) throw new ApiError(refusal, 403, url);
-    offlineQueue.enqueue(url, options, description);
+    offlineQueue.enqueue(url, options, description, effect);
     return { queued: true, pending: true } as T;
   }
 
@@ -139,7 +142,7 @@ async function request<T = unknown>(
     if (method !== 'GET') {
       const refusal = writeRefusal();
       if (refusal) throw new ApiError(refusal, 403, url);
-      offlineQueue.enqueue(url, options, description);
+      offlineQueue.enqueue(url, options, description, effect);
       return { queued: true, pending: true } as T;
     }
     throw new ApiError(
@@ -270,7 +273,10 @@ export const api = {
    */
   applyStationWeather: (station: string, deltaT: number) =>
     request<StationWeatherResult>(`${BASE}/shipments/weather`,
-      jsonOptions('POST', { station, delta_t: deltaT }), 'apply station weather'),
+      jsonOptions('POST', { station, delta_t: deltaT }), 'apply station weather',
+      // Read by the header, the NOTAM strip, Cargo and Inventory. Held on
+      // this console, all four should show what the operator set.
+      { kind: 'stationDeltaT', station, deltaT }),
   getStationConditions: () => request<StationConditions>(`${BASE}/shipments/delta-t/current`),
 
   // ── Inventory ──────────────────────────────────────────────────────────────
@@ -290,7 +296,10 @@ export const api = {
       'process inventory stock command'),
   updateInventory: (id: string, quantity: number, station?: string) =>
     request<InventoryItem>(`${BASE}/inventory/${id}`,
-      jsonOptions('PATCH', { quantity, station }), 'update inventory'),
+      jsonOptions('PATCH', { quantity, station }), 'update inventory',
+      // Only when the row's station is known: an effect that cannot say
+      // which base it belongs to cannot be shown against the right one.
+      station ? { kind: 'stockQuantity', itemId: id, station, quantity } : undefined),
   /**
    * This row's own supply floor. Criticality used to be inferred entirely from
    * hard-coded day maths in the browser, so a battery bank that must never
