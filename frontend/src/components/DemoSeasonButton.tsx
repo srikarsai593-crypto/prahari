@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { DatabaseZap } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 
 /**
@@ -36,7 +36,14 @@ export function DemoSeasonButton({ onLoaded, className = 'btn-secondary text-13'
 
     setLoading(true);
     try {
-      const { created } = await api.loadDemoSeason();
+      const result = await api.loadDemoSeason();
+      // A queued call resolves to the marker, not to a season: reading
+      // `created.shipments` off it throws, so the control reports a crash
+      // where it should report that the station has not been asked yet.
+      if (isQueued(result)) {
+        return addToast(queuedMessage('Loading the demonstration season'), 'info');
+      }
+      const { created } = result;
       addToast(`Demonstration season loaded — ${created.shipments} consignment(s), `
         + `${created.expeditions} traverse(s) and ${created.incidents} closed incident(s) `
         + 'across all three stations', 'success');

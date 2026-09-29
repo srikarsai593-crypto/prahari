@@ -65,6 +65,17 @@ export function useInventory(stationId: string, ready: boolean) {
     if (isAnyOf(lastMessage, ...STOCK_AFFECTING)) void reload();
   }, [lastMessage, reload]);
 
+  /*
+   * Re-read once a replay has delivered.
+   *
+   * The broadcast that normally refreshes these figures is the one a console
+   * coming out of an outage has missed — the socket was down while the write
+   * landed — so a correction made offline reached the station and the table
+   * went on showing the figure from before it, with nothing to say it was
+   * stale. Measured: the station held 5200 L and the row read 6500 L.
+   */
+  useEffect(() => offlineQueue.subscribeDrained(() => { void reload(); }), [reload]);
+
   return { items, headcount, loading, error, reload };
 }
 

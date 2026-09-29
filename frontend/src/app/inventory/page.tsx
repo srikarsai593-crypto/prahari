@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Globe, Pencil, RotateCw, ShieldAlert, Terminal, X } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, isQueued, queuedMessage } from '@/lib/api';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useToast } from '@/components/Toast';
 import { PageHeader } from '@/components/PageHeader';
@@ -108,8 +108,15 @@ export default function InventoryPage() {
     try {
       // The active station goes with the write: the backend rejects an edit
       // aimed at another base's row with 403.
-      await api.updateInventory(selectedItem.id, qty, stationId);
-      addToast(`${selectedItem.name} set to ${qty} ${selectedItem.unit ?? ''}`, 'success');
+      // A queued write has changed nothing at the station yet, and saying it
+      // has is the one thing this console must not do — the operator is
+      // reading a number they have not been given.
+      const result = await api.updateInventory(selectedItem.id, qty, stationId);
+      addToast(
+        isQueued(result)
+          ? queuedMessage(`${selectedItem.name} set to ${qty} ${selectedItem.unit ?? ''}`)
+          : `${selectedItem.name} set to ${qty} ${selectedItem.unit ?? ''}`,
+        isQueued(result) ? 'info' : 'success');
       setEditQty(null);
       void loadInventory();
     } catch (e) {
@@ -132,7 +139,7 @@ export default function InventoryPage() {
     }
     setSavingPolicy(true);
     try {
-      await api.updateInventoryPolicy(selectedItem.id, {
+      const policyResult = await api.updateInventoryPolicy(selectedItem.id, {
         minimum_threshold: minValue ?? undefined,
         safety_stock_days: daysValue ?? undefined,
         // A PATCH treats an omitted field as "unchanged", so clearing a floor
@@ -141,7 +148,11 @@ export default function InventoryPage() {
         clear_safety_stock_days: daysValue === null,
         station: stationId,
       });
-      addToast(`Supply policy saved for ${selectedItem.name}`, 'success');
+      addToast(
+        isQueued(policyResult)
+          ? queuedMessage(`Supply policy for ${selectedItem.name}`)
+          : `Supply policy saved for ${selectedItem.name}`,
+        isQueued(policyResult) ? 'info' : 'success');
       setPolicyDraft(null);
       void loadInventory();
     } catch (e) {
