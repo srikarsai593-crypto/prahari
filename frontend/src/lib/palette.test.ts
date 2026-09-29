@@ -46,7 +46,15 @@ const LIGHT_SURFACES = {
   card: '#ffffff',
   page: colors.ice.surface as string,
   inset: colors.frost.subtle as string,
+  get marked() { return MARKED_SURFACE; },
 };
+
+/**
+ * The pale wash a marked row sits on — the accessibility statement scrolls to
+ * one line and tints it. Added because it is a fourth light surface, and text
+ * that clears AA on white does not automatically clear it here.
+ */
+const MARKED_SURFACE = colors.arctic[50] as string;
 
 /** The dark bands: the utility rail, the command header, the footer. */
 const DARK_SURFACES = {
@@ -178,6 +186,35 @@ describe('the status triad stays distinguishable', () => {
       const max = Math.max(r, g, b), min = Math.min(r, g, b);
       expect((max - min) / max, `${hex} is too desaturated to read as a status`)
         .toBeGreaterThan(0.5);
+    }
+  });
+});
+
+
+/**
+ * A marked row in the accessibility statement, which the language control
+ * scrolls to.
+ *
+ * The left accent bar is the only thing distinguishing it at a glance, so it
+ * has to be *seen* — WCAG 1.4.11 asks 3:1 of a non-text element that carries
+ * meaning. An earlier attempt used a hairline `arctic-200` ring, which came
+ * out at 1.33:1 on a white card and was invisible.
+ */
+describe('the marked row in the accessibility statement', () => {
+  it('has an accent bar that can be seen against its own wash', () => {
+    const ratio = contrastRatio(colors.arctic[600], MARKED_SURFACE);
+    expect(ratio, `accent bar on the marked wash is ${ratio.toFixed(2)}:1`)
+      .toBeGreaterThanOrEqual(3);
+  });
+
+  it('has a wash that does not swallow the text it sits behind', () => {
+    for (const [name, hex] of Object.entries({
+      title: colors.arctic[900] as string,
+      detail: colors.frost.muted as string,
+    })) {
+      const ratio = contrastRatio(hex, MARKED_SURFACE);
+      expect(ratio, `${name} on the marked wash is ${ratio.toFixed(2)}:1`)
+        .toBeGreaterThanOrEqual(AA);
     }
   });
 });

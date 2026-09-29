@@ -1412,6 +1412,14 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
   border-color: var(--accent);
 }
 
+/* A per-side accent, which the shorthand above does not reach: Tailwind's
+   `border-l-arctic-600` sets `--tw-border-opacity` and `border-left-color`
+   only, so re-pointing `border-color` leaves it the standard blue — 2.9:1 on
+   this theme's black, for a device whose whole job is to be seen. */
+[data-theme='contrast'] .border-l-arctic-600 {
+  border-left-color: var(--accent);
+}
+
 [data-theme='contrast'] .ring-rose-200,
 [data-theme='contrast'] .ring-rose-400\/60 {
   --tw-ring-color: var(--danger);

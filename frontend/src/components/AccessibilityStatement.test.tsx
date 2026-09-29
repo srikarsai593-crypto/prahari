@@ -53,7 +53,10 @@ describe('the statement', () => {
     const dialog = await open();
     expect(dialog).toHaveTextContent(/maps are visual/i);
     expect(dialog).toHaveTextContent(/not meaningfully readable by a screen reader/i);
-    expect(dialog).toHaveTextContent(/hindi has not been implemented/i);
+    // The substance, not the sentence: the gap has to be stated, and the
+    // rail must not be described as offering a choice it does not have.
+    expect(dialog).toHaveTextContent(/english only/i);
+    expect(dialog).toHaveTextContent(/have not been implemented/i);
   });
 
   it('points at the text equivalent rather than only admitting the gap', async () => {
