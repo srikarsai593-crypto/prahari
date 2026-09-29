@@ -17,6 +17,7 @@ import { EventTimeline } from '@/components/EventTimeline';
 import { StandingAlerts } from '@/components/StandingAlerts';
 import { DemoSeasonButton } from '@/components/DemoSeasonButton';
 import { HandoverBriefButton } from '@/components/HandoverBriefButton';
+import { DemoTourButton } from '@/components/DemoTour';
 import { PanelBoundary } from '@/components/PanelBoundary';
 import { useToast } from '@/components/Toast';
 import type {
@@ -393,13 +394,25 @@ export default function Dashboard() {
         <BlizzardCanvasLoader />
 
         <div className="relative z-10 px-6 sm:px-10 py-9">
-          <span data-compact
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border
-                           border-white/20 bg-white/5 font-mono text-xs font-bold
-                           tracking-caps uppercase text-slate-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-arctic-400" aria-hidden="true" />
-            Official Portal of the Indian Antarctic Programme{ready && ` · ${station.label}`}
-          </span>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span data-compact
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border
+                             border-white/20 bg-white/5 font-mono text-xs font-bold
+                             tracking-caps uppercase text-slate-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-arctic-400" aria-hidden="true" />
+              Official Portal of the Indian Antarctic Programme{ready && ` · ${station.label}`}
+            </span>
+
+            {/* Top of the hero, opposite the departmental chip, because a
+                visitor who does not find this in the first few seconds will
+                not find it at all — and the console's best work is a search
+                box that looks like a search box and a toggle in the corner
+                of the navigation band. */}
+            <DemoTourButton
+              className="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-md border
+                         border-arctic-400/60 bg-arctic-600/25 text-white font-semibold text-13
+                         hover:bg-arctic-600/45 hover:border-arctic-400 transition-colors" />
+          </div>
 
           <div className="mt-5 flex items-center gap-5">
             {/* Responsive visibility goes on a wrapper, not on the mark:
@@ -421,6 +434,7 @@ export default function Dashboard() {
 
           {/* Universal lookup */}
           <form
+            data-tour="lookup"
             className="mt-7 flex flex-col sm:flex-row gap-2.5 max-w-4xl"
             onSubmit={(e) => { e.preventDefault(); runLookup(query); }}
             role="search"
@@ -470,9 +484,11 @@ export default function Dashboard() {
           raised half an hour ago on another tab is otherwise invisible, and a
           weather-to-cargo-to-expedition chain has no home module at all. */}
       {ready && (
-        <PanelBoundary label="Standing alerts" compact>
-          <StandingAlerts stationId={stationId} />
-        </PanelBoundary>
+        <div data-tour="alerts">
+          <PanelBoundary label="Standing alerts" compact>
+            <StandingAlerts stationId={stationId} />
+          </PanelBoundary>
+        </div>
       )}
 
       {ready && isUnused && (
@@ -510,7 +526,11 @@ export default function Dashboard() {
           {/* The same figures as a document the outgoing watch can hand over.
               Sits with the status block because that is what it is a
               snapshot of. */}
-          {ready && <HandoverBriefButton station={stationId} />}
+          {ready && (
+            <span data-tour="handover">
+              <HandoverBriefButton station={stationId} />
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -668,7 +688,7 @@ export default function Dashboard() {
               </div>
             </article>
 
-            <Link href="/scenario" className="group">
+            <Link href="/scenario" className="group" data-tour="scenario">
               <article className="portal-card portal-card--invert p-4 flex items-center
                                   justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
