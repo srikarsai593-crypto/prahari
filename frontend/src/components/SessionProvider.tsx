@@ -3,7 +3,7 @@
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useState,
 } from 'react';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, setWriteGuard } from '@/lib/api';
 import type { SessionState } from '@/lib/types';
 
 /**
@@ -83,6 +83,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await refresh();
     }
   }, [refresh]);
+
+  /*
+   * Tell the API layer what this session may do.
+   *
+   * Only consulted when a mutation is about to be queued during an outage —
+   * online, the station answers for itself. Kept in a ref-like module slot
+   * rather than passed down, for the same reason `setHeaderFactory` is: the
+   * request helper is a plain module and has no way to read context.
+   *
+   * `state === null` means the console has not heard back — often because
+   * the link is down — and that is deliberately treated as permissive. A
+   * commander whose console reloaded mid-outage must not have their work
+   * refused because the session probe could not complete.
+   */
+  useEffect(() => {
+    setWriteGuard(() => state === null || state.can_write);
+  }, [state]);
 
   // A session expires while the console is open. Rather than let every module
   // start failing with 401s that read like outages, the expiry is noticed

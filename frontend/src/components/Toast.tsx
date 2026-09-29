@@ -108,7 +108,7 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
           `max-w-sm w-full` is 384px, which is wider than a 375px handset —
           the rail hung off the side and dragged the page into a sideways
           scroll. From `sm` up it goes back to a right-hand column. */}
-      <div className="fixed top-4 left-4 right-4 z-[60] flex flex-col gap-2
+      <div className="toast-rail fixed top-4 left-4 right-4 z-[60] flex flex-col gap-2
                       sm:left-auto sm:w-full sm:max-w-sm pointer-events-none"
            role="status" aria-live="polite">
         {toasts.map((toast) => {

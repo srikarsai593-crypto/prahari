@@ -20,6 +20,13 @@ beforeEach(() => {
     })) as unknown as typeof window.matchMedia;
   }
 
+  // jsdom has no layout, so it implements no scrolling either. A component
+  // that brings its subject into view — the guided tour does it on every
+  // step — would otherwise throw before rendering anything to assert on.
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = vi.fn();
+  }
+
   // localStorage is real in jsdom but shared across tests, and the offline
   // queue persists into it. Clearing it keeps one test's queue out of the next.
   try { window.localStorage.clear(); } catch { /* some environments block it */ }

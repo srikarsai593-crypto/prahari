@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { SessionProvider, useSession } from './SessionProvider';
 import { LoginGate } from './LoginGate';
 import { api, ApiError } from '@/lib/api';
+import { offlineQueue } from '@/lib/offlineQueue';
 import type { SessionState } from '@/lib/types';
 
 /**
@@ -84,7 +85,7 @@ describe('signing in', () => {
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
     await userEvent.type(screen.getByLabelText(/commander key/i), 'prahari-demo-2026');
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     await waitFor(() => expect(screen.getByText('console for commander')).toBeInTheDocument());
     expect(api.login).toHaveBeenCalledWith('prahari-demo-2026');
@@ -98,7 +99,7 @@ describe('signing in', () => {
     const field = screen.getByLabelText(/commander key/i) as HTMLInputElement;
 
     await userEvent.type(field, 'prahari-demo-2026');
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     await waitFor(() => expect(screen.getByText('console for commander')).toBeInTheDocument());
     expect(window.localStorage.getItem('prahari_commander_key')).toBeNull();
@@ -118,7 +119,7 @@ describe('signing in', () => {
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
     await userEvent.type(screen.getByLabelText(/commander key/i), 'wrong');
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     expect(await screen.findByRole('alert'))
       .toHaveTextContent(/not the commander key/i);
@@ -129,17 +130,31 @@ describe('signing in', () => {
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/enter the station commander key/i);
     expect(api.login).not.toHaveBeenCalled();
   });
 
-  it('offers the demo key only where the station says it is in use', async () => {
+  /**
+   * On a station running the published key there is no secret to protect, and
+   * making somebody retype a key this screen has just printed to them is the
+   * first thing anyone handed the link meets. It is still the real exchange —
+   * the same call, with the key the station reported.
+   */
+  it('signs in on the published demo key in one press', async () => {
+    const login = vi.spyOn(api, 'login');
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
-    await userEvent.click(screen.getByRole('button', { name: 'prahari-demo-2026' }));
-    expect(screen.getByLabelText(/commander key/i)).toHaveValue('prahari-demo-2026');
+
+    await userEvent.click(screen.getByRole('button', { name: /sign in with the public demo key/i }));
+    expect(login).toHaveBeenCalledWith('prahari-demo-2026');
+  });
+
+  it('names the key it would use, rather than signing in with an unnamed one', async () => {
+    renderGate();
+    await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
+    expect(screen.getByText('prahari-demo-2026')).toBeInTheDocument();
   });
 
   it('offers nothing when a real key is configured', async () => {
@@ -285,5 +300,55 @@ describe('losing the session', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     expect(screen.getByText('console for commander')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The offline queue has no way to reach React context, so the provider pushes
+ * the session's write permission down to the API layer. If that wiring breaks,
+ * nothing fails loudly — an observer simply goes back to having their writes
+ * parked forever during an outage.
+ */
+describe('telling the API layer what this session may do', () => {
+  const queuedWriteDuringOutage = async () => {
+    await offlineQueue.setOffline(true);
+    try {
+      await api.loadDemoSeason();
+      return 'parked';
+    } catch (e) {
+      return e instanceof ApiError && e.status === 403 ? 'refused' : 'other';
+    } finally {
+      await offlineQueue.setOffline(false);
+      offlineQueue.clear();
+    }
+  };
+
+  it('parks an outage write for a commander', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(signedIn);
+    render(<SessionProvider><Console /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText(/console for commander/)).toBeInTheDocument());
+
+    await expect(queuedWriteDuringOutage()).resolves.toBe('parked');
+  });
+
+  it('refuses an outage write for an observer rather than promising to send it', async () => {
+    vi.spyOn(api, 'session').mockResolvedValue(observing);
+    render(<SessionProvider><Console /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText(/console for observer/)).toBeInTheDocument());
+
+    await expect(queuedWriteDuringOutage()).resolves.toBe('refused');
+  });
+
+  /**
+   * A console reloaded while the link is already down never hears back from
+   * /auth/session. Refusing a commander's work over that is the worse of the
+   * two failures, so an unknown session is treated as permitted.
+   */
+  it('parks the write when it could not find out who is signed in', async () => {
+    vi.spyOn(api, 'session').mockRejectedValue(new Error('link down'));
+    render(<SessionProvider><Console /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText(/console for nobody/)).toBeInTheDocument());
+
+    await expect(queuedWriteDuringOutage()).resolves.toBe('parked');
   });
 });

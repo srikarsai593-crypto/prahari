@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, Radio, SatelliteDish, X } from 'lucide-react';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
-import { offlineQueue } from '@/lib/offlineQueue';
+import { useBlackoutDrill } from '@/lib/useBlackoutDrill';
 import { saveConsolePreference } from '@/lib/fieldOperator';
 import { useWebSocket } from '@/components/WebSocketProvider';
 
@@ -14,9 +14,7 @@ export function MobileNav() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
   const { connected } = useWebSocket();
-  const [pending, setPending] = useState(0);
-  const [offline, setOffline] = useState(false);
-  const [blackout, setBlackout] = useState(false);
+  const { pending, offline, blackout, switching, toggle } = useBlackoutDrill();
   const links = [...NAV_LINKS, SCENARIO_LINK];
 
   // Navigating away must close the drawer — otherwise it stays open over the
@@ -26,21 +24,6 @@ export function MobileNav() {
   // The link state lives in the navigation band, which is hidden at this
   // width. Without it here, a phone or narrow window gave the operator no way
   // to tell a live console from one queueing every write locally.
-  const toggleBlackout = async () => {
-    if (offlineQueue.isBlackout) await offlineQueue.setBlackout(false);
-    else await offlineQueue.setBlackout(true);
-  };
-
-  useEffect(() => {
-    const sync = () => {
-      setOffline(offlineQueue.isOffline);
-      setBlackout(offlineQueue.isBlackout);
-      setPending(offlineQueue.pendingCount);
-    };
-    const unsub = offlineQueue.subscribe(sync);
-    sync();
-    return unsub;
-  }, []);
 
   const link = blackout
     ? { dot: 'bg-alert-fill',
@@ -105,13 +88,23 @@ export function MobileNav() {
               from the link could not be reached from a handset. */}
           <button
             type="button"
-            onClick={() => void toggleBlackout()}
+            role="switch"
+            aria-checked={blackout}
+            disabled={switching}
+            onClick={() => void toggle()}
             className={`flex items-center gap-3 px-3.5 py-3 rounded-md text-sm font-semibold
                         transition-colors border-l-2 border-l-transparent text-left
+                        disabled:opacity-60
                         ${blackout ? 'text-alert' : 'text-arctic-900 hover:bg-frost-subtle'}`}
           >
             <SatelliteDish size={18} aria-hidden="true" />
             {blackout ? 'Restore link' : 'Simulate blackout'}
+            {blackout && pending > 0 && (
+              <span className="ml-auto font-mono text-2xs font-bold tracking-caps px-1.5 py-0.5
+                               rounded bg-alert-tint border border-alert-edge">
+                {pending}
+              </span>
+            )}
           </button>
 
           <p className="mt-1 pt-2 border-t border-frost-border px-3.5 pb-1 flex items-center
