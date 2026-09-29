@@ -12,8 +12,8 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from ..auth import (COMMANDER, DEMO_KEY, OBSERVER, SESSION_COOKIE, SESSION_TTL_SECONDS,
-                    get_expected_key, identify, issue_session, observer_enabled,
-                    reads_are_public, require_identity)
+                    WS_TICKET_TTL_SECONDS, get_expected_key, identify, issue_session,
+                    issue_ws_ticket, observer_enabled, reads_are_public, require_identity)
 from ..events import log_event
 from ..models import LoginRequest
 from ..ratelimit import guard_login, login_attempts
@@ -137,6 +137,32 @@ async def enter_as_observer(request: Request, response: Response):
                     OBSERVER)
     return {'authenticated': True, 'actor': OBSERVER, 'role': OBSERVER,
             'can_write': False, 'expires_at': expires_at}
+
+
+@router.post('/ws-ticket', dependencies=[Depends(require_identity)])
+def mint_ws_ticket(request: Request):
+    """A short-lived credential for opening the telemetry socket.
+
+    The console talks to this backend through the frontend's own origin, so
+    its session cookie belongs to that host. The socket cannot take the same
+    route — a platform rewrite does not carry a WebSocket upgrade — so it is
+    opened against this origin directly, where that cookie is never sent.
+    Every handshake was therefore rejected and the console permanently
+    reported a link that was, from where it stood, down.
+
+    This endpoint is reached over the proxied path like every other read, so
+    the cookie does arrive here. It exchanges it for a ticket the socket can
+    carry in its query string, which is the only place a browser can put a
+    credential on a WebSocket handshake.
+
+    Read-only callers get one too. An observer is entitled to the same
+    telemetry they can already read over HTTP, and the ticket carries their
+    role rather than upgrading it.
+    """
+    identity = identify(request) or {}
+    ticket, expires_at = issue_ws_ticket(identity)
+    return {'ticket': ticket, 'expires_at': expires_at,
+            'expires_in': WS_TICKET_TTL_SECONDS}
 
 
 @router.post('/logout', dependencies=[Depends(require_identity)])

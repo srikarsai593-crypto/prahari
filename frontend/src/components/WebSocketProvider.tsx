@@ -37,6 +37,63 @@ const getWsUrl = () => {
   }
   return 'ws://localhost:3000/ws';
 };
+
+/**
+ * Whether the socket is leaving this page's origin.
+ *
+ * It is, on any hosted deployment: a platform rewrite will not carry a
+ * WebSocket upgrade, so `NEXT_PUBLIC_WS_URL` points the socket straight at
+ * the backend instead. That is also the reason the handshake needs a ticket
+ * — see below.
+ */
+const isCrossOrigin = (url: string) => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return new URL(url).host !== window.location.host;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Exchange the session for a credential the handshake can actually carry.
+ *
+ * The console reaches the backend through its own origin, so the session
+ * cookie belongs to *this* host. When the socket is opened against the
+ * backend directly — which it has to be, because the rewrite cannot proxy an
+ * upgrade — that cookie is never sent, the handshake is refused, and the
+ * console reports a link that is, from where it stands, down. That was the
+ * state of every hosted deployment: both link indicators red, forever,
+ * while every other part of the console worked.
+ *
+ * This request goes over the proxied path like any other read, so the cookie
+ * does arrive. A browser cannot put a header on a WebSocket handshake, so
+ * what comes back rides in the query string — which is why the backend keeps
+ * it alive for a minute and refuses to accept it anywhere else.
+ *
+ * Fetched fresh per attempt rather than cached: a reconnect can be half an
+ * hour after the last one, by which time any held ticket is long dead.
+ *
+ * Returning null is not a failure to handle — it is the same-origin case
+ * (local development, where the cookie works and no ticket is wanted) and
+ * the case where the station has no session to exchange. The caller
+ * connects anyway and lets the backend decide, which is what it did before
+ * tickets existed.
+ */
+const fetchTicket = async (): Promise<string | null> => {
+  try {
+    const response = await fetch('/api/auth/ws-ticket', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    const ticket = (body as { ticket?: unknown })?.ticket;
+    return typeof ticket === 'string' && ticket ? ticket : null;
+  } catch {
+    return null;
+  }
+};
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
@@ -70,10 +127,23 @@ const trace = (...args: unknown[]) => {
   if (process.env.NODE_ENV !== 'production') console.log(...args);
 };
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (unmounted.current || blackout.current) return;
 
-    const ws = new WebSocket(getWsUrl());
+    const url = getWsUrl();
+    /*
+     * Only where the socket leaves this origin. Same-origin — local
+     * development — the cookie already rides the handshake, and minting a
+     * credential that is then put in a URL for no reason is strictly worse
+     * than not doing it.
+     */
+    const ticket = isCrossOrigin(url) ? await fetchTicket() : null;
+
+    // The await above is a round trip to the station, and the operator may
+    // have declared a blackout or left the page during it.
+    if (unmounted.current || blackout.current) return;
+
+    const ws = new WebSocket(ticket ? `${url}?ticket=${encodeURIComponent(ticket)}` : url);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -110,7 +180,7 @@ const trace = (...args: unknown[]) => {
       // Exponential backoff reconnect
       retryTimer.current = setTimeout(() => {
         retryDelay.current = Math.min(retryDelay.current * 2, RECONNECT_MAX_MS);
-        connect();
+        void connect();
       }, retryDelay.current);
     };
 
@@ -123,7 +193,7 @@ const trace = (...args: unknown[]) => {
 
   useEffect(() => {
     unmounted.current = false;
-    connect();
+    void connect();
     return () => {
       unmounted.current = true;
       if (retryTimer.current) clearTimeout(retryTimer.current);
@@ -146,7 +216,7 @@ const trace = (...args: unknown[]) => {
         setSocket(null);
       } else {
         retryDelay.current = RECONNECT_BASE_MS;
-        connect();
+        void connect();
       }
     };
     sync();

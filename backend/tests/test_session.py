@@ -235,3 +235,79 @@ class TestWebSocketGate:
         station.client.post('/auth/login', json={'key': auth.get_expected_key()})
         with station.client.websocket_connect('/ws') as socket:
             assert socket is not None
+
+
+class TestWebSocketTicket:
+    """The credential the telemetry socket carries when a cookie cannot reach it.
+
+    A hosted console talks to this backend through the frontend's own origin,
+    so its session cookie belongs to that host, and a platform rewrite will
+    not carry a WebSocket upgrade for the cookie to travel on. The socket is
+    opened against this origin directly instead, and a browser cannot put a
+    header on a handshake — so the credential goes in the query string, and
+    everything below is about that being safe.
+    """
+
+    def test_a_ticket_this_server_issued_is_accepted(self):
+        ticket, _ = auth.issue_ws_ticket({'sub': 'commander', 'role': 'commander'})
+        assert auth.read_ws_ticket(ticket)['sub'] == 'commander'
+
+    def test_it_carries_the_role_rather_than_upgrading_it(self):
+        ticket, _ = auth.issue_ws_ticket({'sub': 'observer', 'role': 'observer'})
+        assert auth.read_ws_ticket(ticket)['role'] == 'observer'
+
+    def test_a_forged_signature_is_rejected(self):
+        payload = auth.issue_ws_ticket({'sub': 'commander'})[0].split('.')[0]
+        assert auth.read_ws_ticket(f'{payload}.notarealsignature') is None
+
+    def test_it_expires_within_the_minute(self):
+        _, expires_at = auth.issue_ws_ticket({'sub': 'commander'})
+        assert 0 < expires_at - time.time() <= auth.WS_TICKET_TTL_SECONDS
+
+    def test_an_expired_ticket_is_rejected(self, monkeypatch):
+        monkeypatch.setattr(auth, 'WS_TICKET_TTL_SECONDS', -1)
+        ticket, _ = auth.issue_ws_ticket({'sub': 'commander'})
+        assert auth.read_ws_ticket(ticket) is None
+
+    @pytest.mark.parametrize('rubbish', [None, '', 'nodot', 'too.many.dots', '.', 'a.'])
+    def test_malformed_tickets_do_not_crash(self, rubbish):
+        assert auth.read_ws_ticket(rubbish) is None
+
+    # ── The separation that makes a credential in a URL acceptable ───────
+
+    def test_a_ticket_cannot_be_used_as_a_session(self):
+        """The one that matters. A ticket rides in a query string and so ends
+        up in proxy and access logs; if it also authenticated the REST API,
+        anyone reading a log would hold a full session for its lifetime."""
+        ticket, _ = auth.issue_ws_ticket({'sub': 'commander', 'role': 'commander'})
+        assert auth.read_session(ticket) is None
+
+    def test_a_session_cookie_cannot_be_used_as_a_ticket(self):
+        """The other direction, so the socket path cannot be fed a long-lived
+        credential in a URL where the short-lived one belongs."""
+        token, _ = auth.issue_session()
+        assert auth.read_ws_ticket(token) is None
+
+    def test_a_session_issued_before_tickets_existed_still_works(self):
+        """Tokens already in operators' browsers carry no `use` claim. They
+        are sessions, and the deploy that adds tickets must not sign everyone
+        out."""
+        import json
+
+        legacy = auth._b64(json.dumps(
+            {'sub': 'commander', 'exp': int(time.time()) + 600, 'role': 'commander'},
+            separators=(',', ':'), sort_keys=True).encode())
+        import hashlib
+        import hmac
+        signature = auth._b64(
+            hmac.new(auth._session_secret(), legacy.encode(), hashlib.sha256).digest())
+
+        assert auth.read_session(f'{legacy}.{signature}')['sub'] == 'commander'
+
+    def test_rotating_the_key_invalidates_live_tickets(self, monkeypatch):
+        monkeypatch.setenv('PRAHARI_API_KEY', 'first-key')
+        ticket, _ = auth.issue_ws_ticket({'sub': 'commander'})
+        assert auth.read_ws_ticket(ticket) is not None
+
+        monkeypatch.setenv('PRAHARI_API_KEY', 'rotated-key')
+        assert auth.read_ws_ticket(ticket) is None
