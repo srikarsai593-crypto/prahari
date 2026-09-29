@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Check, Minus, Volume2, X } from 'lucide-react';
 import { useDialogFocus } from '@/lib/useDialogFocus';
 
@@ -21,6 +21,10 @@ import { useDialogFocus } from '@/lib/useDialogFocus';
  * somebody deciding whether they can use this console on a screen reader
  * needs the gaps more than the wins.
  */
+
+/** Stable anchor for a provision, so a caller can point at its own line. */
+const provisionId = (title: string) =>
+  `a11y-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
 interface Provision {
   supported: boolean;
@@ -95,8 +99,12 @@ const PROVISIONS: Provision[] = [
   {
     supported: false,
     title: 'English only',
-    detail: 'The rail says English because that is all there is. Hindi has not '
-      + 'been implemented, and the language control is not a switch.',
+    detail: 'There is one language and it is English. Hindi and the other '
+      + 'scheduled languages have not been implemented, so the rail names the '
+      + 'language rather than offering a choice — a switch with one position '
+      + 'is a broken switch. The telemetry figures would stay Latin either '
+      + 'way, by convention, and the HF radio fallback could not carry another '
+      + 'script at all: ITA2 is a five-bit alphabet with no Devanagari in it.',
   },
 ];
 
@@ -110,26 +118,35 @@ const READERS = [
   ['Orca', 'Built into most Linux desktops'],
 ] as const;
 
-export function AccessibilityStatement() {
-  const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
-  const dialogRef = useDialogFocus<HTMLDivElement>(open, close);
+/**
+ * The statement itself, opened by whichever rail item the operator pressed.
+ *
+ * Controlled rather than self-contained, because two entries in the rail now
+ * lead here: the screen-reader control, and the language control — which is
+ * not a switch and says so on the line this scrolls to.
+ */
+export function AccessibilityDialog({ open, onClose, highlight }: {
+  open: boolean;
+  onClose: () => void;
+  /** A provision title to scroll to and mark, for a caller that is about one. */
+  highlight?: string;
+}) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(open, onClose);
+  const close = onClose;
+
+  /* Bring the caller's own line into view. A statement that opens at the top
+     when the operator asked about one entry makes them go looking for it. */
+  useEffect(() => {
+    if (!open || !highlight) return;
+    const id = requestAnimationFrame(() => {
+      document.getElementById(provisionId(highlight))
+        ?.scrollIntoView({ block: 'center', behavior: 'auto' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [open, highlight]);
 
   return (
     <>
-      <button
-        type="button"
-        data-compact
-        onClick={() => setOpen(true)}
-        aria-haspopup="dialog"
-        title="Screen reader and accessibility support on this console"
-        className="hidden lg:flex items-center gap-1.5 uppercase tracking-caps
-                   text-slate-300 hover:text-white transition-colors"
-      >
-        <Volume2 size={13} aria-hidden="true" />
-        Screen Reader
-      </button>
-
       {open && (
         <div
           ref={dialogRef}
@@ -164,7 +181,17 @@ export function AccessibilityStatement() {
             <div className="flex-1 overflow-y-auto pr-1">
               <ul className="space-y-3">
                 {PROVISIONS.map((item) => (
-                  <li key={item.title} className="flex gap-3">
+                  <li key={item.title}
+                      id={provisionId(item.title)}
+                      /* The marked line gets a left accent bar and a pale
+                         wash — the same device the toast rail uses to say
+                         "this one", rather than a hairline ring that came out
+                         at 1.33:1 on a white card and could not be seen. */
+                      className={`flex gap-3 rounded-md
+                                  ${highlight === item.title
+                                    ? '-mx-3 pl-3 pr-3 py-2 bg-arctic-50 '
+                                      + 'border-l-[3px] border-l-arctic-600'
+                                    : ''}`}>
                     <span aria-hidden="true"
                           className={`shrink-0 mt-0.5 w-5 h-5 rounded-full grid place-items-center
                                       ${item.supported
@@ -215,6 +242,30 @@ export function AccessibilityStatement() {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+/** The rail's screen-reader entry. */
+export function AccessibilityStatement() {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+
+  return (
+    <>
+      <button
+        type="button"
+        data-compact
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        title="Screen reader and accessibility support on this console"
+        className="hidden lg:flex items-center gap-1.5 uppercase tracking-caps
+                   text-slate-300 hover:text-white transition-colors"
+      >
+        <Volume2 size={13} aria-hidden="true" />
+        Screen Reader
+      </button>
+      <AccessibilityDialog open={open} onClose={close} />
     </>
   );
 }

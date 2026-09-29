@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Accessibility, Contrast, Globe } from 'lucide-react';
+import { Accessibility, Contrast } from 'lucide-react';
 import { AccessibilityStatement } from './AccessibilityStatement';
+import { LanguageNotice } from './LanguageNotice';
 import { applyTheme, loadTheme, nextTheme, saveTheme, type Theme } from '@/lib/theme';
 
 /**
@@ -129,10 +130,10 @@ export function GovRail() {
               that work. The support it names is real; see the component. */}
           <AccessibilityStatement />
 
-          <span className="flex items-center gap-1.5 uppercase tracking-caps text-slate-300">
-            <Globe size={13} aria-hidden="true" />
-            English
-          </span>
+          {/* Was a <span> reading "English" between two controls that work —
+              the same defect the screen-reader entry had. It is not a switch,
+              because there is nothing to switch to; see the component. */}
+          <LanguageNotice />
         </div>
       </div>
     </div>
