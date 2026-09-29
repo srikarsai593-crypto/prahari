@@ -109,6 +109,79 @@ describe('the SOS guard', () => {
     await userEvent.click(await screen.findByText('SOS'));
     expect(await screen.findByText(/declares a critical incident/i)).toBeInTheDocument();
   });
+
+  /**
+   * The hold was wired to pointer events alone, so an operator on a keyboard
+   * — or anyone using a switch or a screen reader — could reach the SOS
+   * button, press it, and have nothing happen at all. On the one control in
+   * this console that exists to summon help, and on a console whose
+   * accessibility statement promises every control is operable by keyboard.
+   */
+  const openSos = async () => {
+    await signInAs('Dr. Priya Sharma');
+    await userEvent.click(await screen.findByText('SOS'));
+    return screen.findByRole('button', { name: /hold for .* seconds/i });
+  };
+
+  /* Raw key events rather than userEvent: this is specifically about the
+     keydown/keyup pair, and dispatching them directly says exactly that. */
+  const press = (el: HTMLElement, key: string, init: KeyboardEventInit = {}) =>
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...init }));
+  const release = (el: HTMLElement, key: string) =>
+    el.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+
+  for (const [name, key] of [['Enter', 'Enter'], ['Space', ' ']]) {
+    it(`can be raised from the keyboard with ${name}`, async () => {
+      const sos = vi.spyOn(api, 'triggerSOS').mockResolvedValue({} as never);
+      const hold = await openSos();
+      hold.focus();
+
+      press(hold, key);
+      await waitFor(() => expect(sos).toHaveBeenCalledWith('per-priya'),
+        { timeout: SOS_HOLD_MS + 2000 });
+    });
+  }
+
+  it('is not raised by a keyboard press let go too early', async () => {
+    const sos = vi.spyOn(api, 'triggerSOS');
+    const hold = await openSos();
+    hold.focus();
+
+    press(hold, 'Enter');
+    await new Promise((r) => setTimeout(r, 200));
+    release(hold, 'Enter');
+    await new Promise((r) => setTimeout(r, SOS_HOLD_MS + 400));
+
+    expect(sos).not.toHaveBeenCalled();
+  });
+
+  /** Holding a key repeats keydown; without a guard each repeat restarted
+   *  the clock and the hold could never finish. */
+  it('is not restarted by the key repeating while it is held', async () => {
+    const sos = vi.spyOn(api, 'triggerSOS').mockResolvedValue({} as never);
+    const hold = await openSos();
+    hold.focus();
+
+    press(hold, 'Enter');
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, SOS_HOLD_MS / 4));
+      press(hold, 'Enter', { repeat: true });
+    }
+
+    await waitFor(() => expect(sos).toHaveBeenCalled(), { timeout: SOS_HOLD_MS + 2000 });
+  });
+
+  it('abandons the hold if focus leaves the button', async () => {
+    const sos = vi.spyOn(api, 'triggerSOS');
+    const hold = await openSos();
+    hold.focus();
+
+    press(hold, 'Enter');
+    hold.blur();
+    await new Promise((r) => setTimeout(r, SOS_HOLD_MS + 300));
+
+    expect(sos).not.toHaveBeenCalled();
+  });
 });
 
 describe('checking in', () => {

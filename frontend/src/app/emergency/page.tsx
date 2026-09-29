@@ -474,7 +474,15 @@ export default function EmergencyPage() {
               <p className="text-2xs text-frost-muted mb-3">
                 <span className="capitalize">{focusIncident.type.replace('_', ' ')}</span> ·{' '}
                 <span className="font-mono">{focusIncident.id}</span> ·{' '}
-                {Math.round(focusIncident.affected_radius_m)} m radius
+                {/* Not `?? 0`. The column permits NULL and no route validates
+                    it on read, so a missing radius is possible — and printing
+                    "0 m radius" over an active incident is a confident claim
+                    that the affected area is a point, which is worse than
+                    saying nothing. A figure this console cannot stand behind
+                    is not shown. */}
+                {Number.isFinite(focusIncident.affected_radius_m)
+                  ? `${Math.round(focusIncident.affected_radius_m)} m radius`
+                  : 'radius not recorded'}
               </p>
               <div className="space-y-2">
                 <div className="flex justify-between items-center bg-arctic-50 p-3 rounded-xl">

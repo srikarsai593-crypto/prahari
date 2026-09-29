@@ -114,7 +114,7 @@ module reads the same truth.
 | Decision | Why |
 |---|---|
 | **Deterministic SQL for stock counts** | The LLM parses *intent*; it never produces a number anyone acts on. `/inventory/{station}/count` is a plain `SUM`, and it refuses to sum rows with mixed units rather than returning a plausible wrong figure. |
-| **Honest AI degradation** | Every parse returns `parse_source` (`gemini` / `ollama` / `fallback`), and the UI shows which one ran. A demo must never claim "AI parsed this" when a regex did. |
+| **Honest AI degradation** | Every parse returns `parse_source` (`gemini` / `ollama` / `fallback`), and `/expeditions/parse-nl` adds `ai_used` from it. The console deliberately does **not** print either on screen: an operator recording stock does not need to know which parser ran, and "fallback" in a station console is jargon that explains nothing to the person reading it. The guarantee is that nothing anywhere claims a model ran when a regex did — the honest signal is in the response and the API docs, not in the operator's way. |
 | **Ordered audit log** | Events are ordered by an autoincrement `seq`, not by `created_at`. One user action emits several events inside the same second; sorting by time alone shows effects before causes. |
 | **UTC everywhere, explicitly** | Every timestamp is ISO-8601 with a `Z`. SQLite's `CURRENT_TIMESTAMP` is naive and browsers parse it as *local* time, which silently shifts the whole timeline by the host's UTC offset. |
 | **Per-station weather** | The blizzard ΔT is a row in `station_conditions`, not a process global. Cargo writes it, Inventory reads it, and it survives a restart. |
@@ -918,7 +918,7 @@ you which is which is one you cannot act on.
 | Asset fuel, range, seats, medic | Seeded capability figures per asset | **Reference data** — not telemetry from the vehicles |
 | Head-counts and accountability | Personnel status, which an operator sets | **Real** — as accurate as the last check-in |
 | Audit chain | SHA-256 over each entry and the one before it | **Real, and tamper-*evident*** — a writer with database access could recompute the whole chain. Not tamper-proof, and `/events/verify` says so in its own response |
-| Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran | **Real**, and the UI never claims AI when a regex did the work |
+| Every expedition parse | Gemini, else Ollama, else regex — `parse_source` names which ran, and the response carries `ai_used` | **Real.** The UI never claims AI when a regex did the work; it does not name the parser either way, because that is a fact about the implementation and not about the station |
 | Purchase orders and vendor names | Synthetic, planted by the demonstration season | **Synthetic** — no vendor system is contacted and nothing is sent to anyone; this is the station's own record of what it has on order |
 | The accessibility statement | Hand-maintained, checked against the code | **A claim, and it lists its own gaps** — if a line stops being true it is wrong and must be corrected, not left standing |
 | A shift handover brief | Every section read from the station's own records at generation time | **Derived**, and it names any source it could not read rather than printing an empty section |

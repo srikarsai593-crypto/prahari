@@ -733,6 +733,36 @@ function Sos({ operator, station, position, addToast, onDone }: {
         onPointerUp={() => setHeld(0)}
         onPointerLeave={() => setHeld(0)}
         onPointerCancel={() => setHeld(0)}
+        /*
+         * The same hold, from a keyboard.
+         *
+         * Pointer events are the only thing that started this countdown, so
+         * an operator on a keyboard — or anyone using a switch or a screen
+         * reader — could reach the SOS button, press it, and have nothing
+         * happen at all. On the one control in this console that exists to
+         * summon help, and on a console whose accessibility statement says
+         * every control is operable by keyboard.
+         *
+         * `repeat` is guarded because holding a key fires keydown over and
+         * over: without it every repeat restarted the clock and the hold
+         * could never complete. `preventDefault` stops Space scrolling the
+         * page and stops the browser synthesising a click on release, which
+         * would fire the SOS a second time.
+         */
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          if (event.repeat) return;
+          setHeld(Date.now());
+        }}
+        onKeyUp={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          setHeld(0);
+        }}
+        /* Tabbing away mid-hold must abandon it, exactly as moving the
+           pointer off the button does. */
+        onBlur={() => setHeld(0)}
         aria-label={`Hold for ${SOS_HOLD_MS / 1000} seconds to raise an SOS for `
           + `${operator.name}`}
         className={`w-full min-h-[220px] rounded-3xl border-4 text-white font-extrabold
