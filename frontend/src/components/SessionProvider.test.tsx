@@ -84,7 +84,7 @@ describe('signing in', () => {
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
     await userEvent.type(screen.getByLabelText(/commander key/i), 'prahari-demo-2026');
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     await waitFor(() => expect(screen.getByText('console for commander')).toBeInTheDocument());
     expect(api.login).toHaveBeenCalledWith('prahari-demo-2026');
@@ -98,7 +98,7 @@ describe('signing in', () => {
     const field = screen.getByLabelText(/commander key/i) as HTMLInputElement;
 
     await userEvent.type(field, 'prahari-demo-2026');
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     await waitFor(() => expect(screen.getByText('console for commander')).toBeInTheDocument());
     expect(window.localStorage.getItem('prahari_commander_key')).toBeNull();
@@ -118,7 +118,7 @@ describe('signing in', () => {
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
     await userEvent.type(screen.getByLabelText(/commander key/i), 'wrong');
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     expect(await screen.findByRole('alert'))
       .toHaveTextContent(/not the commander key/i);
@@ -129,17 +129,31 @@ describe('signing in', () => {
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/enter the station commander key/i);
     expect(api.login).not.toHaveBeenCalled();
   });
 
-  it('offers the demo key only where the station says it is in use', async () => {
+  /**
+   * On a station running the published key there is no secret to protect, and
+   * making somebody retype a key this screen has just printed to them is the
+   * first thing anyone handed the link meets. It is still the real exchange —
+   * the same call, with the key the station reported.
+   */
+  it('signs in on the published demo key in one press', async () => {
+    const login = vi.spyOn(api, 'login');
     renderGate();
     await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
-    await userEvent.click(screen.getByRole('button', { name: 'prahari-demo-2026' }));
-    expect(screen.getByLabelText(/commander key/i)).toHaveValue('prahari-demo-2026');
+
+    await userEvent.click(screen.getByRole('button', { name: /sign in with the public demo key/i }));
+    expect(login).toHaveBeenCalledWith('prahari-demo-2026');
+  });
+
+  it('names the key it would use, rather than signing in with an unnamed one', async () => {
+    renderGate();
+    await waitFor(() => expect(screen.getByLabelText(/commander key/i)).toBeInTheDocument());
+    expect(screen.getByText('prahari-demo-2026')).toBeInTheDocument();
   });
 
   it('offers nothing when a real key is configured', async () => {

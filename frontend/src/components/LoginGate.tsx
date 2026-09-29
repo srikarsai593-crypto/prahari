@@ -23,18 +23,22 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { if (authenticated) { setKey(''); setError(null); } }, [authenticated]);
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!key.trim()) return setError('Enter the station commander key.');
+  const signInWith = async (candidate: string) => {
     setBusy(true);
     setError(null);
     try {
-      await signIn(key.trim());
+      await signIn(candidate);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Sign-in failed.');
     } finally {
       setBusy(false);
     }
+  };
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!key.trim()) return setError('Enter the station commander key.');
+    await signInWith(key.trim());
   };
 
   const observe = async () => {
@@ -138,18 +142,30 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
             </div>
           )}
 
+          {/*
+            A station running on the published demo key has no secret to
+            protect — the key is printed in the README and this screen has
+            just displayed it. Making somebody copy it into the field above
+            and then press Sign in is two steps of ceremony guarding nothing,
+            and it is the first thing anyone handed the link meets.
+
+            Still the real sign-in: the same POST, the same session cookie,
+            the same audit line. The button skips the typing, not the
+            exchange. It says which key it is using, so nobody is signed in
+            by a control that did not tell them what it did.
+          */}
           {state?.demo_key_enabled && state.demo_key && (
             <div className="mt-5 pt-4 border-t border-white/10">
-              <p className="text-2xs text-slate-400 leading-relaxed">
-                This station is running on the public demo key. Use{' '}
-                <button type="button"
-                        onClick={() => setKey(state.demo_key ?? '')}
-                        className="btn-inline font-mono text-arctic-300 hover:text-white
-                                   underline underline-offset-2 decoration-white/25
-                                   hover:decoration-white/60">
-                  {state.demo_key}
-                </button>{' '}
-                to sign in.
+              <button type="button" disabled={busy}
+                      onClick={() => void signInWith(state.demo_key ?? '')}
+                      className="btn-secondary w-full !py-2.5 text-13">
+                <KeyRound size={14} aria-hidden="true" />
+                Sign in with the public demo key
+              </button>
+              <p className="mt-2 text-2xs text-slate-400 leading-relaxed text-center">
+                This station runs on{' '}
+                <span className="font-mono text-arctic-300">{state.demo_key}</span>, which is
+                published. Full access — every module, and changes are saved.
               </p>
             </div>
           )}
