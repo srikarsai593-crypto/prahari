@@ -1501,3 +1501,199 @@ a:hover > .snowflake-hero-wrapper .snowflake-svg-element {
 [data-theme='contrast'] .leaflet-control-attribution a {
   color: var(--accent) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SATCOM blackout  —  [data-blackout='on']
+   ═══════════════════════════════════════════════════════════════════════════
+
+   The console has always survived an outage. The queue holds every write, the
+   service worker holds the shell, and the replay puts the work back when the
+   link returns. None of that was visible: the only sign the station could not
+   be reached was a small amber badge in the navigation band, which reads the
+   same as a console that is simply idle. An operator who did not already know
+   the link was down had no reason to look, and the offline claim was
+   therefore something you had to be told rather than something you could see.
+
+   So the outage takes the whole interface. `BlackoutBanner` writes this
+   attribute onto <html> whenever the station is unreachable — deliberately,
+   in a drill, or because the satellite really did go — and the tokens below
+   swing the console from ice blue to amber. It is the same mechanism as the
+   high-contrast theme: redefine the palette at the root, and the header, the
+   cards, the buttons, the footer and the toast rail all follow without a
+   single component knowing that an outage exists.
+
+   ── Why the tint defers to the contrast theme ────────────────────────────
+
+   The token block is scoped `:not([data-theme='contrast'])`. Somebody using
+   the high-contrast theme chose it because they could not read the default,
+   and an amber wash laid over that is the console overruling an accessibility
+   need to make a point about connectivity. The banner and the frame still
+   appear there — they carry the actual information — but the palette stays
+   as they set it.
+
+   ── What deliberately does NOT change ────────────────────────────────────
+
+   The status spectrum. Green still means nominal and red still means
+   emergency: a crevasse alert raised during an outage must not be softened
+   into the colour of the outage. And the map tiles, for the same reason they
+   survive the contrast theme — the ground does not change colour because the
+   satellite did.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+:root[data-blackout='on']:not([data-theme='contrast']) {
+  /* Surfaces — a warm amber wash, still light enough to read a table on. */
+  --bg-page: #fdf0d9;
+  --bg-card: #fffaf0;
+  --bg-inset: #fcf0dc;
+  --bg-command: #451a03;        /* the navigation band goes burnt umber */
+  --bg-command-deep: #2c1002;
+
+  --border: #f6d5a0;
+  --border-inset: #eeb461;
+  --border-accent: rgba(180, 83, 9, 0.45);
+
+  /* Burnt orange replaces polar blue as the interactive colour. #b45309
+     clears 4.9:1 on the card surface and carries white text at the same
+     ratio, so links and primary buttons both still pass AA. */
+  --accent: #b45309;
+  --accent-hover: #92400e;
+  --accent-tint: #fdebc8;
+  --accent-ring: #f2bd5c;
+  --accent-deep: #78350f;
+
+  --text: #401803;              /* ~15:1 on the card surface */
+  --text-muted: #79370f;        /*  ~8:1 */
+  --text-faint: #9a5b12;        /*  ~5:1 */
+  --text-on-dark: #fde4c0;
+
+  --shadow-card: 0 1px 3px 0 rgba(120, 53, 15, 0.12), 0 1px 2px -1px rgba(120, 53, 15, 0.08);
+  --shadow-raised: 0 4px 6px -1px rgba(120, 53, 15, 0.18);
+}
+
+/* Tailwind's palette is literal hex, so the utilities do not follow the
+   variables above (the contrast theme has the same problem and solves it by
+   enumerating them). Rather than re-point a hundred classes for a state that
+   lasts a minute, the page itself carries the wash: the canvas is amber, and
+   a frame around the viewport says the console is running on its own. */
+:root[data-blackout='on'] body {
+  background-color: var(--bg-page);
+}
+
+/* The frame. `position: fixed` and `pointer-events: none`, so it sits over
+   everything — including the map, which it tints without recolouring — and
+   intercepts nothing. An inset shadow rather than a flat overlay: the edges
+   glow and the middle of the screen stays at full legibility. */
+:root[data-blackout='on'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  /* Over the page and its sticky header (z-30), under every overlay that
+     holds content: the nav drawer and the station switcher sit at 50, the
+     toasts at 60, the banners above those. The frame is only an edge glow,
+     but an edge glow drawn across an open dropdown reads as a rendering
+     fault rather than a state. */
+  z-index: 40;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 3px rgba(217, 119, 6, 0.85),
+              inset 0 0 44px 14px rgba(217, 119, 6, 0.28);
+  animation: blackoutFrame 2.6s ease-in-out infinite;
+}
+
+@keyframes blackoutFrame {
+  0%, 100% { box-shadow: inset 0 0 0 3px rgba(217, 119, 6, 0.85),
+                         inset 0 0 44px 14px rgba(217, 119, 6, 0.28); }
+  50%      { box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 1),
+                         inset 0 0 70px 20px rgba(245, 158, 11, 0.42); }
+}
+
+/* ── The banner ──────────────────────────────────────────────────────────
+   Amber-600 through orange-700 with white text: 4.8:1 at the light end, so
+   the headline holds up across the whole sweep. */
+.blackout-banner {
+  background: linear-gradient(95deg, #b45309 0%, #d97706 45%, #c2410c 100%);
+  color: #ffffff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 14px -2px rgba(120, 53, 15, 0.45);
+  animation: bannerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The dish leans as though it is hunting for a bird it cannot find. Small
+   enough not to be a distraction on a page somebody is still working on. */
+@keyframes dishSweep {
+  0%, 100% { transform: rotate(-11deg); }
+  50%      { transform: rotate(11deg); }
+}
+
+.blackout-dish {
+  animation: dishSweep 2.2s ease-in-out infinite;
+}
+
+/* ── The queue counter ───────────────────────────────────────────────────
+   Keyed on the value in BlackoutBanner, so the animation restarts on each
+   increment. This is the part that answers "and what happens to my work?" —
+   the number climbing as you use the console is the whole demonstration. */
+@keyframes queueBump {
+  0%   { transform: scale(1);    background-color: rgba(0, 0, 0, 0.25); }
+  35%  { transform: scale(1.32); background-color: rgba(255, 255, 255, 0.55); }
+  100% { transform: scale(1);    background-color: rgba(0, 0, 0, 0.25); }
+}
+
+.queue-counter {
+  display: inline-block;
+  animation: queueBump 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The blackout badge in the navigation band, so the control an operator just
+   pressed is visibly the thing holding the console down. */
+.blackout-switch-live {
+  animation: pulse-dim 1.8s ease-in-out infinite;
+}
+
+/* The frame, the dish and the counter all run on a loop or on every write.
+   Under a reduced-motion setting the state still has to be unmistakable, so
+   the frame stays — it just stops breathing. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-blackout='on'] body::after,
+  .blackout-banner,
+  .blackout-dish,
+  .queue-counter,
+  .blackout-switch-live {
+    animation: none !important;
+  }
+}
+
+/* The dark surfaces are Tailwind literals, so they do not follow the tokens
+   above — and they are the largest blocks on the page. The hero sitting in
+   cold navy under an amber banner reads as a half-applied state rather than
+   a console running on its own. Enumerated, like the contrast theme does,
+   rather than reached for with a filter: a filter would take the map with it. */
+:root[data-blackout='on']:not([data-theme='contrast']) .bg-navy,
+:root[data-blackout='on']:not([data-theme='contrast']) .bg-navy-deep,
+:root[data-blackout='on']:not([data-theme='contrast']) .bg-navy-panel,
+:root[data-blackout='on']:not([data-theme='contrast']) .bg-navy-command,
+:root[data-blackout='on']:not([data-theme='contrast']) .bg-arctic-900,
+:root[data-blackout='on']:not([data-theme='contrast']) .bg-arctic-950 {
+  background-color: #3a1604;
+}
+
+:root[data-blackout='on']:not([data-theme='contrast']) .border-navy-panel {
+  border-color: #7c3a09;
+}
+
+/* The hero's accent text and the drift sheets behind it are polar blue. */
+:root[data-blackout='on']:not([data-theme='contrast']) .text-arctic-400,
+:root[data-blackout='on']:not([data-theme='contrast']) .text-arctic-300 {
+  color: #fbbf24;
+}
+
+:root[data-blackout='on']:not([data-theme='contrast']) .blizzard-wind-layer {
+  opacity: 0.08;
+}
+
+/* The toast rail is fixed at `top-4` and the banner is sticky at the same
+   edge, so a sync confirmation landed on top of the counter it was reporting
+   — the two most important things in the drill, overlapping. The rail drops
+   below the banner for as long as one is up. */
+:root[data-blackout='on'] .toast-rail {
+  top: 4.25rem;
+}

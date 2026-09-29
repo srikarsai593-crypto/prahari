@@ -12,6 +12,7 @@ import { StationProvider } from '@/components/StationProvider';
 import { ToastProvider } from '@/components/Toast';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { CriticalBanner } from '@/components/CriticalBanner';
+import { BlackoutBanner } from '@/components/BlackoutBanner';
 import { GovRail } from '@/components/GovRail';
 import { PortalHeader } from '@/components/PortalHeader';
 import { PortalNav } from '@/components/PortalNav';
@@ -132,6 +133,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 Skip to main content
               </a>
 
+              {/* Above the critical banner in the flow so the two stack
+                  rather than fighting for the top edge. Renders nothing
+                  while the link is up. */}
+              <BlackoutBanner />
               <CriticalBanner />
 
               <div className="flex flex-col min-h-screen">

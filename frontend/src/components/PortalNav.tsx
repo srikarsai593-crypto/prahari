@@ -3,12 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Eye, LogOut, SatelliteDish } from 'lucide-react';
-import { offlineQueue } from '@/lib/offlineQueue';
-import { useEffect, useState } from 'react';
+import { useBlackoutDrill } from '@/lib/useBlackoutDrill';
 import { NAV_LINKS, SCENARIO_LINK } from '@/lib/nav';
 import { useWebSocket } from '@/components/WebSocketProvider';
 import { useSession } from '@/components/SessionProvider';
-import { useToast } from '@/components/Toast';
 
 /**
  * Tier 3 — the primary module navigation band.
@@ -21,48 +19,7 @@ export function PortalNav() {
   const pathname = usePathname();
   const { connected } = useWebSocket();
   const { authenticated, isObserver, signOut } = useSession();
-  const { addToast } = useToast();
-  const [pending, setPending] = useState(0);
-  const [offline, setOffline] = useState(false);
-  const [blackout, setBlackout] = useState(false);
-  const [switching, setSwitching] = useState(false);
-
-  useEffect(() => {
-    const sync = () => {
-      setOffline(offlineQueue.isOffline);
-      setBlackout(offlineQueue.isBlackout);
-      setPending(offlineQueue.pendingCount);
-    };
-    const unsub = offlineQueue.subscribe(sync);
-    sync();
-    return unsub;
-  }, []);
-
-  /**
-   * Cut the station link, or restore it and replay what was written while it
-   * was down. The claim this console makes is that an outage costs an operator
-   * nothing, and until now there was no way to make it true in front of anyone
-   * — you had to pull the network cable and hope.
-   */
-  const toggleBlackout = async () => {
-    setSwitching(true);
-    try {
-      if (offlineQueue.isBlackout) {
-        const held = offlineQueue.pendingCount;
-        const { flushed, dropped } = await offlineQueue.setBlackout(false);
-        addToast(
-          held === 0
-            ? 'SATCOM restored — nothing was written while the link was down'
-            : `SATCOM restored — ${flushed} of ${held} queued write(s) replayed`
-              + (dropped ? `, ${dropped} rejected` : ''),
-          dropped ? 'warning' : 'success');
-      } else {
-        await offlineQueue.setBlackout(true);
-        addToast('SATCOM blackout — writes are being held on this console and will '
-          + 'replay when the link returns', 'warning');
-      }
-    } finally { setSwitching(false); }
-  };
+  const { pending, offline, blackout, switching, toggle } = useBlackoutDrill();
 
   // Whether the console can reach the station is not an optional decoration:
   // below xl this was hidden entirely, so an operator on a laptop had no way
@@ -123,14 +80,15 @@ export function PortalNav() {
             role="switch"
             aria-checked={blackout}
             disabled={switching}
-            onClick={() => void toggleBlackout()}
+            onClick={() => void toggle()}
             title={blackout
               ? 'Restore the simulated link and replay everything queued'
               : 'Simulate losing the satellite link — writes queue on this console'}
+            data-tour="blackout"
             className={`flex items-center gap-1.5 font-mono text-2xs font-bold tracking-caps
                         uppercase border rounded px-2 py-1 transition-colors
                         ${blackout
-                          ? 'border-alert-edge bg-alert-tint text-alert'
+                          ? 'border-alert-edge bg-alert-tint text-alert blackout-switch-live'
                           : 'border-frost-border text-slate-300 hover:text-white '
                             + 'hover:border-arctic-600'}`}
           >
