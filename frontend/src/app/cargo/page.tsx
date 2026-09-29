@@ -129,8 +129,11 @@ export default function CargoPage() {
 
   const handleCreate = async () => {
     if (!form.item_name.trim()) return addToast('Item name is required', 'warning');
-    if (form.weight_kg <= 0) return addToast('Enter the shipping weight in kg', 'warning');
-    if (form.origin_station && form.quantity <= 0) {
+    // Written as `!(x > 0)` rather than `x <= 0` because an empty field is
+    // now NaN rather than 0 — and every comparison against NaN is false, so
+    // `<= 0` would wave a blank weight straight through to the station.
+    if (!(form.weight_kg > 0)) return addToast('Enter the shipping weight in kg', 'warning');
+    if (form.origin_station && !(form.quantity > 0)) {
       return addToast(
         `An inter-station transfer needs a quantity — state how much leaves ${form.origin_station}.`,
         'warning');
@@ -366,7 +369,7 @@ export default function CargoPage() {
                 <input id="cg-qty" type="number" min="0" step="any"
                        value={form.quantity || ''} placeholder="900"
                        onChange={(e) => setForm({
-                         ...form, quantity: parseFloat(e.target.value) || 0 })} />
+                         ...form, quantity: e.target.value === '' ? NaN : parseFloat(e.target.value) })} />
                 <p className="text-2xs text-frost-muted mt-1">
                   {selectedStock
                     ? `Added to ${selectedStock.name} at ${station.label} when the crate is unloaded.`
@@ -378,7 +381,7 @@ export default function CargoPage() {
                 <input id="cg-weight" type="number" min="0" step="any"
                        value={form.weight_kg || ''} placeholder="500"
                        onChange={(e) => setForm({
-                         ...form, weight_kg: parseFloat(e.target.value) || 0 })} />
+                         ...form, weight_kg: e.target.value === '' ? NaN : parseFloat(e.target.value) })} />
                 <p className="text-2xs text-frost-muted mt-1">
                   A vessel carries up to {VESSEL_CAPACITY_KG.toLocaleString()} kg.
                 </p>
