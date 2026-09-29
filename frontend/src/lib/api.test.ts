@@ -133,3 +133,69 @@ describe('a read', () => {
       expect(offlineQueue.pendingCount).toBe(0);
     });
 });
+
+describe('requests that must never be parked', () => {
+  /**
+   * The serious one. `request` queues any non-GET made while offline and
+   * persists the body so the work survives a reload — so a sign-in attempted
+   * during an outage wrote the commander key, in plaintext, into storage
+   * that page script can read. That is the exposure this console removed
+   * when it stopped shipping the key as NEXT_PUBLIC_COMMANDER_KEY, arriving
+   * again through a door nobody had looked at.
+   */
+  it('never writes the commander key into storage', async () => {
+    await offlineQueue.setOffline(true);
+
+    await expect(api.login('SUPER-SECRET-COMMANDER-KEY')).rejects.toThrow();
+
+    const stored = window.localStorage.getItem('prahari_offline_queue_v2') ?? '';
+    expect(stored).not.toContain('SUPER-SECRET-COMMANDER-KEY');
+    expect(offlineQueue.pendingCount).toBe(0);
+  });
+
+  it('keeps the queue free of anything about who is signed in', async () => {
+    await offlineQueue.setOffline(true);
+
+    await expect(api.login('k')).rejects.toThrow();
+    await expect(api.logout()).rejects.toThrow();
+    await expect(api.enterAsObserver()).rejects.toThrow();
+
+    expect(offlineQueue.pendingCount).toBe(0);
+  });
+
+  /**
+   * And it says so, rather than resolving to the queued marker — which the
+   * sign-in screen would read as success and then show a console that is
+   * not signed in.
+   */
+  it('tells the caller it could not be done rather than pretending it waits',
+    async () => {
+      await offlineQueue.setOffline(true);
+      await expect(api.login('k')).rejects.toThrow(/cannot be reached/i);
+    });
+
+  it('still parks an ordinary write beside them', async () => {
+    await offlineQueue.setOffline(true);
+
+    await expect(api.login('k')).rejects.toThrow();
+    expect(isQueued(await api.loadDemoSeason())).toBe(true);
+    expect(offlineQueue.pendingCount).toBe(1);
+  });
+
+  it('does not queue them on a network failure either', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection reset')));
+
+    await expect(api.login('SUPER-SECRET-COMMANDER-KEY')).rejects.toThrow();
+
+    const stored = window.localStorage.getItem('prahari_offline_queue_v2') ?? '';
+    expect(stored).not.toContain('SUPER-SECRET-COMMANDER-KEY');
+    expect(offlineQueue.pendingCount).toBe(0);
+  });
+
+  it('lets a signed-in caller log in normally when the link is up', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      { ok: true, status: 200, text: async () => '{"authenticated":true}' }));
+
+    await expect(api.login('k')).resolves.toMatchObject({ authenticated: true });
+  });
+});

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useInventory, useStockCommand } from './useInventory';
 import { api } from './api';
+import { offlineQueue } from './offlineQueue';
 import type { InventoryItem, StockCommandResult } from './types';
 
 /**
@@ -280,5 +281,50 @@ describe('useStockCommand', () => {
 
     expect(outcome.error).toBe('Station refused');
     expect(result.current.busy).toBe(false);
+  });
+});
+
+describe('coming back from an outage', () => {
+  /**
+   * The table went on showing the figure from before the outage after a
+   * correction made offline had already reached the station — the broadcast
+   * that would normally refresh it is the one the console missed while its
+   * socket was down. Measured against the running console: the station held
+   * 5200 L and the row read 6500 L, with an empty queue and nothing to say
+   * it was stale.
+   *
+   * Driven through the real queue rather than a test-only hook, so what is
+   * asserted is the path an operator actually takes.
+   */
+  it('re-reads the stock once a replay has delivered', async () => {
+    const list = vi.spyOn(api, 'listInventory').mockResolvedValue([]);
+
+    renderHook(() => useInventory('Maitri', true));
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    const before = list.mock.calls.length;
+
+    // Park a write, then let the link come back and the queue drain.
+    await act(async () => { await offlineQueue.setOffline(true); });
+    act(() => {
+      offlineQueue.enqueue('/api/inventory/inv-fuel', { method: 'PATCH' }, 'correct stock');
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      { ok: true, status: 200, text: async () => '{}', json: async () => ({}) }));
+    await act(async () => { await offlineQueue.setOffline(false); });
+
+    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('does not re-read when the outage delivered nothing', async () => {
+    const list = vi.spyOn(api, 'listInventory').mockResolvedValue([]);
+
+    renderHook(() => useInventory('Maitri', true));
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    const before = list.mock.calls.length;
+
+    await act(async () => { await offlineQueue.setOffline(true); });
+    await act(async () => { await offlineQueue.setOffline(false); });
+
+    expect(list.mock.calls.length).toBe(before);
   });
 });

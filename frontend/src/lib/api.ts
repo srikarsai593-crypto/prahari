@@ -115,6 +115,40 @@ function extractMessage(data: unknown, status: number): string {
   return 'That request could not be completed.';
 }
 
+/**
+ * Requests that must never be parked, whatever the link is doing.
+ *
+ * Signing in is the one that matters. `request` queues any non-GET made
+ * while the console is offline, and it persists the body to localStorage so
+ * the work survives a reload — which meant a sign-in attempted during an
+ * outage wrote the commander key, in plaintext, into storage that page
+ * script can read. That is precisely the exposure this console removed when
+ * it stopped shipping the key as NEXT_PUBLIC_COMMANDER_KEY, reintroduced
+ * through a door nobody had looked at, and it invalidated the queue's own
+ * claim that nothing about the operator's identity is persisted.
+ *
+ * Queueing them is also meaningless on its own terms. You cannot
+ * authenticate against a station you cannot reach, and a sign-in replayed
+ * twenty minutes later is not the thing the operator asked for — by then
+ * they have been staring at a console that told them nothing happened.
+ * Same for signing out, which must not appear to succeed while the session
+ * is still live, and for a socket ticket, which is dead in sixty seconds.
+ */
+const NEVER_QUEUED = [
+  `${BASE}/auth/login`,
+  `${BASE}/auth/logout`,
+  `${BASE}/auth/observer`,
+  `${BASE}/auth/ws-ticket`,
+];
+
+const mustNotQueue = (url: string) => NEVER_QUEUED.includes(url.split('?')[0]);
+
+/** What to tell a caller whose request cannot wait for the link. */
+const unreachable = (url: string) => new ApiError(
+  'The station cannot be reached right now, and this is not something that '
+  + 'can wait for the link to come back. Try again once it does.',
+  0, url);
+
 async function request<T = unknown>(
   url: string,
   options: RequestInit = {},
@@ -125,6 +159,7 @@ async function request<T = unknown>(
   const method = (options.method || 'GET').toUpperCase();
 
   if (offlineQueue.isOffline && method !== 'GET') {
+    if (mustNotQueue(url)) throw unreachable(url);
     // Refuse now, in the station's own words, rather than promising to send
     // something that every replay will bounce off the same 403.
     const refusal = writeRefusal();
@@ -139,7 +174,7 @@ async function request<T = unknown>(
   } catch (cause) {
     // A network failure on a mutation must not be lost: park it so it replays
     // when the link comes back, exactly like an explicit offline mutation.
-    if (method !== 'GET') {
+    if (method !== 'GET' && !mustNotQueue(url)) {
       const refusal = writeRefusal();
       if (refusal) throw new ApiError(refusal, 403, url);
       offlineQueue.enqueue(url, options, description, effect);
